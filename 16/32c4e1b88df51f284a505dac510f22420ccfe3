@@ -1,0 +1,25 @@
+Strand/Data/JournalCatalog.swift
+  s_fa46186a3c3a3c::t_06b4c1493d5570 1-84
+StrandTests/JournalCatalogTests.swift
+  s_fa46186a3c3a3c::t_4fef4a633a276e 1-40
+project.yml
+  s_fa46186a3c3a3c::t_5d9b073f98d9ca 105-109
+  s_fa46186a3c3a3c::t_49f5c49488d690 73-75
+  s_fa46186a3c3a3c::t_f471acc2928017 88-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1632c4e1b88df51f284a505dac510f22420ccfe3",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
