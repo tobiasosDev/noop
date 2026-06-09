@@ -172,6 +172,9 @@ struct InsightsView: View {
             self.outcomeByKey = byKey
             self.seriesByKey = seriesMap
             self.loaded = true
+            // Collapse any expanded row: a reload (e.g. after a journal save) can reorder `ranked`,
+            // so a held index would point at a different behaviour.
+            self.expandedEffect = nil
             // Seed the memoized derived state from the freshly loaded inputs.
             self.recomputeRanked()
             self.recomputeRelationships()

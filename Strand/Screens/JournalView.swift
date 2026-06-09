@@ -94,9 +94,20 @@ struct JournalView: View {
         }
     }
 
-    /// Whether any WHOOP journal data is imported. When true, the Log shows only those questions
-    /// (resolved + grouped); the fresh-install path shows the tracked catalog behaviours instead.
-    private var hasImports: Bool { !importedQuestions.isEmpty }
+    /// Whether a genuine WHOOP journal *import* is present (vs. only natively-logged answers, which
+    /// land under the same deviceId). When true, the Log shows the imported questions (resolved +
+    /// grouped); otherwise it shows the tracked catalog behaviours so a fresh-install user who logged
+    /// only a subset still sees — and can log — the rest, and the Settings toggles stay meaningful.
+    ///
+    /// The signal: native logging can only ever produce `JournalCatalog.all`'s canonical English
+    /// questions (the tracked set is filtered from `all`). So any imported question that is NOT an
+    /// `all`-canonical string — a localized alias, an `extended` behaviour, or an unresolved question
+    /// — can only have come from a real WHOOP export. Language-agnostic; every real export carries
+    /// extended behaviours (creatine, probiotic, sauna…) regardless of locale.
+    private var hasImports: Bool {
+        let allCanonical = Set(JournalCatalog.all.map(\.question))
+        return importedQuestions.contains { !allCanonical.contains($0) }
+    }
 
     /// One loggable row per distinct behaviour. Multiple imported question strings can resolve to
     /// the same behaviour — a German WHOOP import ("Alkohol konsumiert?") plus an English answer the
