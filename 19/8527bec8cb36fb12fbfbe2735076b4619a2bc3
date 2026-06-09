@@ -1,0 +1,41 @@
+StrandTests/JournalCatalogTests.swift
+  s_fa46186a3c3a3c::t_bb0a94f2d10fb0 40-108
+Strand/Screens/JournalView.swift
+  s_fa46186a3c3a3c::t_0542fe6197f206 26-30
+  s_fa46186a3c3a3c::t_beffb8a6ee7ea0 406
+  s_fa46186a3c3a3c::t_7d4c89932efdb7 456-457,459
+  s_fa46186a3c3a3c::t_737625d27dc5dd 67-73,82,85-90,92,112,114-116,118-122,125,131-152
+  s_fa46186a3c3a3c::t_602457434e3d2a 48
+  s_fa46186a3c3a3c::t_af114c7b726860 91
+  s_fa46186a3c3a3c::t_28aa9c26edcd27 31-33
+  s_fa46186a3c3a3c::t_b35459c29cc02f 93-111,113,117,123-124,126-130
+  s_fa46186a3c3a3c::t_814fe92f686a03 243-264,275
+  s_fa46186a3c3a3c::t_83cd2e953771f7 399-403,407
+Strand/Screens/InsightsView.swift
+  s_fa46186a3c3a3c::t_679597938ed1a4 136-142
+  s_fa46186a3c3a3c::t_09302ef44212a0 528
+  s_fa46186a3c3a3c::t_6424fa7dfd616f 491
+  s_fa46186a3c3a3c::t_96502246a7bf41 477
+  s_fa46186a3c3a3c::t_16901b329e70e7 145-148,152-153
+Packages/StrandAnalytics/Sources/StrandAnalytics/BehaviorInsights.swift
+  s_fa46186a3c3a3c::t_fcee3e9b87eec1 150-153
+  s_fa46186a3c3a3c::t_ba4982b5e56d6d 171
+Strand/Data/JournalCatalog.swift
+  s_fa46186a3c3a3c::t_065e1941a8f5f3 5-9,17,23-28,34-35,39,44-45,56-58,62,64-65,68-109,116-138,152-153,155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "198527bec8cb36fb12fbfbe2735076b4619a2bc3",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
