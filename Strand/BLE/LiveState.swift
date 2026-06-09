@@ -7,6 +7,11 @@ import Combine
 @MainActor
 public final class LiveState: ObservableObject {
     @Published public var connected: Bool = false
+    // NOTE: do NOT auto-clear `pairingHint` when `bonded` flips true. On a 5/MG, `bonded` is also set by
+    // the live-HR shortcut (BLEManager — HR over the unbonded standard profile), so clearing the hint
+    // there hides the still-accurate "free the strap" guidance from users who are streaming HR but never
+    // got the real encrypted bond (issue #69). The genuine bond path clears the hint itself (the
+    // CLIENT_HELLO ack), and a fresh connect attempt resets it.
     @Published public var bonded: Bool = false
     @Published public var heartRate: Int? = nil
     @Published public var rr: [Int] = []

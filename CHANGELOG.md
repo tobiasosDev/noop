@@ -17,6 +17,67 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.45 — Clearer pairing guidance for WHOOP 5.0/MG (Mac, #69)
+
+- **A 5.0/MG streams live heart rate before it's fully (encrypted-)paired** — and buzz, alarms,
+  double-tap and full history sync all need that real pairing. NOOP now keeps the "free the strap
+  from the WHOOP app" guidance visible (in clearer wording) whenever the strap isn't fully paired,
+  instead of hiding it once live HR appears — so it's obvious what to do to unlock the rest (#69).
+- This **reverts v1.44's over-eager hint-clearing**: on a 5/MG, `bonded` is also set by the live-HR
+  shortcut (HR rides the unbonded standard profile), so clearing the hint there hid the *accurate*
+  "free the strap" guidance from users who were streaming HR but never got the real encrypted bond.
+  The hint now only clears on a genuine bond (the `CLIENT_HELLO` ack) or a fresh connect attempt, and
+  the banner is reworded from "Pairing refused" to guidance.
+- Android: **version bump only** (the banner is macOS-only).
+
+## 1.44 — Fixes a false "pairing refused" warning (Mac, #69)
+
+- **The "Pairing refused" banner no longer cries wolf on a working connection** (Mac). It could stay
+  up on the Live screen even after the strap had bonded and live heart rate was streaming — a stale
+  warning on a link that was actually fine (reported by a 5.0/MG owner, #69). `LiveState.pairingHint`
+  now clears on every bond-completion path (a `didSet` on `bonded`), so it disappears the moment the
+  link bonds.
+- Android: **version bump only** (the banner is macOS-only).
+
+## 1.43 — 24-hour heart-rate trend on the dashboard
+
+- **See your whole day's heart rate on Control Center** (Mac + Android). A new full-width trend plots
+  your continuous heart rate across today, read straight from the strap's own ~1 Hz history — so it
+  fills in even for the hours the app was closed, not just while it's open.
+  - **Downsampled in SQL**: a fully-worn day is ~86k samples at 1 Hz, so the chart reads 5-minute
+    bucket means (`GROUP BY ts/300`) rather than loading every row — a new `hrBuckets()` on both the
+    GRDB store and the Room DAO. The day's low / average / high sit under the chart.
+  - Hidden until there's wear today, so a strap with no readings yet shows nothing rather than an
+    empty axis. Works on WHOOP 4.0, and on 5.0/MG (its live HR feeds the trend too).
+
+## 1.42 — Auto-reconnect to your strap on launch (Android, #67)
+
+- **NOOP reconnects to your strap automatically when the app starts** (issue #67 — jamartif: after an
+  APK update the band stayed disconnected until you tapped Connect). The process restart on an update
+  (or any cold launch) left the app disconnected because there was **no auto-connect on launch** and
+  **no persisted strap** — every `connect()` was user-tapped, and the v1.36 reconnect used an
+  in-memory device that's gone after a restart.
+  - **Persist the bonded strap**: `NoopPrefs.setLastDevice(address, model)` on the bonded transition
+    (on-device only, never sent); cleared on a model switch.
+  - **Reconnect on launch**: `AppViewModel.autoReconnectOnLaunch()` (called from `init`) →
+    `WhoopBleClient.reconnectToAddress()` does a direct `connectGatt(autoConnect=true)` to the saved
+    strap — no scan; the OS connects as soon as it's in range. Gated on **"Keep connected in the
+    background"** + a previously-bonded strap; no-ops if already connected or the runtime BT permission
+    isn't granted.
+- macOS: **version bump only.** It has the same gap (CoreBluetooth state restoration isn't actually
+  enabled — `CBCentralManager` is created without a restore identifier), but it's lower-value there (the
+  menu-bar app stays alive, updates are infrequent) and adding it needs a gating decision (no
+  keep-connected pref exists on macOS). Tracked as a follow-up.
+
+## 1.41 — Update check shows what's new
+
+- **The "Check for updates" result now previews what's new.** When a newer version is found, the
+  result expands to show the release's notes (the changes, with the Downloads/footer boilerplate
+  trimmed and the heaviest markdown stripped, capped + scrollable) alongside the Download button — so
+  you can see what you're getting before tapping through. The `body` is already in the
+  `releases/latest` response, so this is the same single request; `cleanNotes()` does the trimming on
+  each platform. No new network behaviour.
+
 ## 1.40 — Check for updates (both platforms)
 
 - **New: a manual "Check for updates" button** in Settings → About. One user-initiated GET to the

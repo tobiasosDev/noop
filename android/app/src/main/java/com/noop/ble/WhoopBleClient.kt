@@ -11,12 +11,14 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.Manifest
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
@@ -289,6 +291,9 @@ class WhoopBleClient(
     /// "No WHOOP strap found" until the user forced pairing mode (#61). Mirrors macOS, which already
     /// reconnects via retrieveConnectedPeripherals + central.connect before scanning.
     private var lastDevice: BluetoothDevice? = null
+
+    /** Address of the strap we last connected to — for persisting it + auto-reconnecting on launch (#67). */
+    val lastDeviceAddress: String? get() = lastDevice?.address
     /// The family actually discovered on the connected peripheral. Drives family-aware frame
     /// parsing and gates the WHOOP4-only bond/handshake. Set in onServicesDiscovered.
     private var connectedFamily = DeviceFamily.WHOOP4
@@ -517,6 +522,29 @@ class WhoopBleClient(
         disconnect()
         lastDevice = null   // don't auto-reconnect to the old strap; the next connect scans for the new model
         _state.value = _state.value.copy(connected = false, bonded = false)
+    }
+
+    /**
+     * Reconnect DIRECTLY to a previously-bonded strap by its address — no scan — for auto-reconnect on
+     * app launch (#67). No-op if already connecting/connected, the address can't be resolved, or the
+     * runtime Bluetooth permission isn't granted yet (the user will connect manually / next launch).
+     * Uses connectGatt(autoConnect=true) so the OS connects as soon as the strap is reachable.
+     */
+    @SuppressLint("MissingPermission")
+    fun reconnectToAddress(address: String, model: WhoopModel) {
+        if (gatt != null || _state.value.connected) return
+        val adp = adapter ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val device = runCatching { adp.getRemoteDevice(address) }.getOrNull() ?: return
+        selectedModel = model
+        intentionalDisconnect = false
+        log("Auto-reconnecting to your saved ${model.displayName}…")
+        connectToDevice(device, autoConnect = true)
     }
 
     /**
