@@ -1,0 +1,22 @@
+Strand/Screens/InsightsView.swift
+  s_fa46186a3c3a3c::t_ce651d2a1abbd0 575
+  s_fa46186a3c3a3c::t_b6bdb17a17ceb7 485
+  s_fa46186a3c3a3c::t_7272e43a5ff6b6 655-656
+  s_fa46186a3c3a3c::t_f6e72fd813407b 606-607,609-610,613,615,618,630,632
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "6ecf2587e4b6abd80e612186f7972a2efdb19e54",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
