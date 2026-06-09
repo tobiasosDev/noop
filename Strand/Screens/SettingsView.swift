@@ -9,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
+    @EnvironmentObject var journal: JournalStore
 
     /// Backup & restore UI state.
     @State private var backupBusy = false
@@ -34,6 +35,7 @@ struct SettingsView: View {
                        subtitle: "Your numbers, your strap, and how NOOP works. All on this Mac.") {
             profileCard
             strapCard
+            journalCard
             experimentalCard
             backupCard
             aboutCard
@@ -222,6 +224,87 @@ struct SettingsView: View {
         if pct <= 30 { return .warning }
         return .positive
     }
+
+    // MARK: - Journal
+
+    private var journalCard: some View {
+        SettingsSection(
+            icon: "book.pages.fill",
+            title: "Journal",
+            blurb: "Choose which behaviours to log each day. NOOP correlates them with your recovery, HRV and sleep in Insights."
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                #if os(iOS)
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $journal.reminderEnabled) {
+                        Text("Morning reminder")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                    }
+                    .toggleStyle(.switch)
+                    .tint(StrandPalette.accent)
+
+                    if journal.reminderEnabled {
+                        FormRow(label: "Remind me at") {
+                            DatePicker("Reminder time", selection: reminderTime,
+                                       displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                                .accessibilityLabel("Reminder time")
+                        }
+                    }
+                    Text("A daily nudge to log yesterday's journal. NOOP asks at this time; nothing leaves your device.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider().overlay(StrandPalette.hairline)
+                #endif
+
+                Text("TRACKED BEHAVIOURS")
+                    .font(StrandFont.overline)
+                    .tracking(StrandFont.overlineTracking)
+                    .foregroundStyle(StrandPalette.textTertiary)
+
+                ForEach(JournalCatalog.categories, id: \.self) { category in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(category)
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        ForEach(JournalCatalog.inCategory(category)) { behavior in
+                            Toggle(isOn: trackedBinding(behavior.id)) {
+                                Label(behavior.shortLabel, systemImage: behavior.icon)
+                                    .font(StrandFont.subhead)
+                                    .foregroundStyle(StrandPalette.textPrimary)
+                            }
+                            .toggleStyle(.switch)
+                            .tint(StrandPalette.accent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func trackedBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { journal.isTracked(id) }, set: { journal.setTracked(id, $0) })
+    }
+
+    #if os(iOS)
+    /// Maps the stored minutes-since-midnight reminder pref to/from a Date for the picker.
+    private var reminderTime: Binding<Date> {
+        Binding(
+            get: {
+                let c = JournalReminder.components(minutesSinceMidnight: journal.reminderMinutes)
+                return Calendar.current.date(bySettingHour: c.hour ?? 8, minute: c.minute ?? 0,
+                                             second: 0, of: Date()) ?? Date()
+            },
+            set: { date in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                journal.reminderMinutes = (c.hour ?? 8) * 60 + (c.minute ?? 0)
+            }
+        )
+    }
+    #endif
 
     // MARK: - Backup & restore
 
@@ -615,6 +698,7 @@ private struct FormRow<Control: View>: View {
         .environmentObject(model)
         .environmentObject(model.live)
         .environmentObject(model.profile)
+        .environmentObject(model.journal)
         .frame(width: 720, height: 900)
         .background(StrandPalette.surfaceBase)
         .preferredColorScheme(.dark)
