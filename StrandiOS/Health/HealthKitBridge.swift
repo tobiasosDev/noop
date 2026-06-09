@@ -146,6 +146,11 @@ final class HealthKitBridge: ObservableObject {
         try? await store.upsertAppleDaily(appleRows, deviceId: appleDeviceId)
         try? await store.upsertDailyMetrics(dmRows, deviceId: appleDeviceId)
 
+        // Surface the freshly-imported Apple Health days in the dashboard caches. Trends/Sleep read
+        // `repo.days`, which is loaded once on launch (often BEFORE this first sync finishes) — without
+        // this reload the imported days wouldn't appear until the next cold start.
+        await repo.refresh()
+
         await writeBack(whoopStore: store)
         lastSync = Date()
     }
