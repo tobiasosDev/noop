@@ -124,7 +124,10 @@ struct InsightsView: View {
                 }
             }
         }
-        .task(id: repo.loaded) { await load() }
+        // Key on refreshSeq (not the one-shot `loaded`) so the screen reloads after a journal save
+        // while it's on-screen — `refresh()` bumps refreshSeq, matching TodayView. (macOS keeps the
+        // detail view alive across saves; iOS recreates it on push, but this is correct on both.)
+        .task(id: repo.refreshSeq) { await load() }
         // Recompute the cached ranking only when the outcome selection changes.
         // (behaviours / outcomeByKey change only at load, which calls
         //  recomputeRanked() directly, so keying on `outcome` is sufficient.)

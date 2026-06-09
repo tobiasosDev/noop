@@ -55,6 +55,11 @@ struct JournalView: View {
             appeared = true
         }
         .onChange(of: selectedDay) { _ in seedAnswersForSelectedDay() }
+        .onDisappear {
+            // Persist in-progress edits (including answers cleared to "—") when the screen is
+            // dismissed — sheet swipe-down or tab/sidebar switch — since that bypasses selectDay.
+            if dirty { Task { await save() } }
+        }
     }
 
     // MARK: - Log
@@ -435,7 +440,9 @@ struct JournalView: View {
             // any variant of the behaviour shows up (and isn't mistaken for unanswered).
             let key = representativeQuestion(for: e.question)
             answers[key] = e.answeredYes
-            notes[key] = e.notes
+            // Never clobber a real note with a nil one: the representative variant wins when it has
+            // a note, but a note attached to another variant survives if the representative's is nil.
+            if let n = e.notes { notes[key] = n }
         }
     }
 
