@@ -1,0 +1,19 @@
+Strand/Screens/StressView.swift
+  s_3107a7fb3a0b37::t_05dc7963fa201f 592-595
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "889ed6301c76b07c805239f918d2d27230634fc8",
+  "prompts": {},
+  "sessions": {
+    "s_3107a7fb3a0b37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "852ad02b-c2ab-4243-bb0d-a7465d36ba43",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
