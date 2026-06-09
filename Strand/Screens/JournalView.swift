@@ -423,17 +423,27 @@ struct JournalView: View {
 
     private func seedAnswersForSelectedDay() {
         answers = [:]; notes = [:]; expandedNote = nil; saved = false; dirty = false
-        for e in history[selectedDay] ?? [] {
+        // Apply non-representative variants first, then the representative variant, so when several
+        // stored variants of one behaviour share a day the representative's answer AND note both win
+        // (consistent with what `save()` will persist). Stable otherwise.
+        let rows = (history[selectedDay] ?? []).sorted {
+            (representativeQuestion(for: $0.question) == $0.question ? 1 : 0)
+                < (representativeQuestion(for: $1.question) == $1.question ? 1 : 0)
+        }
+        for e in rows {
             // Seed under the representative key the row is rendered with, so an answer stored under
             // any variant of the behaviour shows up (and isn't mistaken for unanswered).
             let key = representativeQuestion(for: e.question)
             answers[key] = e.answeredYes
-            if let n = e.notes, notes[key] == nil { notes[key] = n }
+            notes[key] = e.notes
         }
     }
 
     private func save() async {
-        var draft = JournalDraft(day: selectedDay)
+        // Capture the day once: `selectedDay` can change during the awaits below (a concurrent
+        // auto-save from selectDay), and the in-memory mirror must land on the day we saved.
+        let day = selectedDay
+        var draft = JournalDraft(day: day)
         draft.answers = answers
         draft.notes = notes
         let entries = draft.entries()
@@ -445,25 +455,25 @@ struct JournalView: View {
         // (e.g. untracked) are left untouched so their history is preserved.
         let shownIDs = Set(loggableQuestions.compactMap { JournalCatalog.byQuestion($0)?.id })
         let shownVerbatim = Set(loggableQuestions)
-        let stored = history[selectedDay] ?? []
+        let stored = history[day] ?? []
         let deleteKeys: [String] = stored.map(\.question).filter { q in
             guard !written.contains(q) else { return false }
             if let id = JournalCatalog.byQuestion(q)?.id { return shownIDs.contains(id) }
             return shownVerbatim.contains(q)
         }
 
-        await repo.reconcileJournalDay(selectedDay, write: entries, delete: deleteKeys)
+        await repo.reconcileJournalDay(day, write: entries, delete: deleteKeys)
         await MainActor.run {
             saved = true
             dirty = false
             // Mirror the reconciled state in memory: written rows + any stored rows we left intact.
             let deleted = Set(deleteKeys)
             let kept = stored.filter { !deleted.contains($0.question) && !written.contains($0.question) }
-            history[selectedDay] = entries + kept
+            history[day] = entries + kept
             // Collapse the Today prompt once the morning's target (yesterday) or today is actually
             // logged — not when an auto-save merely cleared answers (entries empty).
             if !entries.isEmpty,
-               selectedDay == Self.yesterdayKey() || selectedDay == Repository.localDayKey(Date()) {
+               day == Self.yesterdayKey() || day == Repository.localDayKey(Date()) {
                 journal.lastLoggedDay = Repository.localDayKey(Date())
             }
         }
