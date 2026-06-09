@@ -23,6 +23,10 @@ struct JournalView: View {
     @State private var notes: [String: String] = [:]
     @State private var expandedNote: String?            // which row has its note field open
     @State private var history: [String: [JournalEntry]] = [:]
+    /// Distinct imported journal questions NOT in the catalog (e.g. a WHOOP export in another
+    /// language). Surfaced as loggable rows so native logging unifies with the imported history
+    /// on the same (deviceId, day, question) key instead of forking a parallel behaviour.
+    @State private var importedExtraQuestions: [String] = []
     @State private var saved = false
     @State private var loaded = false
     @State private var appeared = false
@@ -56,7 +60,7 @@ struct JournalView: View {
             }
 
             let tracked = journal.trackedBehaviors
-            if tracked.isEmpty {
+            if tracked.isEmpty && importedExtraQuestions.isEmpty {
                 NoopCard {
                     Text("No behaviours tracked yet. Choose what to log in Settings → Journal.")
                         .font(StrandFont.subhead)
@@ -68,6 +72,7 @@ struct JournalView: View {
                     let items = tracked.filter { $0.category == cat }
                     if !items.isEmpty { categoryCard(cat, items) }
                 }
+                if !importedExtraQuestions.isEmpty { importedCard }
                 saveBar
             }
         }
@@ -93,22 +98,28 @@ struct JournalView: View {
     }
 
     private func behaviorRow(_ b: JournalBehavior) -> some View {
-        let answer = answers[b.question]
-        let tint = rowTint(behavior: b, answer: answer)
+        entryRow(question: b.question, label: b.shortLabel, icon: b.icon, goodWhenYes: b.goodWhenYes)
+    }
+
+    /// A single loggable row, keyed by its verbatim question. Used for both catalog behaviours and
+    /// absorbed imported questions (which carry no catalog metadata).
+    private func entryRow(question: String, label: String, icon: String, goodWhenYes: Bool?) -> some View {
+        let answer = answers[question]
+        let tint = tintFor(goodWhenYes: goodWhenYes, answer: answer)
         return VStack(spacing: 10) {
             HStack(spacing: NoopMetrics.gap) {
-                Image(systemName: b.icon)
+                Image(systemName: icon)
                     .font(.system(size: 15))
                     .foregroundStyle(answer != nil ? tint : StrandPalette.textTertiary)
                     .frame(width: 24)
-                Text(b.shortLabel)
+                Text(label)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
                 Spacer(minLength: NoopMetrics.gap)
-                triState(b.question, tint: tint)
+                triState(question, tint: tint)
             }
-            if expandedNote == b.question || !(notes[b.question] ?? "").isEmpty {
-                TextField("Add a note (optional)", text: noteBinding(b.question))
+            if expandedNote == question || !(notes[question] ?? "").isEmpty {
+                TextField("Add a note (optional)", text: noteBinding(question))
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
                     .textFieldStyle(.plain)
@@ -119,6 +130,28 @@ struct JournalView: View {
         .padding(.vertical, 12)
         .contentShape(Rectangle())
         .animation(StrandMotion.fade, value: answer)
+    }
+
+    /// Loggable rows for imported questions the catalog doesn't already cover (e.g. a WHOOP export
+    /// in another language), so the user can keep logging against their existing history.
+    private var importedCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("FROM YOUR WHOOP JOURNAL")
+                .font(StrandFont.overline)
+                .tracking(StrandFont.overlineTracking)
+                .foregroundStyle(StrandPalette.textTertiary)
+            NoopCard {
+                VStack(spacing: 0) {
+                    ForEach(Array(importedExtraQuestions.enumerated()), id: \.element) { idx, q in
+                        entryRow(question: q, label: Self.prettify(q),
+                                 icon: "questionmark.circle", goodWhenYes: nil)
+                        if idx < importedExtraQuestions.count - 1 {
+                            Divider().overlay(StrandPalette.hairline)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Yes / No / — choice. Selecting an answer opens the note field for that row.
@@ -284,10 +317,13 @@ struct JournalView: View {
 
     private func load() async {
         let entries = await repo.journalEntries()
+        let imported = await repo.importedJournalQuestions()
+        let catalogQs = Set(JournalCatalog.all.map(\.question))
         var byDay: [String: [JournalEntry]] = [:]
         for e in entries { byDay[e.day, default: []].append(e) }
         await MainActor.run {
             history = byDay
+            importedExtraQuestions = imported.filter { !catalogQs.contains($0) }
             seedAnswersForSelectedDay()
             loaded = true
         }
@@ -319,12 +355,10 @@ struct JournalView: View {
 
     // MARK: - Helpers
 
-    private func rowTint(behavior b: JournalBehavior, answer: Bool?) -> Color {
-        guard let answer else { return StrandPalette.accent }
-        guard let good = b.goodWhenYes else { return StrandPalette.accent }
-        // "good when yes" answered yes → positive; answered no → neutral-ish, and vice versa.
-        let isGoodOutcome = (answer == good)
-        return isGoodOutcome ? StrandPalette.statusPositive : StrandPalette.statusWarning
+    private func tintFor(goodWhenYes good: Bool?, answer: Bool?) -> Color {
+        guard let answer, let good else { return StrandPalette.accent }
+        // "good when yes" answered yes → positive; answered the "bad" way → warning.
+        return (answer == good) ? StrandPalette.statusPositive : StrandPalette.statusWarning
     }
 
     private func noteBinding(_ q: String) -> Binding<String> {
@@ -338,15 +372,31 @@ struct JournalView: View {
         if key <= Repository.localDayKey(Date()) { selectedDay = key }
     }
 
+    /// Everything loggable on this screen: tracked catalog behaviours + absorbed imported questions.
+    private var loggableQuestions: [String] {
+        journal.trackedBehaviors.map(\.question) + importedExtraQuestions
+    }
     private var answeredCount: Int {
-        journal.trackedBehaviors.filter { answers[$0.question] != nil }.count
+        loggableQuestions.filter { answers[$0] != nil }.count
     }
     private var progressComplete: Bool {
-        let total = journal.trackedBehaviors.count
+        let total = loggableQuestions.count
         return total > 0 && answeredCount == total
     }
     private var progressText: String {
-        "\(answeredCount) of \(journal.trackedBehaviors.count) logged"
+        "\(answeredCount) of \(loggableQuestions.count) logged"
+    }
+
+    /// Turn a verbatim question ("Koffein konsumiert?", "Did you stretch?") into a compact row label.
+    private static func prettify(_ question: String) -> String {
+        var s = question
+        if let r = s.range(of: "?", options: .backwards) { s.removeSubrange(r) }
+        for p in ["Did you ", "Have you ", "Were you ", "Do you "] where s.hasPrefix(p) {
+            s.removeFirst(p.count)
+            s = s.prefix(1).capitalized + s.dropFirst()
+            break
+        }
+        return s.trimmingCharacters(in: .whitespaces)
     }
 
     private func dayLabel(_ key: String) -> String {
