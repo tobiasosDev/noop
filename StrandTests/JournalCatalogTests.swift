@@ -50,6 +50,17 @@ final class JournalCatalogTests: XCTestCase {
         }
     }
 
+    /// Resolution (and the Insights merge that depends on it) is correct by construction only if no
+    /// two questions/aliases fold to the same normalized key — otherwise `questionIndex` overwrites
+    /// last-wins and `byQuestion` returns the wrong behaviour.
+    func testNormalizedKeysDoNotCollide() {
+        let keys = JournalCatalog.catalog
+            .flatMap { [$0.question] + $0.aliases }
+            .map(JournalCatalog.normalizeKey)
+        XCTAssertEqual(Set(keys).count, keys.count,
+                       "two questions/aliases normalize to the same key")
+    }
+
     func testByQuestionResolvesAliasesToBehaviour() {
         XCTAssertEqual(JournalCatalog.byQuestion("Koffein konsumiert?")?.id, "caffeine")
         XCTAssertEqual(JournalCatalog.byQuestion("Alkohol konsumiert?")?.id, "alcohol")
