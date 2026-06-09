@@ -85,6 +85,23 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
         XCTAssertEqual(n, 2)
     }
 
+    /// Guards the contract Repository.saveJournal relies on: native logging writes under the
+    /// app's strap deviceId ("my-whoop"), the SAME source the importer + InsightsView use, and
+    /// editing a day re-upserts (no duplicate). Existing tests use "devA"; this pins the real id.
+    func testLoggedUnderAppDeviceIdRoundTrips() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Did you have any caffeine?", answeredYes: true, notes: "AM"),
+        ], deviceId: "my-whoop")
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Did you have any caffeine?", answeredYes: false, notes: nil),
+        ], deviceId: "my-whoop")
+        let rows = try await store.journalEntries(deviceId: "my-whoop", from: "2026-06-08", to: "2026-06-08")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.answeredYes, false)
+        XCTAssertNil(rows.first?.notes)
+    }
+
     // MARK: - workout
 
     func testWorkoutUpsertReadAndIdempotency() async throws {
