@@ -28,6 +28,7 @@ struct StrandiOSApp: App {
                 .environmentObject(model.repo)
                 .environmentObject(model.profile)
                 .environmentObject(model.behavior)
+                .environmentObject(model.journal)
                 .environmentObject(model.intelligence)
                 .environmentObject(model.coach)
                 .environmentObject(health)

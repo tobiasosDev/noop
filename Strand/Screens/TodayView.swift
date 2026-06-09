@@ -43,6 +43,7 @@ struct TodayView: View {
         ScreenScaffold(title: "Control Center", subtitle: "\(dateLine)") {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 HealthAlertBanner()
+                MorningJournalCard()
                 if repo.today?.recovery == nil {
                     DataPendingNote(
                         title: "Live now. Your scores are building.",
@@ -547,6 +548,47 @@ struct TodayView: View {
         f.dateFormat = "HH:mm"
         return f
     }()
+}
+
+// MARK: - Morning journal prompt
+
+/// Home-screen prompt to log yesterday's journal. Collapses to a "Journaled" confirmation
+/// once today's morning log is done. Tapping opens the journal sheet via AppModel.journalRoute.
+private struct MorningJournalCard: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var journal: JournalStore
+
+    var body: some View {
+        let done = journal.lastLoggedDay == Repository.localDayKey(Date())
+        Button {
+            model.journalRoute = JournalRoute(day: JournalView.yesterdayKey())
+        } label: {
+            NoopCard {
+                HStack(spacing: NoopMetrics.gap) {
+                    Image(systemName: done ? "checkmark.seal.fill" : "sun.max.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(done ? StrandPalette.accent : StrandPalette.statusWarning)
+                        .frame(width: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(done ? "Journaled" : "Good morning")
+                            .font(StrandFont.headline)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text(done
+                             ? "Yesterday's journal is logged."
+                             : "How did yesterday go? Log your journal.")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                    }
+                    Spacer()
+                    if !done {
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 // MARK: - Preview

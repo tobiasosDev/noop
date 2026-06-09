@@ -12,6 +12,7 @@ struct StrandApp: App {
                 .environmentObject(model.repo)
                 .environmentObject(model.profile)
                 .environmentObject(model.behavior)
+                .environmentObject(model.journal)
                 .environmentObject(model.intelligence)
                 .environmentObject(model.coach)
                 .frame(minWidth: 1000, minHeight: 700)
