@@ -356,6 +356,9 @@ final class AppModel: ObservableObject {
                     return
                 }
                 let summary = try await WhoopImporter.importExport(url: url, into: store, deviceId: deviceId)
+                // Record that real journal rows were imported, so the Journal shows the imported
+                // behaviours regardless of their language/phrasing (definitive vs. inferring it).
+                if (summary.countsByCategory["journal"] ?? 0) > 0 { journal.hasJournalImport = true }
                 await repo.refresh()
                 let span: String
                 if let a = summary.earliest, let b = summary.latest {

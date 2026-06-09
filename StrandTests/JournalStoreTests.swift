@@ -17,6 +17,16 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertFalse(store.reminderEnabled)
         XCTAssertEqual(store.reminderMinutes, 8 * 60)   // 08:00
         XCTAssertNil(store.lastLoggedDay)
+        XCTAssertFalse(store.hasJournalImport)
+    }
+
+    func testHasJournalImportPersistsAcrossReinit() {
+        let d = isolatedDefaults()
+        let s1 = JournalStore(defaults: d)
+        XCTAssertFalse(s1.hasJournalImport)
+        s1.hasJournalImport = true
+        let s2 = JournalStore(defaults: d)
+        XCTAssertTrue(s2.hasJournalImport, "import flag must survive relaunch")
     }
 
     func testTrackedSetPersistsAcrossReinit() {

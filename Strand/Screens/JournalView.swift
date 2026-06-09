@@ -99,12 +99,15 @@ struct JournalView: View {
     /// grouped); otherwise it shows the tracked catalog behaviours so a fresh-install user who logged
     /// only a subset still sees — and can log — the rest, and the Settings toggles stay meaningful.
     ///
-    /// The signal: native logging can only ever produce `JournalCatalog.all`'s canonical English
-    /// questions (the tracked set is filtered from `all`). So any imported question that is NOT an
-    /// `all`-canonical string — a localized alias, an `extended` behaviour, or an unresolved question
-    /// — can only have come from a real WHOOP export. Language-agnostic; every real export carries
-    /// extended behaviours (creatine, probiotic, sauna…) regardless of locale.
+    /// Primary signal: a persisted flag set when a WHOOP export with journal rows was imported
+    /// (`JournalStore.hasJournalImport`) — definitive and language-independent. Fallback for journals
+    /// imported before that flag existed: any imported question that is NOT an `all`-canonical string
+    /// (a localized alias, an `extended` behaviour, or an unresolved question) can only have come
+    /// from a real export, since native logging only ever emits `all`-canonical questions. Gated on
+    /// a non-empty imported set so a journal-less WHOOP import never blanks the Log.
     private var hasImports: Bool {
+        guard !importedQuestions.isEmpty else { return false }
+        if journal.hasJournalImport { return true }
         let allCanonical = Set(JournalCatalog.all.map(\.question))
         return importedQuestions.contains { !allCanonical.contains($0) }
     }
