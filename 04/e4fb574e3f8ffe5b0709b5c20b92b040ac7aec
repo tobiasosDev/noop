@@ -1,0 +1,22 @@
+Strand/Screens/SettingsView.swift
+  s_fa46186a3c3a3c::t_bcb23f740ca03d 12
+  s_fa46186a3c3a3c::t_8743d8314f2f78 701
+  s_fa46186a3c3a3c::t_c3e19acef98257 38
+  s_fa46186a3c3a3c::t_92c5528a80f912 228-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "04e4fb574e3f8ffe5b0709b5c20b92b040ac7aec",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
