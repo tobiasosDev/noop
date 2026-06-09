@@ -87,6 +87,23 @@ extension WhoopStore {
         }
     }
 
+    /// Delete journal rows by natural key (deviceId, day, question) for the given questions on a
+    /// single day. Used to reconcile a day after editing: collapse duplicate question variants and
+    /// remove answers the user cleared. Returns rows deleted.
+    @discardableResult
+    public func deleteJournal(deviceId: String, day: String, questions: [String]) async throws -> Int {
+        guard !questions.isEmpty else { return 0 }
+        return try syncWrite { db in
+            let placeholders = Array(repeating: "?", count: questions.count).joined(separator: ", ")
+            var args: [DatabaseValueConvertible] = [deviceId, day]
+            args.append(contentsOf: questions)
+            try db.execute(
+                sql: "DELETE FROM journal WHERE deviceId = ? AND day = ? AND question IN (\(placeholders))",
+                arguments: StatementArguments(args))
+            return db.changesCount
+        }
+    }
+
     /// Upsert workouts. Natural key (deviceId, startTs, sport). Returns rows changed.
     @discardableResult
     public func upsertWorkouts(_ rows: [WorkoutRow], deviceId: String) async throws -> Int {

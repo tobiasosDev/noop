@@ -180,6 +180,16 @@ final class Repository: ObservableObject {
         await refresh()
     }
 
+    /// Reconcile a single day's journal: upsert the answered `write` rows and delete the `delete`
+    /// question keys (rows the user cleared, or duplicate variants now collapsed onto a single
+    /// representative). Keyed by (deviceId, day, question). Refreshes caches once.
+    func reconcileJournalDay(_ day: String, write: [JournalEntry], delete: [String]) async {
+        guard let store = await ensureStore() else { return }
+        if !write.isEmpty { _ = try? await store.upsertJournal(write, deviceId: deviceId) }
+        if !delete.isEmpty { _ = try? await store.deleteJournal(deviceId: deviceId, day: day, questions: delete) }
+        if !write.isEmpty || !delete.isEmpty { await refresh() }
+    }
+
     /// Distinct journal question strings already present (e.g. from a WHOOP import), so the
     /// Journal can absorb them into the tracked set and guarantee key unification.
     func importedJournalQuestions(days: Int = 4000) async -> [String] {

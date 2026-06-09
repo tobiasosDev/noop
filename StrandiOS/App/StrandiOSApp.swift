@@ -56,6 +56,12 @@ struct StrandiOSApp: App {
                 .onChange(of: journal.reminderMinutes) { _, m in
                     journalReminder.apply(enabled: journal.reminderEnabled, minutesSinceMidnight: m)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .noopPendingIntentEnqueued)
+                    .receive(on: RunLoop.main)) { _ in
+                    // Drain immediately if we're foreground; background enqueues still drain on the
+                    // next scenePhase `.active` (handled below).
+                    if scenePhase == .active { model.drainPendingIntents() }
+                }
                 .onReceive(model.live.$heartRate) { _ in
                     liveActivity.update(
                         bpm: model.bpm ?? model.live.heartRate,

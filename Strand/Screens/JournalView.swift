@@ -32,6 +32,9 @@ struct JournalView: View {
     /// resolve to the same behaviour (the longest history wins). See `dedupedImportedQuestions`.
     @State private var questionCounts: [String: Int] = [:]
     @State private var saved = false
+    /// Set when the user changes any answer/note since the last seed or save. Used to auto-save the
+    /// current day before switching days so in-progress edits aren't silently discarded.
+    @State private var dirty = false
     @State private var loaded = false
     @State private var appeared = false
 
@@ -213,15 +216,15 @@ struct JournalView: View {
     private func triState(_ q: String, tint: Color) -> some View {
         HStack(spacing: 6) {
             choice("Yes", selected: answers[q] == true, tint: tint) {
-                answers[q] = true; expandedNote = q; saved = false
+                answers[q] = true; expandedNote = q; saved = false; dirty = true
             }
             choice("No", selected: answers[q] == false, tint: tint) {
-                answers[q] = false; expandedNote = q; saved = false
+                answers[q] = false; expandedNote = q; saved = false; dirty = true
             }
             choice("—", selected: answers[q] == nil, tint: StrandPalette.textTertiary) {
                 answers[q] = nil; notes[q] = nil
                 if expandedNote == q { expandedNote = nil }
-                saved = false
+                saved = false; dirty = true
             }
         }
     }
@@ -328,7 +331,7 @@ struct JournalView: View {
             .map { JournalCatalog.byQuestion($0.question)?.shortLabel ?? $0.question }
         let recovery = repo.days.first { $0.day == day }?.recovery
         let isSelected = day == selectedDay
-        return Button { selectedDay = day } label: {
+        return Button { selectDay(day) } label: {
             NoopCard {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
@@ -410,11 +413,22 @@ struct JournalView: View {
         }
     }
 
+    /// The row key a stored question maps onto: when imported, the deduped representative for its
+    /// behaviour (so a day stored under a non-representative variant still seeds the visible row);
+    /// otherwise the question itself.
+    private func representativeQuestion(for q: String) -> String {
+        guard hasImports, let id = JournalCatalog.byQuestion(q)?.id else { return q }
+        return dedupedImportedQuestions.first { JournalCatalog.byQuestion($0)?.id == id } ?? q
+    }
+
     private func seedAnswersForSelectedDay() {
-        answers = [:]; notes = [:]; expandedNote = nil; saved = false
+        answers = [:]; notes = [:]; expandedNote = nil; saved = false; dirty = false
         for e in history[selectedDay] ?? [] {
-            answers[e.question] = e.answeredYes
-            if let n = e.notes { notes[e.question] = n }
+            // Seed under the representative key the row is rendered with, so an answer stored under
+            // any variant of the behaviour shows up (and isn't mistaken for unanswered).
+            let key = representativeQuestion(for: e.question)
+            answers[key] = e.answeredYes
+            if let n = e.notes, notes[key] == nil { notes[key] = n }
         }
     }
 
@@ -423,12 +437,33 @@ struct JournalView: View {
         draft.answers = answers
         draft.notes = notes
         let entries = draft.entries()
-        await repo.saveJournal(entries)
+        let written = Set(entries.map(\.question))
+
+        // Reconcile the day: delete stored rows that belong to a behaviour shown on screen but are
+        // no longer the row we just wrote — i.e. a duplicate variant being collapsed onto the
+        // representative, or an answer the user cleared to "—". Rows for behaviours NOT shown
+        // (e.g. untracked) are left untouched so their history is preserved.
+        let shownIDs = Set(loggableQuestions.compactMap { JournalCatalog.byQuestion($0)?.id })
+        let shownVerbatim = Set(loggableQuestions)
+        let stored = history[selectedDay] ?? []
+        let deleteKeys: [String] = stored.map(\.question).filter { q in
+            guard !written.contains(q) else { return false }
+            if let id = JournalCatalog.byQuestion(q)?.id { return shownIDs.contains(id) }
+            return shownVerbatim.contains(q)
+        }
+
+        await repo.reconcileJournalDay(selectedDay, write: entries, delete: deleteKeys)
         await MainActor.run {
             saved = true
-            history[selectedDay] = entries
-            // Collapse the Today prompt once the morning's target (yesterday) or today is logged.
-            if selectedDay == Self.yesterdayKey() || selectedDay == Repository.localDayKey(Date()) {
+            dirty = false
+            // Mirror the reconciled state in memory: written rows + any stored rows we left intact.
+            let deleted = Set(deleteKeys)
+            let kept = stored.filter { !deleted.contains($0.question) && !written.contains($0.question) }
+            history[selectedDay] = entries + kept
+            // Collapse the Today prompt once the morning's target (yesterday) or today is actually
+            // logged — not when an auto-save merely cleared answers (entries empty).
+            if !entries.isEmpty,
+               selectedDay == Self.yesterdayKey() || selectedDay == Repository.localDayKey(Date()) {
                 journal.lastLoggedDay = Repository.localDayKey(Date())
             }
         }
@@ -443,14 +478,25 @@ struct JournalView: View {
     }
 
     private func noteBinding(_ q: String) -> Binding<String> {
-        Binding(get: { notes[q] ?? "" }, set: { notes[q] = $0; saved = false })
+        Binding(get: { notes[q] ?? "" }, set: { notes[q] = $0; saved = false; dirty = true })
+    }
+
+    /// Switch the edited day, auto-saving the current day first if it has unsaved edits, so
+    /// navigating away (stepper or History tap) never silently discards in-progress answers.
+    private func selectDay(_ day: String) {
+        guard day != selectedDay else { return }
+        if dirty {
+            Task { await save(); await MainActor.run { selectedDay = day } }
+        } else {
+            selectedDay = day
+        }
     }
 
     private func shiftDay(_ delta: Int) {
         guard let date = Self.parse(selectedDay),
               let shifted = Calendar.current.date(byAdding: .day, value: delta, to: date) else { return }
         let key = Repository.localDayKey(shifted)
-        if key <= Repository.localDayKey(Date()) { selectedDay = key }
+        if key <= Repository.localDayKey(Date()) { selectDay(key) }
     }
 
     /// Everything loggable on this screen: the deduped imported questions when a WHOOP journal
