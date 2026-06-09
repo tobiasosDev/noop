@@ -20,7 +20,7 @@ public struct WidgetSnapshot: Codable, Equatable {
 
     /// App Group suite the app and widget both use. Must match the `com.apple.security.application-groups`
     /// entitlement on both targets.
-    public static let suiteName = "group.com.noopapp.noop"
+    public static let suiteName = "group.com.tecminds.noop"
     public static let storageKey = "noop.widget.snapshot"
 
     public static var placeholder: WidgetSnapshot {
