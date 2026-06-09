@@ -1,0 +1,28 @@
+StrandiOSWidgets/NOOPWidgets.entitlements
+  s_3107a7fb3a0b37::t_77936ed3922fcd 7
+StrandiOS/Resources/NOOP.entitlements
+  s_3107a7fb3a0b37::t_a0acc809bcd665 11
+StrandiOSShared/WidgetSnapshot.swift
+  s_3107a7fb3a0b37::t_40c46eeb87d8f0 23
+project.yml
+  s_3107a7fb3a0b37::t_fa0a42cbb16380 156
+  s_3107a7fb3a0b37::t_fa0a102780d486 153,194
+  s_3107a7fb3a0b37::t_a7af132f7bfd54 24
+  s_3107a7fb3a0b37::t_ce9322cb648210 197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a036bd26dbc03e0e854f8863e3b55c6cecb938b6",
+  "prompts": {},
+  "sessions": {
+    "s_3107a7fb3a0b37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "852ad02b-c2ab-4243-bb0d-a7465d36ba43",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
