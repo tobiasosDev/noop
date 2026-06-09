@@ -1,0 +1,24 @@
+StrandiOS/App/RootTabView.swift
+  s_fa46186a3c3a3c::t_3ffc5d9b95615e 34
+Strand/App/RootView.swift
+  s_fa46186a3c3a3c::t_09e4e005261100 68
+  s_fa46186a3c3a3c::t_944c548afb0732 14
+  s_fa46186a3c3a3c::t_c6ca236b6b009b 135
+  s_fa46186a3c3a3c::t_252e1517a621b7 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "be19715538d40696d49abaa2d06f6c2c4a90a3db",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
