@@ -1,0 +1,20 @@
+Strand/Screens/TrendsView.swift
+  s_3107a7fb3a0b37::t_3727de5502b565 105-120
+  s_3107a7fb3a0b37::t_ee4513d1585aa3 175-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "66b9fa25f70d5e0f0c792c7d22967795a03ab854",
+  "prompts": {},
+  "sessions": {
+    "s_3107a7fb3a0b37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "852ad02b-c2ab-4243-bb0d-a7465d36ba43",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
