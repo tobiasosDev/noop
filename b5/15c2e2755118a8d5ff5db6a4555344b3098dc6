@@ -1,0 +1,26 @@
+StrandTests/RepositoryMergeTests.swift
+  s_3107a7fb3a0b37::t_d0551190efcef7 1-33
+StrandiOS/Health/HealthKitBridge.swift
+  s_3107a7fb3a0b37::t_ac41851a9cd68f 149-153
+Strand/Data/Repository.swift
+  s_3107a7fb3a0b37::t_a952352c41a6d1 15-20
+  s_3107a7fb3a0b37::t_f0134edcb3a94f 100-104,106-108
+  s_3107a7fb3a0b37::t_adb2a7724b10bd 33-36
+  s_3107a7fb3a0b37::t_86e83349deaa0e 90,94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b515c2e2755118a8d5ff5db6a4555344b3098dc6",
+  "prompts": {},
+  "sessions": {
+    "s_3107a7fb3a0b37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "852ad02b-c2ab-4243-bb0d-a7465d36ba43",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
