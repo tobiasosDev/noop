@@ -1,0 +1,30 @@
+StrandiOS/System/JournalReminderScheduler.swift
+  s_fa46186a3c3a3c::t_77bcc8d46546a1 1-48
+StrandiOS/App/AppModel+iOS.swift
+  s_fa46186a3c3a3c::t_316beeb45f1ae0 10-12
+StrandiOS/App/StrandiOSApp.swift
+  s_fa46186a3c3a3c::t_7a87e5a178d17a 3,11-13,17-19,28
+  s_fa46186a3c3a3c::t_8d7eaaf0ef640c 48-58
+Strand/Data/JournalReminder.swift
+  s_fa46186a3c3a3c::t_e5f70a522bdbc2 1-14
+StrandTests/JournalReminderTests.swift
+  s_fa46186a3c3a3c::t_97d4e3e1bac1e8 1-16
+StrandiOS/System/NOOPAppIntents.swift
+  s_fa46186a3c3a3c::t_d62a3a52b84a51 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7dc5030acdb9a2c527268fd55de7701d158608ad",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
