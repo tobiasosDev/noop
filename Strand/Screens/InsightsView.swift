@@ -604,15 +604,14 @@ private struct ImpactRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Text(name.uppercased())
                     .font(.system(size: 12, weight: .semibold))
                     .tracking(0.4)
                     .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 8)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(valueText)
                     .font(StrandFont.number(15, weight: .bold))
