@@ -482,7 +482,7 @@ extension InsightsView {
                     if i < ranked.count - 1 {
                         Divider()
                             .overlay(StrandPalette.hairline)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 3)
                     }
                 }
             }
@@ -572,7 +572,7 @@ private struct ImpactLegendHeader: View {
         }
         .font(StrandFont.overline)
         .tracking(StrandFont.overlineTracking)
-        .padding(.vertical, 6)
+        .padding(.vertical, 3)
     }
 }
 
@@ -603,19 +603,19 @@ private struct ImpactRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
                 Text(name.uppercased())
-                    .font(StrandFont.number(15, weight: .bold))
-                    .tracking(0.6)
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(0.4)
                     .foregroundStyle(StrandPalette.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .truncationMode(.tail)
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
 
                 Text(valueText)
-                    .font(StrandFont.number(22, weight: .bold))
+                    .font(StrandFont.number(15, weight: .bold))
                     .foregroundStyle(color)
                     .monospacedDigit()
             }
@@ -627,9 +627,9 @@ private struct ImpactRow: View {
                 color: color,
                 vivid: significant
             )
-            .frame(height: 28)
+            .frame(height: 16)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 5)
     }
 }
 
@@ -652,8 +652,8 @@ private struct ImpactTrack: View {
     let color: Color
     let vivid: Bool
 
-    private let trackHeight: CGFloat = 10
-    private let thumbDiameter: CGFloat = 22
+    private let trackHeight: CGFloat = 6
+    private let thumbDiameter: CGFloat = 14
 
     private var fillOpacity: Double { vivid ? 1.0 : 0.42 }
     private var thumbOpacity: Double { vivid ? 1.0 : 0.55 }
