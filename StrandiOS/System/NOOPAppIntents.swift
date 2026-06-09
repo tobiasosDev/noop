@@ -6,7 +6,7 @@ import AppIntents
 /// into the running `AppModel` directly (BLE only lives in the foreground app), so they enqueue here
 /// and the app drains the queue when it next becomes active.
 enum PendingIntents {
-    enum Action: String { case markMoment, buzz }
+    enum Action: String { case markMoment, buzz, openJournal }
 
     private static let key = "noop.pendingIntents"
     private static var defaults: UserDefaults? { UserDefaults(suiteName: WidgetSnapshot.suiteName) }
@@ -16,6 +16,9 @@ enum PendingIntents {
         var list = d.stringArray(forKey: key) ?? []
         list.append(action.rawValue)
         d.set(list, forKey: key)
+        // If the app is already foreground (e.g. a notification tapped while active), scenePhase
+        // won't transition to re-trigger the drain — nudge the running app to drain now.
+        NotificationCenter.default.post(name: .noopPendingIntentEnqueued, object: nil)
     }
 
     static func drain() -> [Action] {
@@ -24,6 +27,12 @@ enum PendingIntents {
         d.removeObject(forKey: key)
         return raw.compactMap(Action.init)
     }
+}
+
+extension Notification.Name {
+    /// Posted when a pending intent is enqueued, so a foreground app drains it immediately rather
+    /// than waiting for the next background→active transition.
+    static let noopPendingIntentEnqueued = Notification.Name("noop.pendingIntentEnqueued")
 }
 
 /// Record a timestamped "moment" — the iOS analogue of the strap double-tap "mark a moment" action.

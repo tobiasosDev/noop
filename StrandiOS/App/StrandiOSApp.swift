@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UserNotifications
 
 /// iOS entry point. Unlike the macOS app (which adds a `MenuBarExtra` scene), iOS uses a single
 /// `WindowGroup`; the glanceable menu-bar role is filled by the Home/Lock-Screen widget instead.
@@ -7,8 +8,14 @@ import SwiftUI
 struct StrandiOSApp: App {
     @StateObject private var model: AppModel
     @StateObject private var health: HealthKitBridge
+    /// Observe the SAME JournalStore instance the model owns, so changing the reminder time in
+    /// settings reschedules the local notification reactively (onChange below).
+    @StateObject private var journal: JournalStore
     @State private var liveActivity = LiveActivityController()
     @Environment(\.scenePhase) private var scenePhase
+
+    /// Strongly held: UNUserNotificationCenter.delegate is weak, so the app must retain it.
+    private let journalReminder = JournalReminderScheduler()
 
     init() {
         let model = AppModel()
@@ -18,6 +25,7 @@ struct StrandiOSApp: App {
             appleDeviceId: model.appleDeviceId,
             noopDeviceId: model.deviceId
         ))
+        _journal = StateObject(wrappedValue: model.journal)
     }
 
     var body: some Scene {
@@ -28,6 +36,7 @@ struct StrandiOSApp: App {
                 .environmentObject(model.repo)
                 .environmentObject(model.profile)
                 .environmentObject(model.behavior)
+                .environmentObject(model.journal)
                 .environmentObject(model.intelligence)
                 .environmentObject(model.coach)
                 .environmentObject(health)
@@ -35,6 +44,23 @@ struct StrandiOSApp: App {
                 .task {
                     await health.requestAuthorization()
                     await health.sync()
+                }
+                .task {
+                    UNUserNotificationCenter.current().delegate = journalReminder
+                    journalReminder.apply(enabled: journal.reminderEnabled,
+                                          minutesSinceMidnight: journal.reminderMinutes)
+                }
+                .onChange(of: journal.reminderEnabled) { _, on in
+                    journalReminder.apply(enabled: on, minutesSinceMidnight: journal.reminderMinutes)
+                }
+                .onChange(of: journal.reminderMinutes) { _, m in
+                    journalReminder.apply(enabled: journal.reminderEnabled, minutesSinceMidnight: m)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .noopPendingIntentEnqueued)
+                    .receive(on: RunLoop.main)) { _ in
+                    // Drain immediately if we're foreground; background enqueues still drain on the
+                    // next scenePhase `.active` (handled below).
+                    if scenePhase == .active { model.drainPendingIntents() }
                 }
                 .onReceive(model.live.$heartRate) { _ in
                     liveActivity.update(

@@ -31,6 +31,7 @@ struct RootTabView: View {
         NavigationStack {
             List {
                 Section("Insights") {
+                    link("Journal", "book.pages.fill") { JournalView() }
                     link("Intelligence", "brain.head.profile") { IntelligenceView() }
                     link("Coach", "sparkles") { CoachView() }
                     link("Insights", "lightbulb.fill") { InsightsView() }

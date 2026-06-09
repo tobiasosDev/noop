@@ -7,8 +7,9 @@ extension AppModel {
     func drainPendingIntents() {
         for action in PendingIntents.drain() {
             switch action {
-            case .markMoment: markMoment()
-            case .buzz:       buzz(loops: 1)
+            case .markMoment:  markMoment()
+            case .buzz:        buzz(loops: 1)
+            case .openJournal: journalRoute = JournalRoute(day: JournalView.yesterdayKey())
             }
         }
     }

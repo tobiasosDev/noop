@@ -11,6 +11,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     case explore = "Explore"
     case compare = "Compare"
     case insights = "Insights"
+    case journal = "Journal"
     case sleep = "Sleep"
     case trends = "Trends"
     case workouts = "Workouts"
@@ -38,6 +39,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .explore: return "Explore"
         case .compare: return "Compare"
         case .insights: return "Insights"
+        case .journal: return "Journal"
         case .sleep: return "Sleep"
         case .trends: return "Trends"
         case .workouts: return "Workouts"
@@ -63,6 +65,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .explore: return "square.grid.2x2.fill"
         case .compare: return "chart.line.uptrend.xyaxis"
         case .insights: return "lightbulb.fill"
+        case .journal: return "book.pages.fill"
         case .sleep: return "moon.stars.fill"
         case .trends: return "chart.xyaxis.line"
         case .workouts: return "figure.run"
@@ -129,6 +132,7 @@ struct RootView: View {
         case .explore: MetricExplorerView()
         case .compare: CompareView()
         case .insights: InsightsView()
+        case .journal: JournalView()
         case .sleep: SleepView()
         case .trends: TrendsView()
         case .workouts: WorkoutsView()
