@@ -102,20 +102,22 @@ struct TrendsView: View {
         var caption: String
     }
 
-    private func resolve(_ value: (DailyMetric) -> Double?) -> ResolvedMetric {
-        // Find the smallest range ≥ selected whose window has ≥1 point, keeping
-        // that window's points so we don't re-filter to read them back.
-        for r in range.widening {
-            let pts = points(days(for: r), value)
-            if !pts.isEmpty {
-                return ResolvedMetric(points: pts, effective: r,
-                                      widened: r != range, caption: caption(count: pts.count, eff: r))
-            }
-        }
-        // No range held data: fall back to ALL (matches effectiveRange()).
-        let pts = points(days(for: .all), value)
-        return ResolvedMetric(points: pts, effective: .all,
-                              widened: .all != range, caption: caption(count: pts.count, eff: .all))
+    /// The single effective range for the whole screen: the smallest range ≥ the selected one
+    /// whose window holds ≥1 point for the anchor metric, else ALL. Anchoring every chart to ONE
+    /// range (instead of widening each metric independently) stops the screen from rendering a mix
+    /// of 90-day and all-history charts — and, crucially, from flipping between them as data lands.
+    /// The anchor is recovery: a signal Apple Health never supplies, so the chosen range doesn't
+    /// change when a partial Apple-Health sync (HRV/RHR but no recovery) refreshes mid-view.
+    private func sharedRange(_ anchor: (DailyMetric) -> Double?) -> Range {
+        for r in range.widening where !points(days(for: r), anchor).isEmpty { return r }
+        return .all
+    }
+
+    /// Resolve one metric at an already-chosen effective range (no per-metric widening).
+    private func resolve(at r: Range, _ value: (DailyMetric) -> Double?) -> ResolvedMetric {
+        let pts = points(days(for: r), value)
+        return ResolvedMetric(points: pts, effective: r,
+                              widened: r != range, caption: caption(count: pts.count, eff: r))
     }
 
     /// Caption text from an already-resolved count + effective range. Mirrors
@@ -170,10 +172,16 @@ struct TrendsView: View {
                 // down — rangeBar/heroRecovery/smallMultiples all reuse these
                 // instead of re-filtering repo.days through caption/widened/
                 // windowPoints on every render (hover, animation, 1 Hz HR tick).
-                let recovery = resolve { $0.recovery }
-                let hrv = resolve { $0.avgHrv }
-                let rhr = resolve { $0.restingHr.map(Double.init) }
-                let strain = resolve { $0.strain }
+                // Resolve ONE effective range for the whole screen (anchored to the hero metric,
+                // recovery), then render every chart against that same window. Per-metric widening
+                // let some charts sit at 90 days while others spanned a year, and the split flipped
+                // into view the moment a partial Apple-Health sync (HRV/RHR, no recovery) refreshed
+                // — the "looks good right after import, then doesn't" regression.
+                let eff = sharedRange { $0.recovery }
+                let recovery = resolve(at: eff) { $0.recovery }
+                let hrv = resolve(at: eff) { $0.avgHrv }
+                let rhr = resolve(at: eff) { $0.restingHr.map(Double.init) }
+                let strain = resolve(at: eff) { $0.strain }
                 VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                     rangeBar(recovery: recovery)
                     heroRecovery(recovery: recovery)
