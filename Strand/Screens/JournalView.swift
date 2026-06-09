@@ -23,10 +23,14 @@ struct JournalView: View {
     @State private var notes: [String: String] = [:]
     @State private var expandedNote: String?            // which row has its note field open
     @State private var history: [String: [JournalEntry]] = [:]
-    /// Distinct imported journal questions NOT in the catalog (e.g. a WHOOP export in another
-    /// language). Surfaced as loggable rows so native logging unifies with the imported history
-    /// on the same (deviceId, day, question) key instead of forking a parallel behaviour.
-    @State private var importedExtraQuestions: [String] = []
+    /// Distinct journal questions already imported (e.g. a German WHOOP export), verbatim. When
+    /// present, the Log is driven entirely by these — grouped by their resolved category and keyed
+    /// by the verbatim string — so native logging unifies with the imported history on the same
+    /// (deviceId, day, question) key, and the English catalog defaults don't double up the rows.
+    @State private var importedQuestions: [String] = []
+    /// Entry count per imported question, used to pick the dominant variant when several questions
+    /// resolve to the same behaviour (the longest history wins). See `dedupedImportedQuestions`.
+    @State private var questionCounts: [String: Int] = [:]
     @State private var saved = false
     @State private var loaded = false
     @State private var appeared = false
@@ -41,6 +45,7 @@ struct JournalView: View {
             .opacity(appeared ? 1 : 0)
             .animation(StrandMotion.fade, value: appeared)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) { stickySaveBar }
         .task {
             selectedDay = initialDay ?? Self.yesterdayKey()
             await load()
@@ -59,8 +64,13 @@ struct JournalView: View {
                 dayStepper
             }
 
-            let tracked = journal.trackedBehaviors
-            if tracked.isEmpty && importedExtraQuestions.isEmpty {
+            if hasImports {
+                // Imported journal present (e.g. a German WHOOP export): log against those exact
+                // questions, grouped by resolved category — no English-catalog duplicates.
+                ForEach(groupedImports, id: \.0) { group in
+                    importedCategoryCard(group.0, group.1)
+                }
+            } else if journal.trackedBehaviors.isEmpty {
                 NoopCard {
                     Text("No behaviours tracked yet. Choose what to log in Settings → Journal.")
                         .font(StrandFont.subhead)
@@ -69,11 +79,78 @@ struct JournalView: View {
                 }
             } else {
                 ForEach(JournalCatalog.categories, id: \.self) { cat in
-                    let items = tracked.filter { $0.category == cat }
+                    let items = journal.trackedBehaviors.filter { $0.category == cat }
                     if !items.isEmpty { categoryCard(cat, items) }
                 }
-                if !importedExtraQuestions.isEmpty { importedCard }
-                saveBar
+            }
+        }
+    }
+
+    /// Whether any WHOOP journal data is imported. When true, the Log shows only those questions
+    /// (resolved + grouped); the fresh-install path shows the tracked catalog behaviours instead.
+    private var hasImports: Bool { !importedQuestions.isEmpty }
+
+    /// One loggable row per distinct behaviour. Multiple imported question strings can resolve to
+    /// the same behaviour — a German WHOOP import ("Alkohol konsumiert?") plus an English answer the
+    /// user logged natively before catalog resolution existed ("Did you drink any alcohol?"). Both
+    /// mean "Alcohol", so we collapse them to a single row keyed by the variant with the MOST
+    /// history, so the longest-running series keeps accumulating. Unresolved questions stay distinct.
+    private var dedupedImportedQuestions: [String] {
+        var repForID: [String: String] = [:]   // behaviour id → chosen representative question
+        var standalone: [String] = []           // unresolved questions (kept verbatim, as-is)
+        for q in importedQuestions {
+            guard let id = JournalCatalog.byQuestion(q)?.id else { standalone.append(q); continue }
+            if let cur = repForID[id] {
+                if (questionCounts[q] ?? 0) > (questionCounts[cur] ?? 0) { repForID[id] = q }
+            } else {
+                repForID[id] = q
+            }
+        }
+        return Array(repForID.values) + standalone
+    }
+
+    /// Order imported categories: the curated ones first, then "Body" (symptoms), then anything
+    /// that didn't resolve. Within a category, sort by display label. Empty buckets are dropped.
+    private var groupedImports: [(String, [String])] {
+        let order = JournalCatalog.categories + ["Body", "Other"]
+        var buckets: [String: [String]] = [:]
+        for q in dedupedImportedQuestions {
+            let cat = JournalCatalog.byQuestion(q)?.category ?? "Other"
+            buckets[cat, default: []].append(q)
+        }
+        return order.compactMap { cat in
+            guard let qs = buckets[cat], !qs.isEmpty else { return nil }
+            let sorted = qs.sorted { importedLabel($0).localizedCaseInsensitiveCompare(importedLabel($1)) == .orderedAscending }
+            return (cat, sorted)
+        }
+    }
+
+    /// Display label for an imported question: the resolved catalog label, else a prettified form.
+    private func importedLabel(_ q: String) -> String {
+        JournalCatalog.byQuestion(q)?.shortLabel ?? Self.prettify(q)
+    }
+
+    /// A category card built from imported question strings (each resolved for its label/icon/tint,
+    /// but keyed by the verbatim question so the imported history keeps counting).
+    private func importedCategoryCard(_ category: String, _ questions: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(category.uppercased())
+                .font(StrandFont.overline)
+                .tracking(StrandFont.overlineTracking)
+                .foregroundStyle(StrandPalette.textTertiary)
+            NoopCard {
+                VStack(spacing: 0) {
+                    ForEach(Array(questions.enumerated()), id: \.element) { idx, q in
+                        let b = JournalCatalog.byQuestion(q)
+                        entryRow(question: q,
+                                 label: b?.shortLabel ?? Self.prettify(q),
+                                 icon: b?.icon ?? "questionmark.circle",
+                                 goodWhenYes: b?.goodWhenYes)
+                        if idx < questions.count - 1 {
+                            Divider().overlay(StrandPalette.hairline)
+                        }
+                    }
+                }
             }
         }
     }
@@ -132,28 +209,6 @@ struct JournalView: View {
         .animation(StrandMotion.fade, value: answer)
     }
 
-    /// Loggable rows for imported questions the catalog doesn't already cover (e.g. a WHOOP export
-    /// in another language), so the user can keep logging against their existing history.
-    private var importedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("FROM YOUR WHOOP JOURNAL")
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textTertiary)
-            NoopCard {
-                VStack(spacing: 0) {
-                    ForEach(Array(importedExtraQuestions.enumerated()), id: \.element) { idx, q in
-                        entryRow(question: q, label: Self.prettify(q),
-                                 icon: "questionmark.circle", goodWhenYes: nil)
-                        if idx < importedExtraQuestions.count - 1 {
-                            Divider().overlay(StrandPalette.hairline)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Yes / No / — choice. Selecting an answer opens the note field for that row.
     private func triState(_ q: String, tint: Color) -> some View {
         HStack(spacing: 6) {
@@ -185,6 +240,28 @@ struct JournalView: View {
         .buttonStyle(.plain)
     }
 
+    /// Save bar pinned to the bottom of the screen so it's always reachable without scrolling.
+    /// A short gradient lets the scroll content dissolve into the opaque bar above the home
+    /// indicator. Hidden until there's something loggable / loaded.
+    @ViewBuilder
+    private var stickySaveBar: some View {
+        if loaded && !loggableQuestions.isEmpty {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [StrandPalette.surfaceBase.opacity(0), StrandPalette.surfaceBase],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: 18)
+                .allowsHitTesting(false)
+                saveBar
+                    .padding(.horizontal, 28)
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
+                    .background(StrandPalette.surfaceBase)
+            }
+        }
+    }
+
     private var saveBar: some View {
         HStack {
             StatePill(LocalizedStringKey(progressText), tone: progressComplete ? .positive : .neutral, showsDot: false)
@@ -195,7 +272,7 @@ struct JournalView: View {
                     Text(saved ? "Saved" : "Save")
                 }
                 .font(StrandFont.headline)
-                .foregroundStyle(saved ? StrandPalette.surfaceBase : StrandPalette.surfaceBase)
+                .foregroundStyle(StrandPalette.surfaceBase)
                 .padding(.horizontal, 18).padding(.vertical, 10)
                 .background(saved ? StrandPalette.statusPositive : StrandPalette.accent)
                 .clipShape(Capsule())
@@ -318,12 +395,16 @@ struct JournalView: View {
     private func load() async {
         let entries = await repo.journalEntries()
         let imported = await repo.importedJournalQuestions()
-        let catalogQs = Set(JournalCatalog.all.map(\.question))
         var byDay: [String: [JournalEntry]] = [:]
-        for e in entries { byDay[e.day, default: []].append(e) }
+        var counts: [String: Int] = [:]
+        for e in entries {
+            byDay[e.day, default: []].append(e)
+            counts[e.question, default: 0] += 1
+        }
         await MainActor.run {
             history = byDay
-            importedExtraQuestions = imported.filter { !catalogQs.contains($0) }
+            importedQuestions = imported
+            questionCounts = counts
             seedAnswersForSelectedDay()
             loaded = true
         }
@@ -372,9 +453,10 @@ struct JournalView: View {
         if key <= Repository.localDayKey(Date()) { selectedDay = key }
     }
 
-    /// Everything loggable on this screen: tracked catalog behaviours + absorbed imported questions.
+    /// Everything loggable on this screen: the deduped imported questions when a WHOOP journal
+    /// exists, otherwise the tracked catalog behaviours (fresh install).
     private var loggableQuestions: [String] {
-        journal.trackedBehaviors.map(\.question) + importedExtraQuestions
+        hasImports ? dedupedImportedQuestions : journal.trackedBehaviors.map(\.question)
     }
     private var answeredCount: Int {
         loggableQuestions.filter { answers[$0] != nil }.count

@@ -133,12 +133,24 @@ struct InsightsView: View {
 
     // MARK: - Load
 
+    /// Friendly label for a behaviour key. The key is a verbatim journal question (possibly a
+    /// German WHOOP export string); resolve it through the alias-aware catalog so impact rows read
+    /// "Caffeine" rather than "Koffein konsumiert?". Falls back to the raw key if unresolved.
+    func behaviorLabel(_ key: String) -> String {
+        JournalCatalog.byQuestion(key)?.shortLabel ?? key
+    }
+
     private func load() async {
         // Journal → behaviours map (only "yes" answers count as the behaviour occurring).
+        // Merge question variants that resolve to the same behaviour — a German WHOOP import
+        // ("Alkohol konsumiert?") and an English answer logged natively ("Did you drink any
+        // alcohol?") are one behaviour — so each is ranked once over its full history (no
+        // duplicate "Alcohol" rows). Key on the resolved canonical question; unresolved stay raw.
         let entries = await repo.journalEntries()
         var byBehaviour: [String: Set<String>] = [:]
         for e in entries where e.answeredYes {
-            byBehaviour[e.question, default: []].insert(e.day)
+            let key = JournalCatalog.byQuestion(e.question)?.question ?? e.question
+            byBehaviour[key, default: []].insert(e.day)
         }
 
         // Outcome series (Whoop) → both [day:value] dictionaries and ordered series.
@@ -462,7 +474,7 @@ extension InsightsView {
                     } label: {
                         VStack(spacing: 0) {
                             ImpactRow(
-                                name: e.behavior,
+                                name: behaviorLabel(e.behavior),
                                 valueText: valueText,
                                 movedGood: movedGood,
                                 fraction: fraction,
@@ -476,7 +488,7 @@ extension InsightsView {
                     .buttonStyle(.plain)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(impactAccessibilityLabel(
-                        name: e.behavior, valueText: valueText,
+                        name: behaviorLabel(e.behavior), valueText: valueText,
                         movedGood: movedGood, significant: e.significant))
 
                     if i < ranked.count - 1 {
@@ -513,7 +525,7 @@ extension InsightsView {
             : (movedGood! ? StrandPalette.accent : StrandPalette.statusWarning)
         return VStack(alignment: .leading, spacing: 10) {
             Divider().overlay(StrandPalette.hairline)
-            Text(BehaviorInsights.sentence(e))
+            Text(BehaviorInsights.sentence(e, name: behaviorLabel(e.behavior)))
                 .font(StrandFont.subhead)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
