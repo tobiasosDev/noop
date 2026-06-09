@@ -589,9 +589,10 @@ struct StressGauge: View {
                     .shadow(color: StressRamp.color(score).opacity(0.55), radius: 10)
             }
             .frame(width: diameter, height: diameter)
-            // The arc occupies the top half of its bounding box; pin it so the
-            // readout sits inside the bowl.
-            .frame(height: diameter / 2 + lineWidth, alignment: .top)
+            // StressArc centers on the bottom of its box, so the dome occupies the LOWER half;
+            // bottom-pin the clip to keep the whole bowl (a .top crop sliced it off, leaving only
+            // the apex sliver under the number — issue: gauge "doesn't look right" on device).
+            .frame(height: diameter / 2 + lineWidth, alignment: .bottom)
             .clipped()
 
             // Center readout (number + band), tucked into the semicircle.
