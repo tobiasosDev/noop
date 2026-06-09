@@ -1,0 +1,26 @@
+Strand/Screens/InsightsView.swift
+  s_fa46186a3c3a3c::t_1b77e40c5468e6 202
+  s_fa46186a3c3a3c::t_2689a3318d3a8e 390-457,477-505,540-745
+  s_fa46186a3c3a3c::t_608c0a16dd5409 458-476
+  s_fa46186a3c3a3c::t_5151b170b40971 131
+  s_fa46186a3c3a3c::t_73915ef95614b8 76
+  s_fa46186a3c3a3c::t_880d321cdd29dc 77
+  s_fa46186a3c3a3c::t_6ca7572a7fcd2e 191-197
+  s_fa46186a3c3a3c::t_2767dff1ab7165 506-539
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "3a878bbb3d425f6f2bf66e638c1d3e68102b66d0",
+  "prompts": {},
+  "sessions": {
+    "s_fa46186a3c3a3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66b05331-647f-4502-978a-a31905b64b64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
