@@ -1,0 +1,313 @@
+android/app/src/main/java/com/noop/ble/WhoopBleClient.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 89-93,1302-1316,2095
+build-sim/Logs/Test/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/fsmonitor-watchman.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-174
+android/app/src/test/java/com/noop/ui/SleepImportedFiguresTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-79
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-applypatch.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+Strand/Screens/AutomationsView.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 18,133-139,147-158
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-49
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+build-sim/Logs/Localization/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/prepare-commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-42
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-push.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-53
+android/app/build.gradle.kts
+  s_8dfefa1df8db42::t_406a4edc01c888 25-26,167
+build-device/ModuleCache.noindex/Session.modulevalidation
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/prepare-commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-42
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-128
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/fsmonitor-watchman.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-174
+CHANGELOG.md
+  s_8dfefa1df8db42::t_406a4edc01c888 20-67
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-receive.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/post-update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-8
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/info/exclude
+  s_8dfefa1df8db42::t_2991279bee73c0 1-6
+android/app/src/main/java/com/noop/ui/MainActivity.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 199-220
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/fsmonitor-watchman.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-174
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/post-update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-8
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/description
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+docs/ANALYTICS.md
+  s_8dfefa1df8db42::t_406a4edc01c888 22-27,33
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-push.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-53
+android/app/src/test/java/com/noop/notif/IllnessAlertPolicyTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-30
+build-device/Logs/Test/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/config
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+docs/FEATURES.md
+  s_8dfefa1df8db42::t_406a4edc01c888 424-425,440-445
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/packed-refs
+  s_8dfefa1df8db42::t_2991279bee73c0 1-954
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-push.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-53
+build-device/Logs/Launch/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+android/app/src/test/java/com/noop/ui/WorkoutZonesTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-56
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/config
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+build-sim/Logs/Package/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-83
+Strand/Data/BehaviorStore.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 53-55
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/post-update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-8
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/FETCH_HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1-197
+build-device/NOOP-TF.xcarchive/Info.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-90
+android/app/src/main/java/com/noop/ingest/WhoopCsvImporter.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 8,86,107,114,328-347
+build-sim/ModuleCache.noindex/Session.modulevalidation
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+Strand/System/AppChangelog.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 10,22-43
+Strand/Resources/Info.plist
+  s_8dfefa1df8db42::t_406a4edc01c888 22
+android/app/src/main/java/com/noop/ui/Charts.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 16,276-305
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-128
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/push-to-checkout.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-78
+StrandTests/RelativeAgoTests.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-38
+Strand/Screens/WorkoutsView.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 48,53-55,223-278,611,627-628
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/sendemail-validate.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-77
+Strand/MenuBar/MenuBarContent.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 123,244-263
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/FETCH_HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1-197
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/push-to-checkout.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-78
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-49
+Strand/Data/IntelligenceEngine.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 85-86,119-120,141-149,156,164-175,184-189
+Strand/Screens/SettingsView.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 201-203
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/push-to-checkout.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-78
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-49
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/sendemail-validate.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-77
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-applypatch.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+Strand/Screens/LiveView.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 5,43,157-231
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/info/exclude
+  s_8dfefa1df8db42::t_2991279bee73c0 1-6
+Packages/StrandAnalytics/Sources/StrandAnalytics/RecoveryScorer.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 93-112
+android/app/src/main/java/com/noop/ui/SettingsScreen.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 341-342
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/post-update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-8
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/sendemail-validate.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-77
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/applypatch-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-15
+android/app/src/main/java/com/noop/ui/AppChangelog.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 28,39-62
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/packed-refs
+  s_8dfefa1df8db42::t_2991279bee73c0 1-954
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/prepare-commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-42
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-receive.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/info/exclude
+  s_8dfefa1df8db42::t_2991279bee73c0 1-6
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/packed-refs
+  s_8dfefa1df8db42::t_2991279bee73c0 1-204
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-rebase.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-169
+Strand/Data/WorkoutZones.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-48
+android/app/src/main/java/com/noop/ui/LiveScreen.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 30-33,53-54,145-201
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-push.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-53
+android/app/src/main/java/com/noop/notif/IllnessAlertNotifier.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-79
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/RecoveryCalibrationTests.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-45
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-rebase.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-169
+build-sim/Logs/Launch/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+android/app/src/test/java/com/noop/protocol/FramingTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 135-149,187-201
+Packages/WhoopStore/Tests/WhoopStoreTests/JournalWorkoutAppleCacheTests.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 210-232
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-rebase.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-169
+Strand/Screens/ScreenScaffold.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 65-79
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/info/exclude
+  s_8dfefa1df8db42::t_2991279bee73c0 1-6
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-applypatch.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/push-to-checkout.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-78
+Packages/WhoopProtocol/Tests/WhoopProtocolTests/DeviceFamilyFramingTests.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 255-287
+tools/linux-capture/test_whoop_sync.py
+  s_8dfefa1df8db42::t_2991279bee73c0 188-236
+android/app/src/main/java/com/noop/ui/AutomationsScreen.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 16,50-51,146-158
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-128
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/description
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-merge-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-13
+Strand/System/IllnessNotifier.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-47
+build-device/SourcePackages/workspace-state.json
+  s_8dfefa1df8db42::t_2991279bee73c0 1-47
+project.yml
+  s_8dfefa1df8db42::t_406a4edc01c888 14,59
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-applypatch.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/config
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/fsmonitor-watchman.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-174
+android/app/src/test/java/com/noop/ingest/WhoopCycleSeriesTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-42
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+Strand/BLE/LiveState.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 27-31,54-58
+build-device/info.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-receive.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-merge-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-13
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-receive.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+android/app/src/main/java/com/noop/ui/AppViewModel.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 9,16,18,21,99-107,149-156,241-304,501-508
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-49
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/description
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-merge-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-13
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+android/app/src/test/java/com/noop/ui/SleepStageSegmentsTest.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 1-48
+Tools/translate-de.py
+  s_8dfefa1df8db42::t_406a4edc01c888 56,63,145,216,229,235,256,312,322,384,406,415,452,470-472,486-487
+Packages/WhoopStore/Sources/WhoopStore/JournalWorkoutAppleCache.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 138-151
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/applypatch-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-15
+tools/linux-capture/whoop_sync.py
+  s_8dfefa1df8db42::t_2991279bee73c0 60,319-322,338-339,344-347,433-437,439,466-487,491-492,522,587-618
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/FETCH_HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1-953
+build-device/NOOP.xcarchive/Info.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-33
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/description
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/config
+  s_8dfefa1df8db42::t_2991279bee73c0 1-14
+android/app/src/main/java/com/noop/ble/WhoopConnectionService.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 18-19,21,62-66,105-112,119,121-126
+build-device/Logs/Package/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-83
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/update.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-128
+android/app/src/main/java/com/noop/ui/WorkoutsScreen.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 14,107,295-354,580-618
+Tools/merge-xcstrings.py
+  s_8dfefa1df8db42::t_f7a71924722fb6 1-46
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/FETCH_HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1-953
+build-sim/SourcePackages/workspace-state.json
+  s_8dfefa1df8db42::t_2991279bee73c0 1-47
+Packages/WhoopProtocol/Sources/WhoopProtocol/HapticPayloads.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-57
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-rebase.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-169
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-24
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/prepare-commit-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-42
+build-sim/info.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+android/app/src/main/java/com/noop/data/DemoSeeder.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 131-140,177-186
+StrandTests/WorkoutZonesTests.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 1-43
+build-sim/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/applypatch-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-15
+Strand/BLE/FrameRouter.swift
+  s_8dfefa1df8db42::t_406a4edc01c888 66-73
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+android/app/src/main/java/com/noop/ui/SleepScreen.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 34,62-67,88-104,136-137,150-152,526,540,546-553,555,571-573,577-581,583-587,616-617,619-621,626-634,636-637,646-648,658-666,683,791-793,795-800,802,804-805,807-815,817
+build-device/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/applypatch-msg.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-15
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/HEAD
+  s_8dfefa1df8db42::t_2991279bee73c0 1
+build-device/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-merge-commit.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-13
+build-device/Logs/Localization/LogStoreManifest.plist
+  s_8dfefa1df8db42::t_2991279bee73c0 1-10
+android/app/src/main/java/com/noop/protocol/Enums.kt
+  s_8dfefa1df8db42::t_406a4edc01c888 86-88
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/sendemail-validate.sample
+  s_8dfefa1df8db42::t_2991279bee73c0 1-77
+build-sim/SourcePackages/repositories/ZIPFoundation-789121e4/packed-refs
+  s_8dfefa1df8db42::t_2991279bee73c0 1-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4c6183c2c9cb63cec99e052be82afd43fffb14b8",
+  "prompts": {},
+  "sessions": {
+    "s_8dfefa1df8db42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a241603-438b-4ceb-93a7-5b8630d4c079",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
