@@ -1,0 +1,26 @@
+StrandiOS/System/BedtimeReminderScheduler.swift
+  s_ff049a8bced57c::t_02e24b8c66d1fa 1-33
+Strand/Screens/SleepView.swift
+  s_ff049a8bced57c::t_f539fb2260c453 610-641
+  s_ff049a8bced57c::t_50764e6f2775ad 892
+  s_ff049a8bced57c::t_7218ece6b6ec4d 10-13
+  s_ff049a8bced57c::t_576ba07d6562e8 31
+  s_ff049a8bced57c::t_df4adac56f7419 54-57,59-62
+  s_ff049a8bced57c::t_98fe0282e09048 83-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "eadb6b164da7a071f8555b103ef3d394f496efe1",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
