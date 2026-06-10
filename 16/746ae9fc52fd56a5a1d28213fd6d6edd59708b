@@ -1,0 +1,42 @@
+Packages/StrandAnalytics/Sources/StrandAnalytics/StrainScorer.swift
+  s_8dfefa1df8db42::t_7fce5f096ffce3 119-121
+  s_8dfefa1df8db42::t_1f48716229e51c 215-255
+Packages/WhoopStore/Tests/WhoopStoreTests/DiagnosticsTests.swift
+  s_8dfefa1df8db42::t_30ad5675ace288 68-85
+Strand/Data/DayStrain.swift
+  s_8dfefa1df8db42::t_1f18d3a782b53a 9-12,16-18,20-22
+  s_8dfefa1df8db42::t_dc9cdf01adc19a 3
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/StrainScorerTests.swift
+  s_8dfefa1df8db42::t_791f240d12f39c 103-141
+Strand/Data/IntelligenceEngine.swift
+  s_8dfefa1df8db42::t_ae67dd0fc3d743 161-163
+  s_8dfefa1df8db42::t_dc39e6fdbe5869 53-70
+  s_8dfefa1df8db42::t_297655328d88c5 97-105
+Strand/App/AppModel.swift
+  s_8dfefa1df8db42::t_f31ab7996c8129 162-166
+Packages/WhoopStore/Sources/WhoopStore/Reads.swift
+  s_8dfefa1df8db42::t_eca25fdc51725c 130-152
+Strand/Data/Repository.swift
+  s_8dfefa1df8db42::t_6ce3922208eb1c 142-147
+Strand/Screens/TodayView.swift
+  s_8dfefa1df8db42::t_e42679e3e768f4 610-611,614
+  s_8dfefa1df8db42::t_050fc5bcffbbdd 626-629
+Strand/App/RootView.swift
+  s_8dfefa1df8db42::t_2af8d39f7337e1 117-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "16746ae9fc52fd56a5a1d28213fd6d6edd59708b",
+  "prompts": {},
+  "sessions": {
+    "s_8dfefa1df8db42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a241603-438b-4ceb-93a7-5b8630d4c079",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
