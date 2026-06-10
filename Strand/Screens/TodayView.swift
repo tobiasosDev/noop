@@ -239,40 +239,63 @@ struct TodayView: View {
     }
 
     private func strainCoachGauge(current: Double) -> some View {
-        StrainGauge(strain: current, diameter: 132, lineWidth: 11)
+        // While the score is still building (dayStrain == nil), the gauge renders as a
+        // dimmed, unlabelled dial with an em-dash placeholder — an instrument warming
+        // up — instead of claiming "0.0" as a real reading.
+        let pending = dayStrain == nil
+        return StrainGauge(strain: current, diameter: 132, lineWidth: 11,
+                           showsLabel: !pending, showsHover: !pending)
+            .opacity(pending ? 0.55 : 1)
+            .overlay {
+                if pending {
+                    VStack(spacing: 2) {
+                        Text(verbatim: "—")
+                            .font(StrandFont.display(132 * 0.26))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                        Text("STRAIN")
+                            .font(StrandFont.overline)
+                            .tracking(StrandFont.overlineTracking)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                }
+            }
             .frame(minWidth: 132)
     }
 
     @ViewBuilder
     private func strainCoachDetail(band: StrainTarget.Band, current: Double) -> some View {
-        let state = band.state(currentStrain: current)
         VStack(alignment: .leading, spacing: 6) {
-            Text(String(format: "Aim %.1f–%.1f", band.low, band.high))
+            Text("Aim \(band.low, specifier: "%.1f")–\(band.high, specifier: "%.1f")")
                 .font(StrandFont.headline)
                 .foregroundStyle(StrandPalette.textPrimary)
-            Text(strainCoachStateLine(state, band: band, current: current))
-                .font(StrandFont.subhead)
-                .foregroundStyle(strainCoachStateColor(state))
-                .fixedSize(horizontal: false, vertical: true)
             if dayStrain == nil {
+                // No reading yet — only the building note, never a numeric state claim.
                 Text("Building — needs about 10 minutes of heart-rate data.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if !live.connected {
-                Text("Strap not connected — showing the last synced value.")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textTertiary)
+            } else {
+                let state = band.state(currentStrain: current)
+                Text(strainCoachStateLine(state, current: current))
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(strainCoachStateColor(state))
                     .fixedSize(horizontal: false, vertical: true)
+                if !live.connected {
+                    Text("Strap not connected — showing the last synced value.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
-    private func strainCoachStateLine(_ s: StrainTarget.State, band: StrainTarget.Band, current: Double) -> String {
+    /// LocalizedStringKey (not String(format:)) so these lines land in the String Catalog.
+    private func strainCoachStateLine(_ s: StrainTarget.State, current: Double) -> LocalizedStringKey {
         switch s {
-        case .building:     return String(format: "%.1f now — room to push today.", current)
-        case .onTarget:     return String(format: "%.1f now — right in your target band.", current)
-        case .overreaching: return String(format: "%.1f now — beyond today's recommendation.", current)
+        case .building:     return "\(current, specifier: "%.1f") now — room to push today."
+        case .onTarget:     return "\(current, specifier: "%.1f") now — right in your target band."
+        case .overreaching: return "\(current, specifier: "%.1f") now — beyond today's recommendation."
         }
     }
 

@@ -100,7 +100,7 @@ struct LiveView: View {
                 }
                 if let s = dayStrain, let recovery = repo.today?.recovery {
                     let band = StrainTarget.band(recovery: recovery)
-                    Text(String(format: "Day strain %.1f / target %.1f–%.1f", s, band.low, band.high))
+                    Text("Day strain \(s, specifier: "%.1f") / target \(band.low, specifier: "%.1f")–\(band.high, specifier: "%.1f")")
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textSecondary)
                         .padding(.top, 2)
