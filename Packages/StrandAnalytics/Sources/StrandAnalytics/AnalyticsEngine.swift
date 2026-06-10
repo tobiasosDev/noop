@@ -84,6 +84,9 @@ public enum AnalyticsEngine {
     ///   - baselines: personal baselines for recovery normalization.
     ///   - maxHROverride: explicit HRmax (bpm) to use for strain/zones; nil →
     ///     Tanaka from profile.age.
+    ///   - gyro: optional live rotational-motion stream corroborating daytime stillness.
+    ///   - tzOffsetS: user's local UTC offset (seconds) enabling the daytime sleep guard;
+    ///     nil → guard disabled (legacy night gate everywhere).
     public static func analyzeDay(day: String,
                                   hr: [HRSample] = [],
                                   rr: [RRInterval] = [],
@@ -91,10 +94,17 @@ public enum AnalyticsEngine {
                                   gravity: [GravitySample] = [],
                                   profile: UserProfile,
                                   baselines: ProfileBaselines = ProfileBaselines(),
-                                  maxHROverride: Double? = nil) -> DayResult {
+                                  maxHROverride: Double? = nil,
+                                  gyro: [GyroSample] = [],
+                                  tzOffsetS: Int? = nil) -> DayResult {
 
         // ── Sleep detection + staging ─────────────────────────────────────────
-        let allSessions = SleepStager.detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity)
+        // Personal asleep-HR floor for the daytime guard: the trailing-night resting-HR
+        // baseline when usable, else SleepStager derives it from the input window.
+        let sleepFloorHR: Double? = (baselines.restingHR?.usable == true) ? baselines.restingHR?.baseline : nil
+        let sleepOptions = SleepDetectionOptions(sleepFloorHR: sleepFloorHR, tzOffsetS: tzOffsetS)
+        let allSessions = SleepStager.detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity,
+                                                  gyro: gyro, options: sleepOptions)
         // Sessions attributed to `day` = those whose end falls on `day` (UTC).
         let matched = allSessions.filter { dayString($0.end) == day }
 

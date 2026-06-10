@@ -87,6 +87,135 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertTrue(sessions.isEmpty)
     }
 
+    // MARK: - Daytime false-positive guard
+
+    /// A UTC midnight, so `start + hour*3600` lands the run at a known local hour (tz=0).
+    private let dayBase: Int = (1_700_000_000 / 86_400) * 86_400
+
+    private func gyroStream(start: Int, durationS: Int, speedDegS: Double) -> [GyroSample] {
+        (0..<durationS).map { GyroSample(ts: start + $0, speedDegS: speedDegS) }
+    }
+
+    func testDaytimeStillAwakeIsRejected() {
+        // 14:45 local, perfectly still, but HR sits at quiet-wake (64) — never drops to
+        // the personal asleep floor (52). The reported false positive.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testSameStillHourAtNightIsAccepted() {
+        // Identical stillness + HR=64, but at 01:45 local → night gate (legacy) accepts.
+        // Demonstrates the guard is surgical to daytime and never tightens nights.
+        let start = dayBase + 1 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeRealNapIsAccepted() {
+        // 14:45 local nap where HR genuinely drops to the asleep floor (52) → accepted.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeGyroFidgetIsRejected() {
+        // HR drops to the floor (would pass) but gyro shows sustained rotational fidget
+        // (10 deg/s) → not lying motionless → rejected.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let gyro = gyroStream(start: start, durationS: dur, speedDegS: 10)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, gyro: gyro, options: opts).isEmpty)
+    }
+
+    func testDaytimeGyroStillNapAccepted() {
+        // Same low-HR nap but gyro confirms rotational stillness (0 deg/s) → accepted.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let gyro = gyroStream(start: start, durationS: dur, speedDegS: 0)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, gyro: gyro, options: opts).count, 1)
+    }
+
+    func testDefaultOptionsPreserveLegacyBehavior() {
+        // No tz / no floor → legacy night gate everywhere: a still low-HR run is accepted
+        // regardless of absolute clock, matching pre-guard behaviour.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 50)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav).count, 1)
+    }
+
+    /// HR alternating between two values each second → high 10-min SD.
+    private func hrAlternating(start: Int, durationS: Int, _ a: Int, _ b: Int) -> [HRSample] {
+        (0..<durationS).map { HRSample(ts: start + $0, bpm: $0 % 2 == 0 ? a : b) }
+    }
+
+    func testDaytimeLowHRButHighVariabilityRejected() {
+        // 14:45 local, still, mean HR ~54 (at the floor band) BUT HR swings 47↔61 → 10-min
+        // SD ≈ 7 bpm > 6. Quiet wake keeps HR variable even when motionless; real sleep does
+        // not. The Topalidis low-variability gate rejects this without needing gyro.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrAlternating(start: start, durationS: dur, 47, 61)  // mean 54, SD 7
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testDaytimeMainSleepUsesLegacyGate() {
+        // A 5 h daytime still run = night-shift MAIN sleep (≥ dayMaxNapDurationS). It must NOT
+        // be strict-gated: even at HR 64 (above the nap floor band) the legacy gate accepts it,
+        // so shifted-schedule sleepers are not regressed.
+        let start = dayBase + 13 * 3_600
+        let dur = 5 * 3_600
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeNapRejectedWhenNoTrustworthyFloor() {
+        // New user (no baseline) + a window with NO night samples → the floor cannot be
+        // trusted (would be minted from awake HR), so a daytime still hour is NOT logged as
+        // sleep even at low HR. Conservative until a real asleep floor exists.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: nil, tzOffsetS: 0)  // no baseline
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testDaytimeNapAcceptedViaNightDerivedFloor() {
+        // Window spans a real night (02:00, HR 50 → night-derived floor 50) AND a daytime nap
+        // (14:00, HR 52). With no explicit baseline, the daytime nap is vetted against the
+        // night-derived floor and accepted → both sessions detected.
+        let night = dayBase + 2 * 3_600
+        let nightDur = 6 * 3_600
+        let nap = dayBase + 14 * 3_600
+        let napDur = 90 * 60
+        let grav = stillGravity(start: night, durationS: nightDur) + stillGravity(start: nap, durationS: napDur)
+        let hr = hrStream(start: night, durationS: nightDur, bpm: 50) + hrStream(start: nap, durationS: napDur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: nil, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 2)
+    }
+
     // MARK: - Staging output integrity
 
     func testStagesTileSessionExactly() {

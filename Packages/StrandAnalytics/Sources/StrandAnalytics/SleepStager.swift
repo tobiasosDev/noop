@@ -58,6 +58,35 @@ public struct SleepSession: Equatable, Sendable {
     }
 }
 
+/// A per-sample gyroscope (rotational) motion magnitude. Sourced from the strap's
+/// type-43 live IMU stream (gyroX/Y/Z, deg/s); `speedDegS` is the L2 angular speed.
+///
+/// Gyro catches rotational fidget that the 1 Hz gravity-orientation vector is blind
+/// to (small head/hand/phone movements that barely change tilt), so it separates
+/// "lying motionless asleep" from "sitting still but awake". Live-only: it is NOT in
+/// the type-47 historical offload, so it corroborates the live daytime case only.
+public struct GyroSample: Equatable, Sendable {
+    public let ts: Int            // wall-clock unix seconds
+    public let speedDegS: Double  // angular-speed magnitude (deg/s)
+    public init(ts: Int, speedDegS: Double) { self.ts = ts; self.speedDegS = speedDegS }
+}
+
+/// Tuning inputs that personalise sleep detection and enable the daytime guard.
+public struct SleepDetectionOptions: Sendable {
+    /// Personal asleep HR floor (bpm) — e.g. the trailing-night resting-HR baseline.
+    /// Used by the daytime gate as the level a real sleep period must drop toward.
+    /// nil → derived from the lowest 5-min rolling HR across the input window.
+    public var sleepFloorHR: Double?
+    /// Seconds to add to UTC for the user's local wall clock, used for circadian
+    /// gating. nil → circadian gating disabled (every run uses the legacy night gate,
+    /// preserving prior behaviour; production callers always supply this).
+    public var tzOffsetS: Int?
+    public init(sleepFloorHR: Double? = nil, tzOffsetS: Int? = nil) {
+        self.sleepFloorHR = sleepFloorHR
+        self.tzOffsetS = tzOffsetS
+    }
+}
+
 public enum SleepStager {
 
     // MARK: - Stage 0 constants (sleep.py)
@@ -84,6 +113,53 @@ public enum SleepStager {
     public static let hrRefineMinSamples: Int = 30
     /// Consecutive sleep epochs required to declare onset.
     public static let onsetPersistEpochs: Int = 3
+
+    // MARK: - Daytime false-positive guard (issue: still+relaxed daytime hour logged as sleep)
+    //
+    // The legacy spine confirms a still run as sleep when its mean HR ≤ day-median × 1.05.
+    // The day median is contaminated by sedentary hours and 1.05 is loose, so a quiet awake
+    // hour passes. Actigraphy's documented failure mode: high sleep-sensitivity, low wake-
+    // SPECIFICITY (Marino 2013: wake specificity 0.329; van Hees 2015 raw-stillness rule:
+    // 45% specificity, +31 min sleep overestimate), and it is WORSE in the daytime (Gao 2022:
+    // daytime wake specificity 0.35–0.54 vs night 0.37–0.62). The fix follows the evidence:
+    // keep NIGHT runs on the legacy gate, and for DAYTIME runs require POSITIVE evidence of
+    // sleep (Marino's recommendation), not mere stillness:
+    //   • HR drops to the personal asleep floor — the sleep/wake HR gap is ≈20 bpm / ~24%
+    //     (Liu 2020: wake 87 → sleep 66; this user: ~71 → ~52).
+    //   • HR is LOW-VARIABILITY there — a 10-min rolling SD of HR ≤ 6 bpm marks sleep vs
+    //     quiet wake (Topalidis 2022). This is the discriminator that needs no motion data,
+    //     so it works on the historical offload where gyro is absent.
+    //   • A nap-length DURATION CAP so a night-shift worker's daytime MAIN sleep is not
+    //     strict-gated (it routes to the legacy gate instead).
+    //   • The asleep floor is taken from the personal baseline or NIGHT-window samples only —
+    //     never self-derived from the daytime window being judged (which would mint a
+    //     permissive floor from the awake HR and disarm the guard).
+    // Gyro stays an OPTIONAL corroborator (live-only; weakly evidenced — keep but don't rely).
+
+    /// Local clock hours [start, end) treated as the personal night window. A run whose
+    /// midpoint falls inside uses the lenient legacy gate; outside uses the strict gate.
+    public static let nightWindowStartHour: Int = 20
+    public static let nightWindowEndHour: Int = 11
+    /// Daytime runs at/above this duration are treated as MAIN sleep (e.g. a night-shift
+    /// sleeper) → legacy gate, not the strict nap gate. Below it → strict nap gate.
+    public static let dayMaxNapDurationS: Int = 4 * 3_600
+    /// A daytime run's lowest 5-min-mean HR must reach within this margin (bpm) of the
+    /// personal asleep floor. Asleep floor ≈ 52, quiet-wake ≈ 64+ → a 5-bpm band sits well
+    /// below quiet wake while still admitting real naps (which reach the floor).
+    public static let dayFloorMarginBpm: Double = 5.0
+    /// 10-min rolling SD-of-HR (bpm) ceiling marking low cardiac variability of true sleep
+    /// vs quiet wake (Topalidis 2022). A 5-min window only counts as "asleep-like" when its
+    /// mean is at the floor AND its surrounding HR variability is ≤ this.
+    public static let hrSDMaxBpm: Double = 6.0
+    public static let hrSDWindowS: Int = 10 * 60
+    /// Fraction of a daytime run's 5-min windows that must be asleep-like (low HR + low HR
+    /// variability) for it to count as sleep.
+    public static let dayAsleepFraction: Double = 0.40
+    /// Gyro angular speed (deg/s) at/below which a sample is rotationally still.
+    /// EMPIRICAL — not literature-validated; tune on labelled data. Optional corroborator.
+    public static let gyroStillThresholdDegS: Double = 3.0
+    /// When gyro is present, a daytime run must be gyro-still for ≥ this fraction. EMPIRICAL.
+    public static let gyroStillFraction: Double = 0.90
 
     // MARK: - Stage 1–3 constants (sleep_features.py)
 
@@ -258,20 +334,127 @@ public enum SleepStager {
         return meanHR <= baseline * hrSleepBaselineMult
     }
 
+    // MARK: - Daytime guard
+
+    /// Local clock hour [0,23] of a unix-second timestamp given a UTC offset (seconds).
+    static func localHour(_ ts: Int, _ off: Int) -> Int {
+        let secOfDay = (((ts + off) % 86_400) + 86_400) % 86_400
+        return secOfDay / 3_600
+    }
+
+    /// True when an hour-of-day falls in the personal night window (handles the 20→11 wrap).
+    static func isNightHour(_ h: Int) -> Bool {
+        if nightWindowStartHour <= nightWindowEndHour {
+            return h >= nightWindowStartHour && h < nightWindowEndHour
+        }
+        return h >= nightWindowStartHour || h < nightWindowEndHour
+    }
+
+    /// True when the run's local-clock midpoint is inside the night window.
+    /// nil tz → treated as night (legacy gate; production always passes a tz).
+    static func isNightRun(_ p: Period, tzOffsetS: Int?) -> Bool {
+        guard let off = tzOffsetS else { return true }
+        return isNightHour(localHour((p.start + p.end) / 2, off))
+    }
+
+    /// Per-5-min-window (mean HR, local 10-min SD of HR) over [start, end); empty windows skipped.
+    static func hrWindowStats(_ hr: [HRSample], start: Int, end: Int) -> [(mean: Double, sd: Double)] {
+        let wMean = 5 * 60
+        var out: [(Double, Double)] = []
+        var t = start
+        while t < end {
+            let win = hr.filter { $0.ts >= t && $0.ts < t + wMean }
+            if !win.isEmpty {
+                let mean = Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count)
+                let sdWin = hr.filter { $0.ts >= t && $0.ts < t + hrSDWindowS }.map { Double($0.bpm) }
+                out.append((mean, standardDeviation(sdWin)))
+            }
+            t += wMean
+        }
+        return out
+    }
+
+    /// Personal asleep floor derived ONLY from night-window HR (never from the daytime run
+    /// being judged). Lowest 5-min mean HR over samples whose local hour is night. nil when
+    /// tz is unknown or no night samples exist — caller must then refuse the strict accept.
+    static func derivedNightFloor(_ hr: [HRSample], tzOffsetS: Int?) -> Double? {
+        guard let off = tzOffsetS,
+              let lo = hr.map({ $0.ts }).min(), let hi = hr.map({ $0.ts }).max(), hi >= lo
+        else { return nil }
+        let wMean = 5 * 60
+        var nightMeans: [Double] = []
+        var t = lo
+        while t <= hi {
+            let win = hr.filter { $0.ts >= t && $0.ts < t + wMean }
+            if !win.isEmpty, isNightHour(localHour(t, off)) {
+                nightMeans.append(Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count))
+            }
+            t += wMean
+        }
+        return nightMeans.min()
+    }
+
+    /// Fraction of gyro samples in the run that are rotationally still (live-only corroborator).
+    static func gyroStillFractionInRun(_ p: Period, gyro: [GyroSample]) -> Double? {
+        let seg = rowsBetween(gyro, start: p.start, end: p.end) { $0.ts }
+        guard !seg.isEmpty else { return nil }
+        let still = seg.filter { $0.speedDegS <= gyroStillThresholdDegS }.count
+        return Double(still) / Double(seg.count)
+    }
+
+    /// Decide whether a still run is genuine sleep. NIGHT / unknown-tz / daytime MAIN-sleep
+    /// (≥ dayMaxNapDurationS) → legacy gate (unchanged behaviour). Daytime NAP-length runs →
+    /// require positive evidence: HR drops to the personal floor, stays low-HR + low-variability
+    /// for a sustained fraction, and (if gyro present) is rotationally still.
+    static func acceptRun(_ p: Period, hr: [HRSample], gyro: [GyroSample],
+                          baseline: Double?, options: SleepDetectionOptions) -> Bool {
+        // Night, no timezone, or a long daytime run (night-shift main sleep) → legacy gate.
+        if isNightRun(p, tzOffsetS: options.tzOffsetS)
+            || (p.end - p.start) >= dayMaxNapDurationS {
+            return confirmSleepWithHR(p, hr: hr, baseline: baseline)
+        }
+        // ── Daytime nap-length run: positive evidence of sleep required. ──
+        let seg = rowsBetween(hr, start: p.start, end: p.end) { $0.ts }
+        if seg.count < hrRefineMinSamples { return false }   // can't vet without HR → reject
+        // Trustworthy floor: personal baseline, else night-window-derived. Never daytime-derived.
+        guard let floor = options.sleepFloorHR ?? derivedNightFloor(hr, tzOffsetS: options.tzOffsetS)
+        else { return false }                                // no real floor → don't log daytime sleep
+
+        let stats = hrWindowStats(seg, start: p.start, end: p.end)
+        guard let runMin = stats.map({ $0.mean }).min() else { return false }
+
+        // (1) HR must genuinely drop to the personal asleep floor (Liu 2020 HR-dip).
+        if runMin > floor + dayFloorMarginBpm { return false }
+        // (2) sustained asleep-like: low HR AND low HR variability (Topalidis 2022 10-min SD).
+        let asleep = stats.filter { $0.mean <= floor + dayFloorMarginBpm && $0.sd <= hrSDMaxBpm }.count
+        if Double(asleep) / Double(stats.count) < dayAsleepFraction { return false }
+        // (3) gyro corroboration when available (live-only; optional).
+        if let gf = gyroStillFractionInRun(p, gyro: gyro), gf < gyroStillFraction { return false }
+        return true
+    }
+
     // MARK: - detectSleep (public)
 
     /// Detect sleep sessions from biometric streams. Empty/absent gravity → [].
     /// Gravity-only input degrades gracefully (HR/RR/resp refinements skipped).
+    ///
+    /// `gyro` (optional) is the live rotational-motion stream used to corroborate
+    /// daytime stillness; `options` carries the personal asleep-HR floor and local
+    /// timezone offset that drive the daytime false-positive guard. With both at
+    /// their defaults the detector behaves exactly as before (legacy night gate).
     public static func detectSleep(hr: [HRSample] = [],
                                    rr: [RRInterval] = [],
                                    resp: [RespSample] = [],
-                                   gravity: [GravitySample]) -> [SleepSession] {
+                                   gravity: [GravitySample],
+                                   gyro: [GyroSample] = [],
+                                   options: SleepDetectionOptions = SleepDetectionOptions()) -> [SleepSession] {
         let grav = gravity.sorted { $0.ts < $1.ts }
         if grav.count < 2 { return [] }
 
         let hrS = hr.sorted { $0.ts < $1.ts }
         let rrS = rr.sorted { $0.ts < $1.ts }
         let respS = resp.sorted { $0.ts < $1.ts }
+        let gyroS = gyro.sorted { $0.ts < $1.ts }
 
         let deltas = gravityDeltas(grav)
         let flags = classifyStill(grav, deltas)
@@ -285,7 +468,7 @@ public enum SleepStager {
         for p in runs {
             if p.stage != "sleep" { continue }
             if (p.end - p.start) <= minSleepS { continue }
-            if !confirmSleepWithHR(p, hr: hrS, baseline: baseline) { continue }
+            if !acceptRun(p, hr: hrS, gyro: gyroS, baseline: baseline, options: options) { continue }
             let stages = stageSession(start: p.start, end: p.end, grav: grav,
                                       hr: hrS, rr: rrS, resp: respS)
             let eff = efficiency(start: p.start, end: p.end, stages: stages)
