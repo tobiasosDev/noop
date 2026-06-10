@@ -1,0 +1,32 @@
+Strand/App/AppModel.swift
+  s_ff049a8bced57c::t_10922282d84f18 167-171
+  s_ff049a8bced57c::t_4c7a8402ca6921 381-387,393-401
+StrandTests/WakeAlarmSchedulerTests.swift
+  s_ff049a8bced57c::t_5f95e4cf753dec 1-56
+Strand/System/WakeAlarmNotifier.swift
+  s_ff049a8bced57c::t_20015e58f5697f 1-49
+Strand/BLE/BLEManager.swift
+  s_ff049a8bced57c::t_d8a2c78792b7a0 900-960
+  s_ff049a8bced57c::t_700339b668fd09 656-658
+  s_ff049a8bced57c::t_4bfca6dd82660e 672
+  s_ff049a8bced57c::t_39535977468fb6 1401-1403
+  s_ff049a8bced57c::t_f92411a32459fe 78-88
+Strand/BLE/WakeAlarmScheduler.swift
+  s_ff049a8bced57c::t_87c8ae7ea23b4c 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9eb7730ae504b1ae6b3fd7fff53a71db354dafab",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
