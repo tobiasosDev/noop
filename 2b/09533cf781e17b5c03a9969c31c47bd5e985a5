@@ -1,0 +1,21 @@
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/GoalProgressTests.swift
+  s_ff049a8bced57c::t_7bcf8f9c1be52f 1-57
+Packages/StrandAnalytics/Sources/StrandAnalytics/GoalProgress.swift
+  s_ff049a8bced57c::t_a7d4fffd0f33c6 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "2b09533cf781e17b5c03a9969c31c47bd5e985a5",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
