@@ -113,6 +113,14 @@ struct RootView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(StrandPalette.surfaceBase.ignoresSafeArea())
+                .environment(\.openScreen) { dest in
+                    switch dest {
+                    case .sleep:    selection = .sleep
+                    case .insights: selection = .insights
+                    case .workouts: selection = .workouts
+                    case .trends:   selection = .trends
+                    }
+                }
         }
         // AppModel.init already kicks off the same full refresh; only run it here if that one
         // hasn't landed yet (e.g. this window appeared before the launch task), so launch doesn't

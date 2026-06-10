@@ -8,17 +8,44 @@ import StrandDesign
 struct RootTabView: View {
     @EnvironmentObject private var repo: Repository
 
+    private enum Tab: Hashable { case today, trends, live, sleep, more }
+    @State private var tabSelection: Tab = .today
+    @State private var sheetDestination: HomeDestination?
+
     var body: some View {
-        TabView {
-            tab(TodayView(), "Today", "circle.hexagongrid.fill")
-            tab(TrendsView(), "Trends", "chart.xyaxis.line")
-            tab(LiveView(), "Live", "waveform.path.ecg")
-            tab(SleepView(), "Sleep", "bed.double.fill")
-            moreTab
+        TabView(selection: $tabSelection) {
+            tab(TodayView(), "Today", "circle.hexagongrid.fill").tag(Tab.today)
+            tab(TrendsView(), "Trends", "chart.xyaxis.line").tag(Tab.trends)
+            tab(LiveView(), "Live", "waveform.path.ecg").tag(Tab.live)
+            tab(SleepView(), "Sleep", "bed.double.fill").tag(Tab.sleep)
+            moreTab.tag(Tab.more)
         }
         .tint(StrandPalette.accent)
         .preferredColorScheme(.dark)
         .task { await repo.refresh() }
+        .environment(\.openScreen) { dest in
+            switch dest {
+            case .sleep:  tabSelection = .sleep
+            case .trends: tabSelection = .trends
+            case .insights, .workouts: sheetDestination = dest
+            }
+        }
+        .sheet(item: $sheetDestination) { dest in
+            NavigationStack {
+                Group {
+                    switch dest {
+                    case .insights: InsightsView()
+                    case .workouts: WorkoutsView()
+                    // .sleep / .trends are tab destinations; openScreen never sheets them.
+                    default: EmptyView()
+                    }
+                }
+                .background(StrandPalette.surfaceBase.ignoresSafeArea())
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(StrandPalette.surfaceBase, for: .navigationBar)
+            }
+            .preferredColorScheme(.dark)
+        }
     }
 
     private func tab<V: View>(_ view: V, _ title: LocalizedStringKey, _ icon: String) -> some View {
