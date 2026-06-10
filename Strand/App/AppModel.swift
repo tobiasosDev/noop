@@ -159,7 +159,11 @@ final class AppModel: ObservableObject {
 
     private func refreshAfterCompletedBackfill() async {
         live.append(log: "Backfill: refreshing dashboard cache from completed sync")
-        await repo.refresh(days: 120)
+        // Full window, NOT a 120-day one: refresh() REPLACES repo.days, and SleepView's typical-
+        // night baselines and ReportView's periods read the whole published span — the narrow
+        // window silently truncated multi-year history after the first sync. The day-cache tables
+        // are a few hundred rows, so the full reload costs no meaningful time.
+        await repo.refresh()
     }
 
     /// Fold a fresh reading into the smoothing window and republish a stable bpm.

@@ -114,7 +114,10 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(StrandPalette.surfaceBase.ignoresSafeArea())
         }
-        .task { await repo.refresh() }
+        // AppModel.init already kicks off the same full refresh; only run it here if that one
+        // hasn't landed yet (e.g. this window appeared before the launch task), so launch doesn't
+        // pay for two identical multi-source loads.
+        .task { if !repo.loaded { await repo.refresh() } }
     }
 
     private var brand: some View {

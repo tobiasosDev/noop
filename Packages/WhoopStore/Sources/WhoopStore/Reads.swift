@@ -127,6 +127,29 @@ extension WhoopStore {
         }
     }
 
+    /// One bpm histogram bin: a heart-rate value and how many samples carry it over the window.
+    /// TRIMP-based strain only needs (bpm → sample count) — both Edwards and Banister are
+    /// order-independent per-sample sums — so the day's ~86k raw 1 Hz rows reduce to ≤ ~200 bins
+    /// aggregated in SQL instead of being materialized as Swift structs.
+    public struct HRBin: Sendable, Equatable {
+        public let bpm: Int
+        public let count: Int
+        public init(bpm: Int, count: Int) { self.bpm = bpm; self.count = count }
+    }
+
+    /// bpm → sample-count histogram over `[from, to]`, ascending by bpm. Aggregates in SQL
+    /// (index-only over the (deviceId, ts) PK) so intraday strain never loads raw 1 Hz rows.
+    public func hrHistogram(deviceId: String, from: Int, to: Int) async throws -> [HRBin] {
+        try syncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT bpm, COUNT(*) AS c FROM hrSample
+                WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                GROUP BY bpm ORDER BY bpm ASC
+                """, arguments: [deviceId, from, to])
+                .map { HRBin(bpm: $0["bpm"], count: $0["c"]) }
+        }
+    }
+
     /// Max HR sample timestamp for a device, or nil if there are none. The biometric "data frontier"
     /// used by the stuck-strap watchdog (advances iff the strap is actually logging + offloading).
     public func latestHRSampleTs(deviceId: String) async throws -> Int? {

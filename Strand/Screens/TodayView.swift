@@ -607,10 +607,11 @@ struct TodayView: View {
                                             sex: profile.sex,
                                             restingHr: repo.today?.restingHr)
 
-        // Goals chips.
+        // Goals chips — weekly adherence only ever reads the current week, so query just that
+        // (+2 days of timezone slack) instead of the full multi-year series.
         await goalStore.load()
         goalStepsByDay = Dictionary(
-            await repo.series(key: "steps", source: "apple-health").map { ($0.day, $0.value) },
+            await repo.series(key: "steps", source: "apple-health", days: 9).map { ($0.day, $0.value) },
             uniquingKeysWith: { _, new in new })
     }
 
@@ -622,7 +623,10 @@ struct TodayView: View {
     /// `latestString` reads `.last` of this windowed series, so a value older than the window shows
     /// "—" rather than a stale number under a Today tile (#49).
     private func sparkValues(_ key: String, source: String, window: Int) async -> [Double] {
-        let all = await repo.series(key: key, source: source)   // full history, asc
+        // Window the QUERY too (+2 days of timezone slack) — the trailing filter below still
+        // defines the semantics, but fetching the full multi-year series for 10 keys per refresh
+        // was pure waste (refreshSeq re-runs this every sync).
+        let all = await repo.series(key: key, source: source, days: window + 2)
         guard !all.isEmpty else { return [] }
         return trailingWindow(all, days: window).map { $0.value }
     }

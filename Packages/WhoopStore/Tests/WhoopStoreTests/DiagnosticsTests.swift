@@ -65,6 +65,24 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(d.rawBytes, 123)
     }
 
+    func testHRHistogramAggregatesByBpm() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertDevice(id: "d", mac: nil, name: nil)
+        let s = Streams(hr: [
+            HRSample(ts: 100, bpm: 60), HRSample(ts: 101, bpm: 60), HRSample(ts: 102, bpm: 60),
+            HRSample(ts: 103, bpm: 75), HRSample(ts: 104, bpm: 75),
+            HRSample(ts: 105, bpm: 142),
+            HRSample(ts: 999, bpm: 50),   // outside the queried window
+        ])
+        _ = try await store.insert(s, deviceId: "d")
+
+        let bins = try await store.hrHistogram(deviceId: "d", from: 100, to: 200)
+        XCTAssertEqual(bins, [.init(bpm: 60, count: 3), .init(bpm: 75, count: 2), .init(bpm: 142, count: 1)])
+
+        let empty = try await store.hrHistogram(deviceId: "d", from: 2000, to: 3000)
+        XCTAssertTrue(empty.isEmpty)
+    }
+
     func testSnapshotOnEmptyStore() async throws {
         let store = try await WhoopStore.inMemory()
         let d = try await store.diagnosticsSnapshot()

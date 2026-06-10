@@ -50,6 +50,24 @@ final class IntelligenceEngine: ObservableObject {
 
         let maxHR = profile.hrMaxOverride > 0 ? Double(profile.hrMaxOverride) : nil
         let now = Int(Date().timeIntervalSince1970)
+        let computedId = deviceId + "-noop"
+
+        // ── Incremental gate: a night is re-analysed from raw streams ONLY if its read window can
+        // contain data that arrived since the last run. The strap offloads forward (the trim cursor
+        // is monotonic), so the max HR ts at the END of the previous run is a safe frontier: any
+        // night whose window closed at-or-before it cannot have gained rows. Those nights reuse the
+        // persisted "-noop" daily (every field except recovery is final; pass 2 re-scores recovery
+        // cheaply from the stored avgHrv/restingHr as the baseline grows). Without this, all 21
+        // nights re-fetched 4 raw streams (limit 200k each) every 15 minutes. A night with no
+        // cached row is always analysed, so late backfill of a previously-empty night still lands.
+        let frontier = (try? await store.cursor("intel_hr_frontier")) ?? 0
+        let latestHrTs = (try? await store.latestHRSampleTs(deviceId: deviceId)) ?? 0
+        let cachedByDay: [String: DailyMetric] = Dictionary(
+            ((try? await store.dailyMetrics(
+                deviceId: computedId,
+                from: AnalyticsEngine.dayString(now - (maxDays - 1) * 86_400),
+                to: AnalyticsEngine.dayString(now))) ?? []).map { ($0.day, $0) },
+            uniquingKeysWith: { _, new in new })
 
         // ── Pass 1: analyse each offloaded night against the IMPORTED-ONLY baseline. For a BLE-only
         // user `repo.days` (imported) is empty, so the HRV baseline isn't usable yet and recovery is
@@ -75,6 +93,15 @@ final class IntelligenceEngine: ObservableObject {
             // Read a generous window around the night that ends on `day`; the stager finds the span.
             let from = dayStart - 30 * 3_600
             let to = dayStart + 12 * 3_600
+
+            // Closed night already scored → reuse the persisted daily; skip the 4 raw-stream reads.
+            // Its sleep sessions are already upserted, so they aren't re-collected (empty here).
+            if to <= frontier, let cached = cachedByDay[day] {
+                nightlyHrvByDay[day] = cached.avgHrv
+                nightlyRhrByDay[day] = cached.restingHr.map(Double.init)
+                scoredNights.append((daily: cached, strain: cached.strain, cachedSleep: []))
+                continue
+            }
 
             let hr = (try? await store.hrSamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
             guard hr.count >= 200 else { continue }   // need real raw data, not a stray sample
@@ -128,9 +155,12 @@ final class IntelligenceEngine: ObservableObject {
         // (Today / Recovery / Strain / Sleep / Trends), not just this screen, reads them. The
         // Repository merges these UNDER any imported "my-whoop" rows, so a real WHOOP import
         // always wins; this only fills the days the strap collected but no import covered.
-        let computedId = deviceId + "-noop"
         if !dailies.isEmpty { _ = try? await store.upsertDailyMetrics(dailies, deviceId: computedId) }
         if !cachedSleep.isEmpty { _ = try? await store.upsertSleepSessions(cachedSleep, deviceId: computedId) }
+
+        // Advance the incremental frontier only after a fully-successful pass, so a thrown/partial
+        // run never marks unseen data as analysed.
+        try? await store.setCursor("intel_hr_frontier", latestHrTs)
 
         results = out
         note = out.isEmpty

@@ -139,6 +139,12 @@ final class Repository: ObservableObject {
         return (try? await store.hrBuckets(deviceId: deviceId, from: from, to: to, bucketSeconds: bucketSeconds)) ?? []
     }
 
+    /// bpm → sample-count histogram for the strap (SQL-aggregated), for TRIMP-based strain.
+    func hrHistogram(from: Int, to: Int) async -> [WhoopStore.HRBin] {
+        guard let store = await ensureStore() else { return [] }
+        return (try? await store.hrHistogram(deviceId: deviceId, from: from, to: to)) ?? []
+    }
+
     func sleepSessions(from: Int, to: Int, limit: Int = 100) async -> [CachedSleepSession] {
         guard let store = await ensureStore() else { return [] }
         return (try? await store.sleepSessions(deviceId: deviceId, from: from, to: to, limit: limit)) ?? []

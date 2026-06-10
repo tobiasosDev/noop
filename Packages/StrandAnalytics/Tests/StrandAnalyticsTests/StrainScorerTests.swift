@@ -100,4 +100,43 @@ final class StrainScorerTests: XCTestCase {
     func testFitStrainDenominatorThrowsTooFew() {
         XCTAssertThrowsError(try StrainScorer.fitStrainDenominator([(100, 10)]))
     }
+
+    // MARK: - Histogram overload parity
+
+    /// The histogram overload must be bit-identical to the array path for both methods —
+    /// it exists purely so callers can aggregate a day in SQL instead of loading raw rows.
+    func testHistogramStrainMatchesArrayPath() {
+        // Mixed-intensity day: rest, zones 1–5, with repeated bpm values (deterministic).
+        var samples: [HRSample] = []
+        var ts = 0
+        for (bpm, n) in [(58, 900), (95, 600), (120, 700), (140, 500), (165, 300), (185, 120)] {
+            for _ in 0..<n { samples.append(HRSample(ts: ts, bpm: bpm)); ts += 1 }
+        }
+        var counts: [Int: Int] = [:]
+        for s in samples { counts[s.bpm, default: 0] += 1 }
+        let bins = counts.map { (bpm: $0.key, count: $0.value) }
+        let dur = StrainScorer.sampleDurationMinutes(samples)
+
+        for method in [StrainScorer.Method.edwards, .banister] {
+            for sex in ["male", "female"] {
+                let fromArray = StrainScorer.strain(samples, maxHR: 190, restingHR: 60,
+                                                    method: method, sex: sex)
+                let fromBins = StrainScorer.strain(histogram: bins, sampleDurationMin: dur,
+                                                   maxHR: 190, restingHR: 60,
+                                                   method: method, sex: sex)
+                XCTAssertEqual(fromArray, fromBins, "method=\(method) sex=\(sex)")
+            }
+        }
+    }
+
+    func testHistogramStrainNilGates() {
+        // Under minReadings → nil (599 samples).
+        XCTAssertNil(StrainScorer.strain(histogram: [(bpm: 150, count: 599)],
+                                         sampleDurationMin: 1.0 / 60.0,
+                                         maxHR: 190, restingHR: 60))
+        // Invalid HRR (max ≤ resting) → nil.
+        XCTAssertNil(StrainScorer.strain(histogram: [(bpm: 150, count: 1000)],
+                                         sampleDurationMin: 1.0 / 60.0,
+                                         maxHR: 60, restingHR: 60))
+    }
 }
