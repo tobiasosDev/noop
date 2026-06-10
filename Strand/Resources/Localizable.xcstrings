@@ -6703,6 +6703,23 @@
         }
       }
     },
+    "Open yesterday's journal": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Journal von gestern öffnen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open yesterday's journal"
+          }
+        }
+      }
+    },
     "Open-source BLE reverse-engineering work. Thank you.": {
       "localizations": {
         "de": {

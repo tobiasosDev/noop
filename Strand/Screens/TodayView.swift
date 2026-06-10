@@ -127,8 +127,8 @@ struct TodayView: View {
             }
         }
         .buttonStyle(.plain)
-        .help("Log yesterday's journal")
-        .accessibilityLabel("Log yesterday's journal")
+        .help(done ? "Open yesterday's journal" : "Log yesterday's journal")
+        .accessibilityLabel(done ? "Open yesterday's journal" : "Log yesterday's journal")
     }
 
     // MARK: (1) Triple-ring hero — Sleep / Recovery / Strain.
