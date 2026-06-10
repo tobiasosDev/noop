@@ -17,6 +17,122 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.66 — Android: WHOOP 4 unmapped-firmware fallback — the #77 fix
+
+- **Root cause (found via the Goose-PR mining + a cross-platform audit): a real macOS-only fix that
+  never reached Android.** macOS `PostHooks "historical_data"` falls back to the canonical **v24
+  layout** for an unmapped firmware version and accepts it only if it decodes to physically-real data
+  (|gravity|≈1g + plausible HR) — the issue-#30 fix. Android's `HistoricalStreams.decodeHistorical`
+  did `histVersionLayout(version) ?: return null` with **no fallback**, so a WHOOP 4 reporting a
+  layout version outside {5,7,9,12,24} had **every type-47 record dropped** → the offload "completed"
+  (`HISTORY_COMPLETE`), the trim advanced, and **zero data persisted**. Exact match for the #77
+  Samsung S23+/Android-16 symptom (sync runs, nothing shows).
+- **Fix:** ported the macOS fallback to Android `decodeHistorical` — unmapped version → decode against
+  HIST_V24 → keep ONLY if `|gravity| ∈ 0.8..1.2` and `hr ∈ 25..230`, else drop (same as before, never
+  garbage). **Strictly dominant:** recovers data the gate proves real, mapped versions untouched, no
+  scenario makes any user worse off. Pinned by `HistoricalFallbackTest` (3 cases: mapped still decodes;
+  unmapped+real falls back; unmapped+garbage still rejected).
+- macOS: **version bump only** (already had it via #30).
+
+## 1.65 — Sync diagnostics: surface silently-dropped history (#77)
+
+- **Observability only — no behaviour change.** `Backfiller.finishChunk` now logs when a chunk arrives
+  with frames but `extractHistoricalStreams` returns **zero rows** — i.e. every type-47 frame was
+  dropped (CRC fail / unmapped layout / out-of-range timestamp). Previously this acked the trim and
+  advanced the cursor while persisting nothing, so a "zero data" strap log showed only healthy
+  `acked chunk` lines and the silent loss was **invisible**. Now: `WARNING N frame(s) decoded to 0 rows
+  (trim=X) — dropped (CRC/layout/timestamp); nothing persisted`.
+- Wired both platforms: Android via a new `log` callback on `Backfiller`; macOS reuses the existing
+  `Backfiller.log` sink (which already logs unmapped firmware *versions* — this adds the **aggregate**
+  CRC-drop case). Added `Streams.isEmpty` (Swift) mirroring Android `StreamBatch.isEmpty`.
+- **Deliberately NOT changed:** the ack/trim behaviour. Refusing to ack an all-dropped chunk would
+  wedge the offload in a re-send loop if frames fail CRC systematically — that fix needs a confirmed
+  root cause first (a Samsung S23+/Android-16 reporter on #77 is the live case). This release exists to
+  make that root cause diagnosable from a user's strap log.
+
+## 1.64 — Android: MTU 247, skin-temp, sync status, recovery UI, alarm groundwork (thanks iHateSubscriptions, #85)
+
+Reimplemented (NoopApp-authored, per our external-contribution policy) from PR #85, rebased on v1.62.
+Reviewed part-by-part against current main + the objectivity discipline. **Adopted 4, modified 1, held 1.**
+
+- **MTU 247 (adopt):** negotiate a larger ATT MTU on connect *before* service discovery — the default
+  23 caps notifications at 20 bytes and fragments the type-47 offload. Gated discovery on
+  `onMtuChanged` with a fallback timeout (a stack that ignores `requestMtu` can't stall connect); the
+  once-only discovery kick is an `AtomicBoolean.compareAndSet` (API 26/27 deliver these callbacks on
+  binder-pool threads, so the timeout and `onMtuChanged` race).
+- **Sync status (adopt):** `lastSyncAt`/`lastSyncError` on `LiveState`, stamped in `exitBackfilling`
+  by reason (`HISTORY_COMPLETE` → "History synced N ago"; `timeout` → a non-silent stalled-sync note).
+  Pure `relativeAgo` helper + tests. Honest sync truth for a cloud-free app.
+- **Skin-temp deviation, offline (adopt):** `AnalyticsEngine.wornNightlySkinTempC` (wear-gated —
+  HR-concurrent, in-bed only, 28–42 °C so on-charger ambient drift can't poison the mean) feeds a
+  two-pass personal baseline in `IntelligenceEngine` (mirrors avgHrv→recovery), re-deriving
+  `skinTempDevC` — which re-arms the illness skin-temp signal. `/100` scale, APPROXIMATE.
+- **Recovery cold-start UI (adopt):** `recoveryCalibrationNights` (counts nights with in-bounds HRV,
+  matching `Baselines.update`'s validity predicate) → "Calibrating — N of 4 nights" on the ring,
+  header and tile instead of a bare "No Data."
+- **Named maverick buzz refactor (HELD):** **review catch** — the PR's `notificationBuzz(loops=1)`
+  sets the `overallLoop` byte to 1, but our shipped golden frame
+  (`…0113012f98…00…`, harshavin hardware-confirmed) has it **0**. The buzz already works; changing a
+  proven payload for a refactor is regression risk for zero user value. Kept our inline buzz.
+- **5/MG firmware alarm (MODIFIED — experimental-gated):** adopted `AlarmPayload` (`SET_ALARM_TIME`
+  rev4 + `DISABLE_ALARM` rev2) + byte-exact tests, and wired `armStrapAlarm`/`disableStrapAlarm` for
+  5/MG. But the rev4 layout is **unconfirmed on our side** (no captured `STRAP_DRIVEN_ALARM_EXECUTED`)
+  and our own notes deferred it — so arming is **gated behind the Experimental probes opt-in**, not
+  the plain smart-alarm toggle: a normal user can never rely on an alarm that might silently not fire,
+  while opted-in testers can verify it. (`SET_ALARM_TIME`/`DISABLE_ALARM` added to the 5/MG allowlist.)
+- macOS: **version bump only.**
+
+## 1.63 — Mac: strap-computed nights show in Sleep (#77)
+
+- **Fixed (macOS): BLE-computed nights vanished from the Sleep tab** (found from RolandGao's #77
+  question "why is last night's analysis in Intelligence instead of Sleep?"). Root cause: TWO
+  `stagesJSON` formats exist — imported nights store a **dict of minutes** (`{"light":N,…}`), while
+  on-device computed nights store a **segment array** (`AnalyticsEngine.encodeStages` →
+  `[{start,end,stage}]`). `SleepView.decodeStages` only parsed the dict, and `latestNight` returned
+  nil on failure → **the whole "last night" hero disappeared for Bluetooth-only users** while
+  Intelligence (reading DailyMetric) showed the night fine. Fix: `decodeSegments` parses the array
+  (mapping the stager's "wake"→awake), and `Night.realSegments` feeds the hypnogram the GENUINE
+  timeline for computed nights — strictly better than the synthetic "plausible architecture"
+  reconstruction imported nights still get (the export has no per-epoch timeline).
+- Android already handled both shapes (`SleepScreen.kt` tries JSONObject then JSONArray) — **version
+  bump only.**
+
+## 1.62 — WHOOP 5/MG history: the missing clock (thanks tajchert, #78)
+
+Reimplemented (per our external-contribution policy) from **tajchert's hardware-validated fork branch**
+(`whoop5-android-history-sync`), reviewed by a 29-agent adversarial workflow against our v1.61: 25
+recommendations verified → 9 adopted, 26 already-superseded, 1 rejected (his CCCD reordering would have
+killed standard-0x2A37 live HR).
+
+- **THE unblock — clock before history (Mac + Android):** an un-clocked WHOOP 5 does NOT save sensor
+  data to flash (firmware console: "RTC timestamp … is invalid; not saving data to flash"), so offloads
+  "succeeded" with metadata only. NOOP now sends SET_CLOCK/GET_CLOCK (WHOOP4's 8-byte payload over
+  puffin framing — strap-acked on hardware) after the puffin CCCD drain, before SEND_HISTORICAL_DATA.
+  His hardware: 0 → 246 HISTORICAL_DATA frames. Android relocates the post-bond kick to the CCCD-drain
+  completion; macOS clocks inside the once-per-connection `whoop5SessionStarted` gate.
+- **GET_DATA_RANGE gating, fail-OPEN (Android):** query the stored range first, fire the transfer on
+  SUCCESS (result codes 0–3 now decoded; PENDING precedes SUCCESS), 2s fallback because real hardware
+  sometimes swallows the first query; one zero-frame retry per connection. Family-aware response offset
+  (cmd@10 on 5/MG vs @6 — `strapNewestTs` never updated from 5/MG replies before).
+- **5/MG decoders (Android parity + new):** COMMAND_RESPONSE (resp_cmd@10/seq@11/result@12),
+  EVENT (+4, payload preserved as hex; BATTERY_LEVEL fields mirrored from Swift), CONSOLE_LOGS
+  (UTF-8 @21, 2KB cap) — the strap's console now lands in the strap log ("strap: BLE: PullStats…").
+- **Opt-in 5/MG raw capture (Android, default OFF):** `BackfillCaptureJsonl/Summary` (adopted verbatim —
+  pure, tested) + append/rotate writer (40k lines/10MB; his truncate-per-session lost overnight data) +
+  Settings toggle + consent-headed share sheet. This is the crowdsourcing pipeline for the puffin
+  biometric decode (his captures show bulk type-54 = PUFFIN_EVENTS_FROM_STRAP per our PROTOCOL.md, still
+  unclassified payload-wise).
+- **Post-commit scoring (Android):** a committed backfill chunk schedules a debounced (1.5s)
+  `IntelligenceEngine.analyzeRecent` + HC-writeback — fresh history scores in seconds, and scores at all
+  in background-only operation (the 15-min loop lives in the Activity-scoped ViewModel).
+- **Direct-connect to the OS-bonded 5/MG (Android):** skips the scan (hardware showed first protected
+  GATT op failing status=133 on scan-reconnects); stale bonds fall back to a scan via handleDisconnect.
+- **isOffloadFrame accepts type 52** (HISTORICAL_IMU_DATA_STREAM) for 5/MG. His EVENT/CONSOLE_LOGS
+  progress-counting *removal* is NOT adopted — needs hardware validation (watchdog semantics).
+- **Tests:** 4 real-hardware vectors (CRC-pinned Goose command frames, event 0x1D, console text,
+  ACK-capture v18 frame: HR 66 / skin 32.38°C / |g|≈1) + capture encoder/summary suites — all green.
+- Model selection now survives restarts even with background connection off.
+
 ## 1.61 — Android: the widget now actually updates (#82, second find)
 
 - **Fixed: widget starvation under live HR.** The reporter's follow-up symptoms (live HR fine in-app,
