@@ -113,7 +113,11 @@ final class IntelligenceEngine: ObservableObject {
 
             let res = await Task.detached(priority: .utility) {
                 AnalyticsEngine.analyzeDay(day: day, hr: hr, rr: rr, resp: resp, gravity: grav,
-                                           profile: up, baselines: baselines1, maxHROverride: maxHR)
+                                           profile: up, baselines: baselines1, maxHROverride: maxHR,
+                                           // Date-aware offset: each historical day uses ITS OWN UTC
+                                           // offset so DST transitions don't shift night/day routing.
+                                           tzOffsetS: TimeZone.current.secondsFromGMT(
+                                               for: Date(timeIntervalSince1970: TimeInterval(dayStart))))
             }.value
             nightlyHrvByDay[res.daily.day] = res.daily.avgHrv
             nightlyRhrByDay[res.daily.day] = res.daily.restingHr.map(Double.init)
