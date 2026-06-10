@@ -145,7 +145,7 @@ targets:
         CFBundleName: NOOP
         CFBundleDisplayName: NOOP
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "32"
+        CFBundleVersion: "33"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
@@ -208,6 +208,10 @@ targets:
       path: StrandiOSWidgets/Info.plist
       properties:
         CFBundleDisplayName: NOOP
+        # Pin the widget version to the app's so xcodegen doesn't reset it to 1/1.0 (it defaults
+        # any version key not listed here). Keep in lockstep with the NOOPiOS CFBundleVersion above.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "33"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
