@@ -1,0 +1,27 @@
+Packages/WhoopStore/Tests/WhoopStoreTests/DiagnosticsTests.swift
+  s_8dfefa1df8db42::t_9ddabf5d4673f0 1-77
+Strand/Screens/LiveView.swift
+  s_8dfefa1df8db42::t_e163c530c0f7db 18-21
+  s_8dfefa1df8db42::t_7dd7a7ae542b90 48,57
+  s_8dfefa1df8db42::t_b9f2fb84fe52da 322-377
+Packages/WhoopStore/Sources/WhoopStore/Diagnostics.swift
+  s_8dfefa1df8db42::t_5e55e25632e79c 1-157
+Strand/Data/Repository.swift
+  s_8dfefa1df8db42::t_713823c19ad95a 222-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f5f8921e46f0e60925000e635839c4b010d830e0",
+  "prompts": {},
+  "sessions": {
+    "s_8dfefa1df8db42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a241603-438b-4ceb-93a7-5b8630d4c079",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
