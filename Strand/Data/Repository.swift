@@ -219,6 +219,114 @@ final class Repository: ObservableObject {
             to: Self.dayString(now.addingTimeInterval(86_400)))) ?? []
     }
 
+    // MARK: - Diagnostics (remote troubleshooting export)
+
+    /// UTC `yyyy-MM-dd HH:mm` for rendering unix-second spans in the diagnostics report.
+    private static let utcStampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+    private static func stamp(_ ts: Int?) -> String {
+        guard let ts, ts > 0 else { return "—" }
+        return utcStampFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ts))) + "Z"
+    }
+
+    /// A human-readable on-device diagnostics report plus the raw JSON snapshot, for the Live
+    /// screen's Copy/Save buttons. Read-only. A "no strain / no recovery / no stress" report is
+    /// almost always one upstream cause (no HR/RR rows, or a frozen strap RTC); this surfaces the
+    /// row counts, timestamp spans, sync cursors and clock offset that pin down which.
+    func diagnosticsText() async -> String {
+        guard let store = await ensureStore() else { return "NOOP diagnostics — store unavailable" }
+        guard let d = try? await store.diagnosticsSnapshot() else {
+            return "NOOP diagnostics — snapshot failed"
+        }
+        let now = Date()
+        let nowTs = Int(now.timeIntervalSince1970)
+
+        func lpad16(_ s: String) -> String { s.padding(toLength: 16, withPad: " ", startingAt: 0) }
+        func rpad7(_ n: Int) -> String {
+            let s = String(n); return s.count >= 7 ? s : String(repeating: " ", count: 7 - s.count) + s
+        }
+        func num(_ v: Double?, _ places: Int = 0) -> String {
+            guard let v else { return "—" }
+            return String(format: "%.\(places)f", v)
+        }
+
+        var out = ""
+        out += "NOOP diagnostics — \(Self.stamp(nowTs))\n"
+        out += "strap deviceId: \(deviceId)\n"
+        out += "computed id:    \(computedDeviceId)\n"
+        out += "apple id:       \(appleDeviceId)\n"
+        out += "today key:      \(Self.localDayKey(now))   schema: v\(d.schemaVersion)\n"
+        out += String(repeating: "-", count: 48) + "\n"
+
+        out += "STREAM ROWS  (count | first → last, UTC):\n"
+        for t in d.tsTables {
+            let span = t.count == 0 ? "—" : "\(Self.stamp(t.minTs)) → \(Self.stamp(t.maxTs))"
+            out += "  \(lpad16(t.name)) \(rpad7(t.count)) | \(span)\n"
+        }
+        out += "DAY CACHES  (count | first → last):\n"
+        for t in d.dayTables {
+            let span = t.count == 0 ? "—" : "\(t.minDay ?? "?") → \(t.maxDay ?? "?")"
+            out += "  \(lpad16(t.name)) \(rpad7(t.count)) | \(span)\n"
+        }
+
+        if !d.hrByDevice.isEmpty {
+            out += "HR by device: " + d.hrByDevice.map { "\($0.deviceId)=\($0.count)" }.joined(separator: ", ") + "\n"
+        }
+        if !d.rrByDevice.isEmpty {
+            out += "RR by device: " + d.rrByDevice.map { "\($0.deviceId)=\($0.count)" }.joined(separator: ", ") + "\n"
+        }
+        if !d.eventKinds.isEmpty {
+            out += "EVENT kinds: " + d.eventKinds.prefix(12).map { "\($0.kind)=\($0.count)" }.joined(separator: ", ") + "\n"
+        }
+        out += "CURSORS: " + (d.cursors.isEmpty ? "—" : d.cursors.map { "\($0.name)=\($0.value)" }.joined(separator: ", ")) + "\n"
+        out += "DEVICES: " + (d.devices.isEmpty ? "—" : d.devices.map { "\($0.id)(\($0.name ?? "?")) seen \(Self.stamp($0.lastSeen))" }.joined(separator: "; ")) + "\n"
+        out += "RAW outbox: \(d.rawBatchCount) batches, \(d.rawBytes) bytes\n"
+        if let c = d.latestClockRef {
+            let days = Double(c.offsetSec) / 86_400.0
+            out += "CLOCK (latest rawBatch): device=\(Self.stamp(c.deviceClockRef)) wall=\(Self.stamp(c.wallClockRef)) offset=\(c.offsetSec)s (\(num(days, 1)) days)\n"
+        }
+        if !d.recentDailyMetrics.isEmpty {
+            out += "RECENT dailyMetric:\n"
+            for r in d.recentDailyMetrics.prefix(7) {
+                out += "  \(r.day) [\(r.deviceId)] rec=\(num(r.recovery)) strain=\(num(r.strain, 1)) hrv=\(num(r.avgHrv)) rhr=\(r.restingHr.map(String.init) ?? "—")\n"
+            }
+        }
+
+        // Verdict hints — the most common "no data" causes, derived from the counts above.
+        out += String(repeating: "-", count: 48) + "\nREADING:\n"
+        let hr = d.tsTables.first { $0.name == "hrSample" }
+        let rr = d.tsTables.first { $0.name == "rrInterval" }
+        let ev = d.tsTables.first { $0.name == "event" }
+        if (hr?.count ?? 0) == 0 {
+            out += "  • 0 HR samples → strain, recovery AND stress all blank (all need HR/HRV).\n"
+        }
+        if (rr?.count ?? 0) == 0 {
+            out += "  • 0 RR intervals → no HRV → recovery & stress can't compute even with HR.\n"
+        }
+        if let ev, ev.count > 0, let mx = ev.maxTs {
+            let lagDays = (nowTs - mx) / 86_400
+            if lagDays > 2 {
+                out += "  • Newest event is \(lagDays) days old → strap RTC likely frozen/stale (deep-discharge).\n"
+            }
+        }
+        if let c = d.latestClockRef, abs(c.offsetSec) > 86_400 {
+            out += "  • Clock offset \(c.offsetSec / 86_400) days → strap RTC not synced to real time.\n"
+        }
+
+        out += String(repeating: "-", count: 48) + "\n--- raw JSON ---\n"
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? enc.encode(d), let json = String(data: data, encoding: .utf8) {
+            out += json + "\n"
+        }
+        return out
+    }
+
     /// Shared formatter — created once. Hot read path (called per series window / refresh);
     /// allocating a DateFormatter per call was a measurable waste. Read-only use is thread-safe.
     private static let dayFormatter: DateFormatter = {
