@@ -43,6 +43,11 @@ struct StrandiOSApp: App {
                 .environmentObject(health)
                 .preferredColorScheme(.dark)
                 .task {
+                    #if targetEnvironment(simulator)
+                    // Screenshot harness (NOOP_SCREEN): the HealthKit permission sheet
+                    // would cover every captured screen — skip auth/sync entirely.
+                    if ProcessInfo.processInfo.environment["NOOP_SCREEN"] != nil { return }
+                    #endif
                     await health.requestAuthorization()
                     await health.sync()
                 }
