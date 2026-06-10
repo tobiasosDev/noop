@@ -75,6 +75,17 @@ public final class BLEManager: NSObject, ObservableObject {
     private var lastDataAt = Date()
     /// True while the Live screen wants the (heavy) realtime stream; keep-alive re-arms it.
     private var wantsRealtime = false
+
+    // MARK: Live-fire alarm (Layer 2 — opportunistic wrist buzz over the kept-alive link)
+    /// Next absolute wake instant to buzz the wrist at, or nil when no alarm is set. Written by
+    /// `AppModel.applySmartAlarm`; evaluated by `WakeAlarmScheduler` on every keep-alive tick and
+    /// every inbound notification (the only background wake source — NOOP has no push).
+    var wakeTarget: Date?
+    /// True inside the pre-wake keep-alive window: re-arm realtime even when the Live tab is closed,
+    /// so frames keep waking the app to fire on time — without clobbering the Live-tab `wantsRealtime`.
+    private var wakeWindowActive = false
+    /// Persisted epoch of the wake we last fired — idempotent across relaunch / BLE state restoration.
+    static let lastFiredWakeKey = "wakeAlarmLastFired"
     /// Last-offload-attempt time (unix seconds), persisted so the rate limiter survives relaunch
     /// (matches WHOOP's DATA_SYNC_WORKER_LAST_WORK_TIME watermark).
     static let backfillLastAtKey = "backfillLastAt"
@@ -642,6 +653,9 @@ public final class BLEManager: NSObject, ObservableObject {
 
     private func keepAliveFire() {
         guard state.connected, didBond else { return }
+        // Alarm is top priority — evaluate BEFORE the watchdog/backfill early-returns below so a
+        // due wake fires (and the pre-wake window opens) regardless of link/offload state.
+        evaluateWakeFire()
         enableLiveNotifications(reason: "keepalive")
         // Liveness watchdog: if NOTHING has arrived for a while, the stream/link stalled.
         // Bounce the connection — the auto-rescan on disconnect re-bonds and resumes streaming.
@@ -655,7 +669,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // skip them for 5/MG (it keeps the experimental strap log clean — re-subscribe + the 120s
         // bounce above are what keep a 5/MG link healthy).
         guard selectedModel.deviceFamily == .whoop4 else { return }
-        if wantsRealtime {
+        if wantsRealtime || wakeWindowActive {   // also keep it hot through the pre-wake window
             send(.sendR10R11Realtime, payload: [0x01])
             send(.toggleRealtimeHR, payload: [0x01])
         }   // re-arm so it can't lapse
@@ -881,6 +895,67 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         send(.disableAlarm, payload: [0x01])
         log("Alarm: disarmed")
+    }
+
+    // MARK: Live-fire orchestration (Layer 2)
+
+    /// Evaluate the wake target against the clock and act. Called from the keep-alive tick AND every
+    /// inbound notification (`didUpdateValueFor`) — in the background, an inbound frame is the only
+    /// thing that wakes a suspended app, so the first fire lands within roughly the notify gap.
+    /// Cheap and idempotent; safe to call on the hot notification path.
+    func evaluateWakeFire() {
+        guard let target = wakeTarget else {
+            if wakeWindowActive { closeWakeWindow() }
+            return
+        }
+        let last = (UserDefaults.standard.object(forKey: Self.lastFiredWakeKey) as? Double)
+            .map { Date(timeIntervalSince1970: $0) }
+        switch WakeAlarmScheduler.decide(wakeTarget: target, now: Date(), lastFiredWake: last) {
+        case .idle:
+            if wakeWindowActive { closeWakeWindow() }
+        case .openKeepAliveWindow:
+            if !wakeWindowActive { openWakeKeepAliveWindow() }
+        case .fire:
+            fireWakeAlarm()
+            // Persist BEFORE anything else so a crash/disconnect right after can't double-fire.
+            UserDefaults.standard.set(target.timeIntervalSince1970, forKey: Self.lastFiredWakeKey)
+            if wakeWindowActive { closeWakeWindow() }
+        }
+    }
+
+    /// Enter the pre-wake window: keep the link hot so inbound frames keep waking the app near wake.
+    /// Turns realtime on independently of the Live tab; `closeWakeWindow` reverts it.
+    private func openWakeKeepAliveWindow() {
+        wakeWindowActive = true
+        log("Wake alarm: pre-wake keep-alive window open — keeping link hot to fire on time")
+        guard state.connected, didBond, selectedModel.deviceFamily == .whoop4 else { return }
+        enableLiveNotifications(reason: "wake window")
+        send(.sendR10R11Realtime, payload: [0x01])
+        send(.toggleRealtimeHR, payload: [0x01])
+    }
+
+    /// Leave the pre-wake window. Stop realtime only if the Live tab isn't using it (don't kill a
+    /// user's live HR view).
+    private func closeWakeWindow() {
+        wakeWindowActive = false
+        log("Wake alarm: keep-alive window closed")
+        guard selectedModel.deviceFamily == .whoop4, !wantsRealtime else { return }
+        send(.toggleRealtimeHR, payload: [0x00])
+        send(.sendR10R11Realtime, payload: [0x00])
+    }
+
+    /// Fire the wake haptic LIVE over the active link: RUN_ALARM (cmd 68) + a graduated haptic
+    /// pattern. This is the verdict's recommended path — RUN_ALARM is proven to buzz this strap even
+    /// though its stored firmware alarm (cmd 66) is wedged. A no-op if the link is down (send() is
+    /// bond-gated); Layer 1's phone notification covers that case.
+    private func fireWakeAlarm() {
+        log("Wake alarm: FIRING live RUN_ALARM over BLE (\(selectedModel.deviceFamily))")
+        send(.runHapticsPattern, payload: [2, 5, 0, 0, 0])   // patternId=2, 5 loops — the alarm buzz
+        if selectedModel.deviceFamily == .whoop5 {
+            send(.runAlarm, payload: AlarmPayload.runAlarmRev2())   // REVISION_2 [0x02, alarmId]
+            return
+        }
+        send(.runAlarm, payload: [0x01])
     }
 
     /// Request the currently-armed alarm time from the strap (response arrives on cmd-notify char).
@@ -1323,6 +1398,9 @@ extension BLEManager: CBPeripheralDelegate {
         guard let data = characteristic.value else { return }
         let bytes = [UInt8](data)
         lastDataAt = Date()   // feed the liveness watchdog on every notification
+        // An inbound frame is the only thing that wakes a suspended (backgrounded) app — NOOP has no
+        // push — so check the wake target here too: the live buzz lands within ~one notify gap.
+        if wakeTarget != nil { evaluateWakeFire() }
 
         switch characteristic.uuid {
         case BLEManager.heartRateChar:

@@ -164,6 +164,11 @@ final class AppModel: ObservableObject {
 
         AppModel.shared = self   // publish for App Intents (Shortcuts) — see the static above (#42)
 
+        // Arm the guaranteed wake notification (Layer 1) from saved settings at launch, before any
+        // strap connects — the notification needs no link. Re-synced on connect (onCommandChannelReady)
+        // and on settings change (AutomationsView). Disabled-alarm branch cancels any pending one.
+        applySmartAlarm()
+
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.
         // IntelligenceEngine computes, persists under "my-whoop-noop", and refreshes the dashboard.
@@ -373,12 +378,27 @@ final class AppModel: ObservableObject {
             ble.armStrapAlarm(at: at, testForm: form)
             return
         }
-        guard behavior.smartAlarmEnabled else { ble.disableStrapAlarm(); return }
+        guard behavior.smartAlarmEnabled else {
+            ble.disableStrapAlarm()
+            ble.wakeTarget = nil
+            WakeAlarmNotifier.cancel()
+            return
+        }
+        WakeAlarmNotifier.requestAuthorization()   // no-op after the first grant; never re-prompts
         let cal = Calendar.current
         let now = Date()
         var next = cal.date(bySettingHour: behavior.smartAlarmMinutes / 60,
                             minute: behavior.smartAlarmMinutes % 60, second: 0, of: now) ?? now
         if next <= now { next = cal.date(byAdding: .day, value: 1, to: next) ?? next }
+        // Three layers, strongest-guarantee first (see whoop4-deep-discharge-state verdict):
+        //  1. GUARANTEED — phone notification at the wake instant; fires even with the link down or
+        //     the strap's firmware alarm wedged (WakeAlarmNotifier).
+        //  2. OPPORTUNISTIC — live RUN_ALARM buzzed on the wrist over a kept-alive link, driven off
+        //     `wakeTarget` by WakeAlarmScheduler in BLEManager (cmd 68 is proven to buzz this strap).
+        //  3. FREE BACKSTOP — the firmware cmd-66 alarm via armStrapAlarm (acked-not-stored today,
+        //     but costs nothing and recovers automatically if the NVM wedge clears).
+        WakeAlarmNotifier.schedule(at: next)
+        ble.wakeTarget = next
         ble.armStrapAlarm(at: next)
     }
 
