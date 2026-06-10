@@ -4,11 +4,11 @@ import WhoopStore
 
 final class MyDayTests: XCTestCase {
     // Fixed clock: 2026-06-10 12:00 UTC, UTC calendar — day = 2026-06-10.
-    private var cal: Calendar {
+    private let cal: Calendar = {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = TimeZone(identifier: "UTC")!
         return c
-    }
+    }()
     private let noon = Date(timeIntervalSince1970: 1_781_092_800) // 2026-06-10 12:00:00 UTC
     private let dayStart = 1_781_049_600                          // 2026-06-10 00:00:00 UTC
 
@@ -27,6 +27,11 @@ final class MyDayTests: XCTestCase {
         let s = sleep(start: dayStart - 1200, end: dayStart + 7 * 3600)
         let acts = MyDay.activities(sleeps: [s], workouts: [], now: noon, calendar: cal)
         XCTAssertEqual(acts.count, 1)
+    }
+
+    func testSleepEndingAtExactMidnightCountsToday() {
+        let s = sleep(start: dayStart - 3600, end: dayStart) // endTs == lo — "ended today" includes exact midnight
+        XCTAssertEqual(MyDay.activities(sleeps: [s], workouts: [], now: noon, calendar: cal).count, 1)
     }
 
     func testYesterdaysSleepExcluded() {
@@ -52,5 +57,9 @@ final class MyDayTests: XCTestCase {
         guard case .sleep = acts[0], case .workout = acts[1] else {
             return XCTFail("expected sleep then workout, got \(acts)")
         }
+    }
+
+    func testBothEmptyReturnsEmpty() {
+        XCTAssertTrue(MyDay.activities(sleeps: [], workouts: [], now: noon, calendar: cal).isEmpty)
     }
 }
