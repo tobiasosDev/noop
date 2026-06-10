@@ -1,0 +1,32 @@
+Strand/Screens/TodayView.swift
+  s_ff049a8bced57c::t_d523aff1bc74e7 66
+  s_ff049a8bced57c::t_787d4273aa7b53 620-625
+  s_ff049a8bced57c::t_5751182ed70aa5 29,34-35
+  s_ff049a8bced57c::t_51b28aa05e0dca 315-390
+StrandiOS/App/RootTabView.swift
+  s_ff049a8bced57c::t_ec64d4dfc7bf9c 41
+  s_ff049a8bced57c::t_6a76e16d18d78c 123
+Strand/Screens/GoalsView.swift
+  s_ff049a8bced57c::t_d9a858e46c88b9 1-353
+Strand/App/RootView.swift
+  s_ff049a8bced57c::t_73bb6a6fe4e062 48
+  s_ff049a8bced57c::t_b9488504d45338 76
+  s_ff049a8bced57c::t_7f9a30aea70c80 145
+  s_ff049a8bced57c::t_40103aced4f6eb 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "98faeee5d8766719d01df3ac9d1448c5b37f74b8",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
