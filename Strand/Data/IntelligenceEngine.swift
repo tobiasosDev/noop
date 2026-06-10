@@ -96,11 +96,12 @@ final class IntelligenceEngine: ObservableObject {
             let to = dayStart + 12 * 3_600
 
             // Closed night already scored → reuse the persisted daily; skip the 4 raw-stream reads.
-            // Its sleep sessions are already upserted, so they aren't re-collected (empty here).
+            // Its sleep sessions and detected workouts are already upserted, so they aren't
+            // re-collected (empty here).
             if to <= frontier, let cached = cachedByDay[day] {
                 nightlyHrvByDay[day] = cached.avgHrv
                 nightlyRhrByDay[day] = cached.restingHr.map(Double.init)
-                scoredNights.append((daily: cached, strain: cached.strain, cachedSleep: []))
+                scoredNights.append((daily: cached, strain: cached.strain, cachedSleep: [], workouts: []))
                 continue
             }
 
@@ -141,8 +142,8 @@ final class IntelligenceEngine: ObservableObject {
         // Imported workouts in the scored window, used to de-duplicate detected bouts so a user who
         // BOTH imports real WHOOP workouts AND wears the strap doesn't see the same session twice
         // (the per-day merge precedence does not cover the workout table). Port of the Android block
-        // in IntelligenceEngine.kt analyzeRecent.
-        let computedId = deviceId + "-noop"
+        // in IntelligenceEngine.kt analyzeRecent. (`computedId` is declared at the top of this
+        // method — the incremental gate needs it before pass 1.)
         let windowStart = now - maxDays * 86_400 - 30 * 3_600
         let importedWorkouts = (try? await store.workouts(deviceId: deviceId, from: windowStart,
                                                           to: now, limit: 100_000)) ?? []

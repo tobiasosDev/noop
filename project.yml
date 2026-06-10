@@ -145,7 +145,7 @@ targets:
         CFBundleName: NOOP
         CFBundleDisplayName: NOOP
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "30"
+        CFBundleVersion: "31"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
