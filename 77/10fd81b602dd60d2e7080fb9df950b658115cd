@@ -1,0 +1,37 @@
+Strand/System/WakeAlarmNotifier.swift
+  s_ff049a8bced57c::t_f9266fcb7394a2 4-9
+Strand/App/AppModel.swift
+  s_ff049a8bced57c::t_75b860415d656e 394-397
+  s_ff049a8bced57c::t_a57061f56d5878 384
+  s_ff049a8bced57c::t_3007eb15c4d314 404
+Strand/Data/BehaviorStore.swift
+  s_ff049a8bced57c::t_bdaacdedb277ae 30-34
+  s_ff049a8bced57c::t_232c9f05c0c0aa 58
+  s_ff049a8bced57c::t_eb268c76821852 78
+Strand/BLE/BLEManager.swift
+  s_ff049a8bced57c::t_c34d96ac4fac6b 87-92
+  s_ff049a8bced57c::t_5f94d6065286b2 923-924,930
+  s_ff049a8bced57c::t_01223fbd594f18 934-951
+  s_ff049a8bced57c::t_7d0e6f99001b65 678
+Strand/Screens/AutomationsView.swift
+  s_ff049a8bced57c::t_6e1074ee48718e 120
+  s_ff049a8bced57c::t_ab15d84d777b4a 133-136,139,148
+project.yml
+  s_ff049a8bced57c::t_52737f3d7854bc 171-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7710fd81b602dd60d2e7080fb9df950b658115cd",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
