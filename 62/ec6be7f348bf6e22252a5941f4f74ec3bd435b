@@ -1,0 +1,22 @@
+Packages/StrandDesign/Sources/StrandDesign/MiniRing.swift
+  s_673f67f9669206::t_1d88c1c90d96ad 1-74,77-83
+  s_673f67f9669206::t_5e038245ffa9e2 75-76
+Packages/StrandDesign/Sources/StrandDesign/WrapLayout.swift
+  s_673f67f9669206::t_9605a16bf1ffdc 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "62ec6be7f348bf6e22252a5941f4f74ec3bd435b",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
