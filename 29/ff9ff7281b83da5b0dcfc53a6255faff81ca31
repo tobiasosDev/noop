@@ -1,0 +1,27 @@
+StrandiOS/App/RootTabView.swift
+  s_ff049a8bced57c::t_1e792fdaabec8f 40
+  s_ff049a8bced57c::t_58f5c983048bc0 121
+Strand/Screens/ReportView.swift
+  s_ff049a8bced57c::t_044fa5aa19aabb 1-158
+Strand/App/RootView.swift
+  s_ff049a8bced57c::t_37bee5d5cca2ec 141
+  s_ff049a8bced57c::t_9df7144e64720c 17
+  s_ff049a8bced57c::t_ce9a91570138bd 73
+  s_ff049a8bced57c::t_f0858840843fa3 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "29ff9ff7281b83da5b0dcfc53a6255faff81ca31",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
