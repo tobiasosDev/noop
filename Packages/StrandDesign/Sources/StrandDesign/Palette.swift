@@ -137,13 +137,16 @@ public enum StrandPalette {
     /// The state word for a recovery score, per spec §9.3.
     /// DEPLETED · LOW · MODERATE · PRIMED · PEAK
     public static func recoveryState(_ score: Double) -> String {
+        let word: String.LocalizationValue
         switch score {
-        case ..<25:  return "DEPLETED"
-        case ..<50:  return "LOW"
-        case ..<70:  return "MODERATE"
-        case ..<88:  return "PRIMED"
-        default:     return "PEAK"
+        case ..<25:  word = "DEPLETED"
+        case ..<50:  word = "LOW"
+        case ..<70:  word = "MODERATE"
+        case ..<88:  word = "PRIMED"
+        default:     word = "PEAK"
         }
+        // Resolve against the host app's String Catalog (.main); this package ships no catalog.
+        return String(localized: word, bundle: .main)
     }
 
     /// HR-zone color for a 0...5 zone index (clamped).
@@ -211,14 +214,17 @@ public enum SleepStage: String, CaseIterable, Sendable {
     case deep
     case rem
 
-    /// Display label.
+    /// Display label, localized against the host app's String Catalog (.main). `rawValue` stays
+    /// the canonical key for logic; only this display label is localized.
     public var label: String {
+        let word: String.LocalizationValue
         switch self {
-        case .awake: return "Awake"
-        case .light: return "Light"
-        case .deep:  return "Deep"
-        case .rem:   return "REM"
+        case .awake: word = "Awake"
+        case .light: word = "Light"
+        case .deep:  word = "Deep"
+        case .rem:   word = "REM"
         }
+        return String(localized: word, bundle: .main)
     }
 
     /// Vertical band order (top = awake, bottom = deep) for hypnogram layout.

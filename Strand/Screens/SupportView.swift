@@ -1,11 +1,23 @@
 import SwiftUI
-import AppKit
 import StrandDesign
 
 /// Support — attribution + optional crypto donations. Never a paywall; the whole app works without it.
 struct SupportView: View {
     @State private var copied: String?
     @State private var selected = "BTC"
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    #endif
+
+    /// macOS (and regular-width iPad) keep the wide side-by-side layouts; a compact-width
+    /// iPhone stacks instead. macOS always reports `false` so its layout is unchanged.
+    private var isCompact: Bool {
+        #if os(iOS)
+        return hSizeClass == .compact
+        #else
+        return false
+        #endif
+    }
 
     var body: some View {
         ScreenScaffold(title: "Support",
@@ -28,7 +40,7 @@ struct SupportView: View {
                 }
                 Spacer(minLength: 8)
                 Button {
-                    if let url = URL(string: "mailto:\(ProjectInfo.contactEmail)") { NSWorkspace.shared.open(url) }
+                    if let url = URL(string: "mailto:\(ProjectInfo.contactEmail)") { PlatformOpen.url(url) }
                 } label: { Label("Email", systemImage: "paperplane.fill") }
                 .buttonStyle(.bordered).tint(StrandPalette.accent)
                 .help("Email \(ProjectInfo.contactEmail)")
@@ -89,6 +101,8 @@ struct SupportView: View {
                                 .background(Capsule().fill(on ? StrandPalette.accent : StrandPalette.surfaceInset))
                                 .foregroundStyle(on ? StrandPalette.surfaceBase : StrandPalette.textSecondary)
                                 .overlay(Capsule().strokeBorder(on ? Color.clear : StrandPalette.hairline, lineWidth: 1))
+                                .frame(minHeight: 44)
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Show \(coin.name) donation address")
@@ -97,26 +111,23 @@ struct SupportView: View {
                 }
 
                 if let coin = ProjectInfo.donations.first(where: { $0.symbol == selected }) {
-                    HStack(alignment: .top, spacing: 16) {
-                        qrView(coin.address)
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Scan with any \(coin.name) wallet")
-                                .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
-                            Text(coin.address)
-                                .font(StrandFont.mono(11)).foregroundStyle(StrandPalette.textSecondary)
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(coin.address, forType: .string)
-                                withAnimation { copied = coin.symbol }
-                            } label: {
-                                Label(copied == coin.symbol ? "Copied!" : "Copy address",
-                                      systemImage: copied == coin.symbol ? "checkmark" : "doc.on.doc")
-                            }
-                            .buttonStyle(.bordered).tint(StrandPalette.accent)
-                            .accessibilityLabel("Copy \(coin.name) address")
+                    // Wide canvas (macOS / iPad) keeps the side-by-side QR + address layout;
+                    // a compact-width iPhone stacks the QR above the address column so the
+                    // address text and the Copy button get the full card width and the Copy
+                    // label no longer breaks mid-word. Size-class (not ViewThatFits) is used
+                    // because the long single-line address would mis-measure ViewThatFits and
+                    // collapse macOS to the stacked branch too.
+                    if isCompact {
+                        VStack(alignment: .leading, spacing: 16) {
+                            qrView(coin.address)
+                            addressColumn(coin)
                         }
-                        Spacer(minLength: 0)
+                    } else {
+                        HStack(alignment: .top, spacing: 16) {
+                            qrView(coin.address)
+                            addressColumn(coin)
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
 
@@ -126,11 +137,33 @@ struct SupportView: View {
         }
     }
 
+    /// Address text + Copy button. Shared by the side-by-side (macOS / iPad) and stacked
+    /// (compact iPhone) branches so both layouts present identical children.
+    @ViewBuilder
+    private func addressColumn(_ coin: ProjectInfo.CryptoAddress) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Scan with any \(coin.name) wallet")
+                .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
+            Text(coin.address)
+                .font(StrandFont.mono(11)).foregroundStyle(StrandPalette.textSecondary)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Button {
+                PlatformPasteboard.copy(coin.address)
+                withAnimation { copied = coin.symbol }
+            } label: {
+                Label(copied == coin.symbol ? "Copied!" : "Copy address",
+                      systemImage: copied == coin.symbol ? "checkmark" : "doc.on.doc")
+            }
+            .buttonStyle(.bordered).tint(StrandPalette.accent)
+            .accessibilityLabel("Copy \(coin.name) address")
+        }
+    }
+
     /// Black-on-white QR so wallet cameras read it cleanly against the dark UI.
     private func qrView(_ address: String) -> some View {
         Group {
             if let img = QRCode.image(for: address) {
-                Image(nsImage: img).resizable().interpolation(.none)
+                Image(platformImage: img).resizable().interpolation(.none)
             } else {
                 RoundedRectangle(cornerRadius: 8, style: .continuous).fill(StrandPalette.surfaceInset)
             }
@@ -159,6 +192,34 @@ struct SupportView: View {
 /// are absorbed (the panel is opaque) so its controls keep working.
 struct SupportModalOverlay: View {
     @Binding var isPresented: Bool
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    #endif
+
+    /// macOS / iPad keep the centred fixed-size floating panel; a compact-width iPhone lets
+    /// the panel fill the viewport (with insets) so the rounded card, border, and close
+    /// button stay on-screen instead of being clipped by a 560pt frame on a 402pt device.
+    private var isCompact: Bool {
+        #if os(iOS)
+        return hSizeClass == .compact
+        #else
+        return false
+        #endif
+    }
+
+    /// The SupportView host, sized for the current platform. macOS / iPad keep the exact
+    /// 560x680 fixed panel; an iPhone (compact width) fills the viewport with a small inset.
+    @ViewBuilder
+    private var panel: some View {
+        if isCompact {
+            SupportView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+        } else {
+            SupportView()
+                .frame(width: 560, height: 680)
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -168,8 +229,7 @@ struct SupportModalOverlay: View {
                 .contentShape(Rectangle())
                 .onTapGesture { isPresented = false }
 
-            SupportView()
-                .frame(width: 560, height: 680)
+            panel
                 .background(StrandPalette.surfaceBase,
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(
@@ -189,7 +249,9 @@ struct SupportModalOverlay: View {
                 }
                 .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 14)
         }
+        #if os(macOS)
         .onExitCommand { isPresented = false }
+        #endif
         .transition(.opacity)
     }
 }

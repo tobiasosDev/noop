@@ -9,6 +9,13 @@ enum DataSourceImportKind {
     case appleHealth
 }
 
+/// Identifiable wrapper so a journal day can drive a `.sheet(item:)` — from the Today
+/// morning card or a tapped morning notification.
+struct JournalRoute: Identifiable, Equatable {
+    let day: String
+    var id: String { day }
+}
+
 /// Root app state: owns the live BLE connection state and the CoreBluetooth engine.
 /// More subsystems (Repository, AnalyticsEngine, ImportCoordinator) get wired in here
 /// in later milestones.
@@ -28,6 +35,8 @@ final class AppModel: ObservableObject {
     let profile = ProfileStore()
     /// Behaviour settings: double-tap action, wear automation, zone coaching, smart alarm, illness watch.
     let behavior = BehaviorStore()
+    /// Journal capture preferences: tracked behaviours, morning-reminder time, last-logged day.
+    let journal = JournalStore()
     /// On-device WHOOP-style recovery/strain/sleep computation from raw strap streams.
     let intelligence: IntelligenceEngine
     /// Opt-in AI coach (bring-your-own-key) — the one networked feature, off until the user enables it.
@@ -37,6 +46,9 @@ final class AppModel: ObservableObject {
     @Published var moments: [Date] = []
     /// Illness/strain early-warning (recent RHR up + HRV down + skin-temp up vs baseline). nil = clear.
     @Published var healthAlert: String?
+    /// Non-nil → present the journal log sheet for this day (from the Today card or a tapped
+    /// morning notification). Cleared when the sheet dismisses.
+    @Published var journalRoute: JournalRoute?
     private var lastDoubleTapAt: Date = .distantPast
     private var lastCoachZone: Int = -1
     // Stress-nudge state: rolling R-R buffer + a slow HRV baseline + a rate limiter.
@@ -344,6 +356,9 @@ final class AppModel: ObservableObject {
                     return
                 }
                 let summary = try await WhoopImporter.importExport(url: url, into: store, deviceId: deviceId)
+                // Record that real journal rows were imported, so the Journal shows the imported
+                // behaviours regardless of their language/phrasing (definitive vs. inferring it).
+                if (summary.countsByCategory["journal"] ?? 0) > 0 { journal.hasJournalImport = true }
                 await repo.refresh()
                 let span: String
                 if let a = summary.earliest, let b = summary.latest {

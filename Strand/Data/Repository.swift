@@ -12,6 +12,12 @@ final class Repository: ObservableObject {
     /// streams by IntelligenceEngine). Merged UNDER the imported `deviceId` rows at read time, so a
     /// real WHOOP import always wins and the strap-only user still gets a populated dashboard.
     private var computedDeviceId: String { deviceId + "-noop" }
+    /// Source id Apple Health data lands under (matches `AppModel.appleDeviceId`). Merged at the
+    /// LOWEST priority so an Apple-Watch-only iPhone — which has no strap or computed rows for the
+    /// recent window — still gets populated Trends/Sleep for the metrics Health provides
+    /// (HRV / resting HR / SpO₂ / respiratory rate / sleep duration). Recovery & strain remain a
+    /// strap-only signal, so those stay empty without a WHOOP.
+    let appleDeviceId: String
     private var store: WhoopStore?
 
     /// Daily metrics (recovery/strain/sleep/HRV/RHR…) over the recent window, oldest→newest.
@@ -24,7 +30,10 @@ final class Repository: ObservableObject {
     /// date string within a day and would freeze e.g. the Today HR trend until the date rolls over.
     @Published private(set) var refreshSeq = 0
 
-    init(deviceId: String) { self.deviceId = deviceId }
+    init(deviceId: String, appleDeviceId: String = "apple-health") {
+        self.deviceId = deviceId
+        self.appleDeviceId = appleDeviceId
+    }
 
     /// Today's row, by the device's ACTUAL local calendar date — NOT just the newest stored row, which
     /// after a historical import was months-old data shown as today's hero (issue #23). nil if no row
@@ -78,20 +87,25 @@ final class Repository: ObservableObject {
 
         let imported = (try? await store.dailyMetrics(deviceId: deviceId, from: fromDay, to: toDay)) ?? []
         let computed = (try? await store.dailyMetrics(deviceId: computedDeviceId, from: fromDay, to: toDay)) ?? []
+        let apple = (try? await store.dailyMetrics(deviceId: appleDeviceId, from: fromDay, to: toDay)) ?? []
         let impSleep = (try? await store.sleepSessions(deviceId: deviceId, from: lo, to: hi, limit: 4000)) ?? []
         let compSleep = (try? await store.sleepSessions(deviceId: computedDeviceId, from: lo, to: hi, limit: 4000)) ?? []
 
-        self.days = Self.mergeDaily(imported: imported, computed: computed)
+        self.days = Self.mergeDaily(imported: imported, computed: computed, apple: apple)
         self.sleeps = Self.mergeSleep(imported: impSleep, computed: compSleep)
         self.loaded = true
         self.refreshSeq += 1
     }
 
-    /// Imported daily rows win per day; computed rows fill the days the import doesn't cover.
-    private static func mergeDaily(imported: [DailyMetric], computed: [DailyMetric]) -> [DailyMetric] {
+    /// Strap import wins per day; computed scores fill the days the import doesn't cover; Apple Health
+    /// fills any day neither strap source has — so an Apple-Watch-only iPhone still gets a populated
+    /// dashboard for the metrics Health provides. `internal` (not `private`) so the merge precedence
+    /// is unit-testable; `apple` defaults to empty so existing two-source callers are unaffected.
+    static func mergeDaily(imported: [DailyMetric], computed: [DailyMetric], apple: [DailyMetric] = []) -> [DailyMetric] {
         var byDay: [String: DailyMetric] = [:]
-        for d in computed { byDay[d.day] = d }   // computed first…
-        for d in imported { byDay[d.day] = d }   // …import overwrites, so a real WHOOP import always wins
+        for d in apple    { byDay[d.day] = d }   // Apple Health: lowest priority…
+        for d in computed { byDay[d.day] = d }   // …computed overwrites Apple…
+        for d in imported { byDay[d.day] = d }   // …and a real WHOOP import always wins
         return byDay.values.sorted { $0.day < $1.day }
     }
 
@@ -155,6 +169,34 @@ final class Repository: ObservableObject {
             deviceId: deviceId,
             from: Self.dayString(now.addingTimeInterval(-Double(days) * 86_400)),
             to: Self.dayString(now.addingTimeInterval(86_400)))) ?? []
+    }
+
+    /// Persist natively-logged journal answers under the strap deviceId — the SAME source the
+    /// importer writes to and `InsightsView` reads — so logged + imported entries unify on
+    /// (deviceId, day, question). Refreshes the dashboard caches so Insights/history reload.
+    func saveJournal(_ rows: [JournalEntry]) async {
+        guard let store = await ensureStore(), !rows.isEmpty else { return }
+        _ = try? await store.upsertJournal(rows, deviceId: deviceId)
+        await refresh()
+    }
+
+    /// Reconcile a single day's journal: upsert the answered `write` rows and delete the `delete`
+    /// question keys (rows the user cleared, or duplicate variants now collapsed onto a single
+    /// representative). Keyed by (deviceId, day, question). Refreshes caches once.
+    func reconcileJournalDay(_ day: String, write: [JournalEntry], delete: [String]) async {
+        guard let store = await ensureStore() else { return }
+        if !write.isEmpty { _ = try? await store.upsertJournal(write, deviceId: deviceId) }
+        if !delete.isEmpty { _ = try? await store.deleteJournal(deviceId: deviceId, day: day, questions: delete) }
+        if !write.isEmpty || !delete.isEmpty { await refresh() }
+    }
+
+    /// Distinct journal question strings already present (e.g. from a WHOOP import), so the
+    /// Journal can absorb them into the tracked set and guarantee key unification.
+    func importedJournalQuestions(days: Int = 4000) async -> [String] {
+        let entries = await journalEntries(days: days)
+        var seen = Set<String>(); var out: [String] = []
+        for e in entries where seen.insert(e.question).inserted { out.append(e.question) }
+        return out
     }
 
     /// All workouts (Whoop + Apple Health), newest first.

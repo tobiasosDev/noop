@@ -148,7 +148,11 @@ enum WhoopImporter {
         }
         try await store.upsertWorkouts(workouts, deviceId: deviceId)
 
-        return result.summary
+        // Report the journal count we actually WROTE (rows need a cycle date + question), not the
+        // raw parsed count — callers use this to mark that a real journal import landed.
+        var summary = result.summary
+        summary.countsByCategory["journal"] = journal.count
+        return summary
     }
 
     /// Local-calendar day string for the cycle's own UTC offset.

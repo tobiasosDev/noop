@@ -300,9 +300,9 @@ enum StressBand {
 
     var title: String {
         switch self {
-        case .low:    return "LOW"
-        case .medium: return "MEDIUM"
-        case .high:   return "HIGH"
+        case .low:    return String(localized: "LOW")
+        case .medium: return String(localized: "MEDIUM")
+        case .high:   return String(localized: "HIGH")
         }
     }
 
@@ -588,11 +588,11 @@ struct StressGauge: View {
                     )
                     .shadow(color: StressRamp.color(score).opacity(0.55), radius: 10)
             }
-            .frame(width: diameter, height: diameter)
-            // The arc occupies the top half of its bounding box; pin it so the
-            // readout sits inside the bowl.
-            .frame(height: diameter / 2 + lineWidth, alignment: .top)
-            .clipped()
+            // Size the arc box to exactly the dome (height = radius + stroke); StressArc derives its
+            // radius from WIDTH, so the semicircle fills this box with nothing to clip. The previous
+            // full-square-box + .clipped() approach rendered inconsistently across iOS versions
+            // (cropped to a sliver on some) — the "gauge not viewable on device" report.
+            .frame(width: diameter, height: diameter / 2 + lineWidth)
 
             // Center readout (number + band), tucked into the semicircle.
             VStack(spacing: 2) {
@@ -630,9 +630,11 @@ struct StressArc: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()
         let lineInset: CGFloat = 16
-        let radius = min(rect.width, rect.height) / 2 - lineInset
-        // Center the arc on the bottom-middle so the bowl opens upward.
-        let center = CGPoint(x: rect.midX, y: rect.height)
+        // Radius from WIDTH (not min(w,h)) so the dome keeps its full size even when the box is only
+        // dome-tall — lets the caller size the box to the dome and avoid a cross-version .clipped().
+        let radius = rect.width / 2 - lineInset
+        // Center on the bottom-middle, lifted half a stroke so the round end-caps stay inside the box.
+        let center = CGPoint(x: rect.midX, y: rect.height - lineInset / 2)
         let start = Angle.degrees(180)
         let end = Angle.degrees(180 + 180 * Double(min(max(progress, 0), 1)))
         p.addArc(center: center, radius: radius, startAngle: start, endAngle: end, clockwise: false)

@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import StrandDesign
 import WhoopProtocol
 
@@ -92,11 +91,24 @@ struct LiveView: View {
     // MARK: - Status tiles
 
     private var statusGrid: some View {
-        HStack(spacing: NoopMetrics.gap) {
-            stat("Battery", live.batteryPct.map { "\(Int($0))%" } ?? "—")
-            stat("Last frame", live.lastFrameType ?? "—")
-            stat("Last event", live.lastEvent ?? "—")
+        // Wide canvas (macOS/iPad): the three tiles sit edge-to-edge in one row, exactly as before
+        // (ViewThatFits picks this child when it fits). Narrow iPhone: the row can't fit at the
+        // tiles' ~150pt min, so it falls back to a wrapping 2-up adaptive grid instead of squeezing
+        // each tile below its design intent. (Was a fixed 3-column HStack.)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: NoopMetrics.gap) { statusTiles }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: NoopMetrics.gap)],
+                      spacing: NoopMetrics.gap) { statusTiles }
         }
+    }
+
+    @ViewBuilder private var statusTiles: some View {
+        // minWidth floors the tiles so the single-row HStack reports its true ~474pt ideal width
+        // and ViewThatFits correctly rejects it on iPhone; on the wide canvas the cards still
+        // expand to fill (maxWidth .infinity), so the row is unchanged on macOS.
+        stat("Battery", live.batteryPct.map { "\(Int($0))%" } ?? "—").frame(minWidth: 150, maxWidth: .infinity)
+        stat("Last frame", live.lastFrameType ?? "—").frame(minWidth: 150, maxWidth: .infinity)
+        stat("Last event", live.lastEvent ?? "—").frame(minWidth: 150, maxWidth: .infinity)
     }
 
     private func stat(_ title: String, _ value: String) -> some View {
@@ -162,29 +174,51 @@ struct LiveView: View {
     // MARK: - Controls
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            Button { model.scan(model: selectedModel) } label: {
-                Label(live.connected ? "Re-scan" : "Scan & Connect",
-                      systemImage: "antenna.radiowaves.left.and.right")
-                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+        // Wide canvas (macOS) keeps the three buttons in a single row; on the narrow iPhone width
+        // where the labels would hyphenate/wrap ("Scan & Con-nect", "Dis-con-nect"), they stack
+        // full-width vertically instead. Each button already uses .frame(maxWidth:.infinity), so
+        // both branches expand cleanly. Buttons are factored into computed properties so the two
+        // branches stay in sync.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                scanButton
+                buzzButton
+                disconnectButton
             }
-            .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
-
-            Button { model.buzz() } label: {
-                Label("Buzz strap", systemImage: "waveform.path")
-                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+            VStack(spacing: 12) {
+                scanButton
+                buzzButton
+                disconnectButton
             }
-            .buttonStyle(.bordered).tint(StrandPalette.accent)
-            .disabled(!activeConnection)
-            .help("Fire a test haptic buzz on the strap (requires an active strap connection)")
-
-            Button(role: .destructive) { model.disconnect() } label: {
-                Label("Disconnect", systemImage: "xmark.circle")
-                    .frame(maxWidth: .infinity).padding(.vertical, 8)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!live.connected)
         }
+    }
+
+    private var scanButton: some View {
+        Button { model.scan(model: selectedModel) } label: {
+            Label(live.connected ? "Re-scan" : "Scan & Connect",
+                  systemImage: "antenna.radiowaves.left.and.right")
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+        }
+        .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
+    }
+
+    private var buzzButton: some View {
+        Button { model.buzz() } label: {
+            Label("Buzz strap", systemImage: "waveform.path")
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered).tint(StrandPalette.accent)
+        .disabled(!activeConnection)
+        .help("Fire a test haptic buzz on the strap (requires an active strap connection)")
+    }
+
+    private var disconnectButton: some View {
+        Button(role: .destructive) { model.disconnect() } label: {
+            Label("Disconnect", systemImage: "xmark.circle")
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!live.connected)
     }
 
     private func refreshLiveSession() {
@@ -204,10 +238,16 @@ struct LiveView: View {
                     Spacer()
                     // Export the log so people can attach it to a bug report (issue #17 — macOS users
                     // had no way to share it). Copy → clipboard; Save… → a .txt file.
+                    // Pad + contentShape so the tap region clears 44pt on iPhone touch without
+                    // changing the visible mono-text glyphs (macOS pointer hit area is unaffected).
                     Button("Copy") { copyStrapLog() }
                         .buttonStyle(.plain).font(StrandFont.mono).foregroundStyle(StrandPalette.accent)
+                        .padding(.vertical, 8).padding(.horizontal, 4)
+                        .contentShape(Rectangle())
                     Button("Save…") { saveStrapLog() }
                         .buttonStyle(.plain).font(StrandFont.mono).foregroundStyle(StrandPalette.accent)
+                        .padding(.vertical, 8).padding(.horizontal, 4)
+                        .contentShape(Rectangle())
                 }
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -233,22 +273,22 @@ struct LiveView: View {
 
     private func strapLogText() -> String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let header = "NOOP strap log — macOS\nApp: \(v)\nmacOS: "
+        #if os(iOS)
+        let osName = "iOS"
+        #else
+        let osName = "macOS"
+        #endif
+        let header = "NOOP strap log — \(osName)\nApp: \(v)\n\(osName): "
             + ProcessInfo.processInfo.operatingSystemVersionString + "\n"
             + String(repeating: "-", count: 40) + "\n"
         return header + live.log.joined(separator: "\n")
     }
 
     private func copyStrapLog() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(strapLogText(), forType: .string)
+        PlatformPasteboard.copy(strapLogText())
     }
 
     private func saveStrapLog() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "noop-strap-log.txt"
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? strapLogText().write(to: url, atomically: true, encoding: .utf8)
+        FileExport.exportText(strapLogText(), suggestedName: "noop-strap-log.txt")
     }
 }

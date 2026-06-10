@@ -24,9 +24,9 @@ struct IntervalTimerView: View {
     private enum Phase { case work, rest, done
         var label: String {
             switch self {
-            case .work: return "WORK"
-            case .rest: return "REST"
-            case .done: return "DONE"
+            case .work: return String(localized: "WORK")
+            case .rest: return String(localized: "REST")
+            case .done: return String(localized: "DONE")
             }
         }
     }
@@ -257,11 +257,26 @@ struct IntervalTimerView: View {
                 }
                 .frame(height: 8)
 
-                HStack(spacing: 0) {
-                    overviewStat("Work", "\(workSeconds)s", StrandPalette.accent)
-                    overviewStat("Rest", "\(restSeconds)s", StrandPalette.metricCyan)
-                    overviewStat("Rounds", "\(rounds)", StrandPalette.textPrimary)
-                    overviewStat("Remaining", timeString(max(0, totalPlanned - elapsed)), StrandPalette.textSecondary)
+                // Wide canvas (macOS) keeps the single even-division row; iPhone /
+                // large Dynamic Type falls back to a 2x2 grid so labels/values can't
+                // collide at extreme config values.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 0) {
+                        overviewStat("Work", "\(workSeconds)s", StrandPalette.accent)
+                        overviewStat("Rest", "\(restSeconds)s", StrandPalette.metricCyan)
+                        overviewStat("Rounds", "\(rounds)", StrandPalette.textPrimary)
+                        overviewStat("Remaining", timeString(max(0, totalPlanned - elapsed)), StrandPalette.textSecondary)
+                    }
+                    VStack(spacing: 12) {
+                        HStack(spacing: 0) {
+                            overviewStat("Work", "\(workSeconds)s", StrandPalette.accent)
+                            overviewStat("Rest", "\(restSeconds)s", StrandPalette.metricCyan)
+                        }
+                        HStack(spacing: 0) {
+                            overviewStat("Rounds", "\(rounds)", StrandPalette.textPrimary)
+                            overviewStat("Remaining", timeString(max(0, totalPlanned - elapsed)), StrandPalette.textSecondary)
+                        }
+                    }
                 }
             }
         }
@@ -274,8 +289,10 @@ struct IntervalTimerView: View {
 
     private func overviewStat(_ label: String, _ value: String, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label.uppercased()).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+            Text(String(localized: String.LocalizationValue(label)).uppercased()).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
             Text(value).font(StrandFont.number(18)).foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

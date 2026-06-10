@@ -14,6 +14,8 @@ struct BreathingView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
 
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+
     // MARK: Pace presets
 
     private enum Pace: Hashable, CaseIterable {
@@ -23,9 +25,9 @@ struct BreathingView: View {
 
         var label: String {
             switch self {
-            case .relax:     return "Relax 4-6"
-            case .coherence: return "Coherence 5.5"
-            case .box:       return "Box 4-4"
+            case .relax:     return String(localized: "Relax 4-6")
+            case .coherence: return String(localized: "Coherence 5.5")
+            case .box:       return String(localized: "Box 4-4")
             }
         }
 
@@ -278,26 +280,45 @@ struct BreathingView: View {
 
     // MARK: - Readouts
 
+    // Three fixed-height metric tiles. On macOS/iPad (.regular) they sit 3-up
+    // across the wide content column, unchanged. On iPhone (.compact) the row is
+    // only ~346pt wide, which clips the captions, so we reflow into an adaptive
+    // grid that drops to 2-up/1-up — the same pattern the StatTile grids use.
     private var readoutRow: some View {
-        HStack(spacing: NoopMetrics.gap) {
-            readoutTile(label: "Heart rate",
-                        value: model.bpm.map { "\($0)" } ?? "—",
-                        unit: "bpm",
-                        accent: StrandPalette.metricRose,
-                        caption: live.worn ? "Live" : "Strap not worn")
-
-            readoutTile(label: "HRV (RMSSD)",
-                        value: rmssd.map { String(format: "%.0f", $0) } ?? "—",
-                        unit: "ms",
-                        accent: StrandPalette.metricPurple,
-                        caption: rrBuffer.isEmpty ? "Waiting for R-R" : "Last \(rrBuffer.count) beats")
-
-            readoutTile(label: "Pace",
-                        value: String(format: "%.1f", pace.bpm),
-                        unit: "br/min",
-                        accent: StrandPalette.accent,
-                        caption: String(format: "%.0f / %.0fs", pace.inhale, pace.exhale))
+        Group {
+            if hSizeClass == .compact {
+                LazyVGrid(columns: readoutColumns, alignment: .leading, spacing: NoopMetrics.gap) {
+                    readoutTiles
+                }
+            } else {
+                HStack(spacing: NoopMetrics.gap) {
+                    readoutTiles
+                }
+            }
         }
+    }
+
+    private let readoutColumns = [GridItem(.adaptive(minimum: 150), spacing: NoopMetrics.gap)]
+
+    @ViewBuilder
+    private var readoutTiles: some View {
+        readoutTile(label: "Heart rate",
+                    value: model.bpm.map { "\($0)" } ?? "—",
+                    unit: "bpm",
+                    accent: StrandPalette.metricRose,
+                    caption: live.worn ? "Live" : "Strap not worn")
+
+        readoutTile(label: "HRV (RMSSD)",
+                    value: rmssd.map { String(format: "%.0f", $0) } ?? "—",
+                    unit: "ms",
+                    accent: StrandPalette.metricPurple,
+                    caption: rrBuffer.isEmpty ? "Waiting for R-R" : "Last \(rrBuffer.count) beats")
+
+        readoutTile(label: "Pace",
+                    value: String(format: "%.1f", pace.bpm),
+                    unit: "br/min",
+                    accent: StrandPalette.accent,
+                    caption: String(format: "%.0f / %.0fs", pace.inhale, pace.exhale))
     }
 
     private func readoutTile(label: String, value: String, unit: String,
@@ -321,6 +342,7 @@ struct BreathingView: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .padding(.top, 4)
             }
         }

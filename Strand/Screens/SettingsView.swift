@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import UniformTypeIdentifiers
 import StrandDesign
 import WhoopStore
@@ -10,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
+    @EnvironmentObject var journal: JournalStore
 
     /// Backup & restore UI state.
     @State private var backupBusy = false
@@ -30,11 +30,21 @@ struct SettingsView: View {
     @StateObject private var updateChecker = UpdateChecker()
     @Environment(\.openURL) private var openURL
 
+    /// Header subtitle — keep the device noun platform-correct.
+    private var headerSubtitle: LocalizedStringKey {
+        #if os(macOS)
+        "Your numbers, your strap, and how NOOP works. All on this Mac."
+        #else
+        "Your numbers, your strap, and how NOOP works. All on this iPhone."
+        #endif
+    }
+
     var body: some View {
         ScreenScaffold(title: "Settings",
-                       subtitle: "Your numbers, your strap, and how NOOP works. All on this Mac.") {
+                       subtitle: headerSubtitle) {
             profileCard
             strapCard
+            journalCard
             experimentalCard
             backupCard
             aboutCard
@@ -70,16 +80,27 @@ struct SettingsView: View {
                     }
                 }
                 rowDivider
-                FormRow(label: "Sex") {
-                    Picker("Sex", selection: $profile.sex) {
-                        Text("Male").tag("male")
-                        Text("Female").tag("female")
-                        Text("Non-binary").tag("nonbinary")
+                // Two-column row on the wide macOS canvas; on the narrow iPhone the
+                // label + .fixedSize() picker can't fit side by side, so ViewThatFits
+                // falls back to a stacked layout (label above a full-width picker)
+                // instead of squeezing the "Sex" label into "Se\nx".
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 16) {
+                        Text("Sex")
+                            .font(StrandFont.body)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        sexPicker
+                            .fixedSize()
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .accessibilityLabel("Sex")
+                    .frame(minHeight: 32)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Sex")
+                            .font(StrandFont.body)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        sexPicker
+                    }
                 }
                 rowDivider
                 FormRow(label: "Weight") {
@@ -113,6 +134,20 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// Segmented Sex picker — no .fixedSize() here; callers add it for the wide
+    /// (horizontal) layout and omit it for the stacked iPhone fallback so the
+    /// control fills the card width without truncating "Non-binary".
+    private var sexPicker: some View {
+        Picker("Sex", selection: $profile.sex) {
+            Text("Male").tag("male")
+            Text("Female").tag("female")
+            Text("Non-binary").tag("nonbinary")
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Sex")
     }
 
     /// Numeric weight/height field: tabular value + small +/- stepper.
@@ -224,6 +259,87 @@ struct SettingsView: View {
         return .positive
     }
 
+    // MARK: - Journal
+
+    private var journalCard: some View {
+        SettingsSection(
+            icon: "book.pages.fill",
+            title: "Journal",
+            blurb: "Choose which behaviours to log each day. NOOP correlates them with your recovery, HRV and sleep in Insights."
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                #if os(iOS)
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $journal.reminderEnabled) {
+                        Text("Morning reminder")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                    }
+                    .toggleStyle(.switch)
+                    .tint(StrandPalette.accent)
+
+                    if journal.reminderEnabled {
+                        FormRow(label: "Remind me at") {
+                            DatePicker("Reminder time", selection: reminderTime,
+                                       displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                                .accessibilityLabel("Reminder time")
+                        }
+                    }
+                    Text("A daily nudge to log yesterday's journal. NOOP asks at this time; nothing leaves your device.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider().overlay(StrandPalette.hairline)
+                #endif
+
+                Text("TRACKED BEHAVIOURS")
+                    .font(StrandFont.overline)
+                    .tracking(StrandFont.overlineTracking)
+                    .foregroundStyle(StrandPalette.textTertiary)
+
+                ForEach(JournalCatalog.categories, id: \.self) { category in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(category)
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        ForEach(JournalCatalog.inCategory(category)) { behavior in
+                            Toggle(isOn: trackedBinding(behavior.id)) {
+                                Label(behavior.shortLabelKey, systemImage: behavior.icon)
+                                    .font(StrandFont.subhead)
+                                    .foregroundStyle(StrandPalette.textPrimary)
+                            }
+                            .toggleStyle(.switch)
+                            .tint(StrandPalette.accent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func trackedBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { journal.isTracked(id) }, set: { journal.setTracked(id, $0) })
+    }
+
+    #if os(iOS)
+    /// Maps the stored minutes-since-midnight reminder pref to/from a Date for the picker.
+    private var reminderTime: Binding<Date> {
+        Binding(
+            get: {
+                let c = JournalReminder.components(minutesSinceMidnight: journal.reminderMinutes)
+                return Calendar.current.date(bySettingHour: c.hour ?? 8, minute: c.minute ?? 0,
+                                             second: 0, of: Date()) ?? Date()
+            },
+            set: { date in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                journal.reminderMinutes = (c.hour ?? 8) * 60 + (c.minute ?? 0)
+            }
+        )
+    }
+    #endif
+
     // MARK: - Backup & restore
 
     // MARK: - Experimental (WHOOP 5 / MG)
@@ -275,6 +391,7 @@ struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(StrandPalette.accent)
 
+                        #if os(macOS)
                         Button {
                             revealPuffinCaptures()
                         } label: {
@@ -283,6 +400,7 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .tint(StrandPalette.accent)
+                        #endif
                         Spacer(minLength: 0)
                     }
                 }
@@ -290,32 +408,21 @@ struct SettingsView: View {
         }
     }
 
-    /// Flush the in-flight capture, then copy it to a user-chosen location via a save panel.
+    /// Flush the in-flight capture, then copy it to a user-chosen location (or share it on iOS).
     private func exportPuffinCaptures() {
         model.ble.flushPuffinCaptures()
         guard let src = live.puffinCaptureURL else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = src.lastPathComponent
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let dest = panel.url else { return }
-        let fm = FileManager.default
-        do {
-            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try fm.copyItem(at: src, to: dest)
-        } catch {
-            backupAlertTitle = "Export failed"
-            backupAlertMessage = error.localizedDescription
-            showBackupAlert = true
-        }
+        FileExport.exportFile(at: src)
     }
 
+    #if os(macOS)
     /// Flush, then reveal the capture file in Finder so the user can grab it directly.
     private func revealPuffinCaptures() {
         model.ble.flushPuffinCaptures()
         guard let url = live.puffinCaptureURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
+    #endif
 
     private var backupCard: some View {
         SettingsSection(
@@ -625,6 +732,7 @@ private struct FormRow<Control: View>: View {
         .environmentObject(model)
         .environmentObject(model.live)
         .environmentObject(model.profile)
+        .environmentObject(model.journal)
         .frame(width: 720, height: 900)
         .background(StrandPalette.surfaceBase)
         .preferredColorScheme(.dark)

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// One interrogable metric: how to fetch it (key+source), how to label/format it, and whether
 /// higher is better (drives delta tinting). The Metric Explorer + Compare are built from this list.
@@ -12,6 +13,15 @@ struct MetricDescriptor: Identifiable, Hashable {
     let decimals: Int
     let higherIsBetter: Bool?
     var id: String { source + ":" + key }
+
+    /// Display title/category resolved against the app's String Catalog for the current locale.
+    /// `title`/`category` stay the canonical English keys (used for grouping/logic); only display
+    /// goes through these. Keys are registered manually in Localizable.xcstrings.
+    /// `*Key` for SwiftUI `Text`/`Label`; the `String` forms for interpolation / accessibility.
+    var titleKey: LocalizedStringKey { LocalizedStringKey(title) }
+    var categoryKey: LocalizedStringKey { LocalizedStringKey(category) }
+    var localizedTitle: String { String(localized: String.LocalizationValue(title)) }
+    var localizedCategory: String { String(localized: String.LocalizationValue(category)) }
 
     func format(_ v: Double) -> String {
         let n = decimals == 0 ? String(Int(v.rounded())) : String(format: "%.\(decimals)f", v)

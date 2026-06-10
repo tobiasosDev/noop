@@ -85,6 +85,55 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
         XCTAssertEqual(n, 2)
     }
 
+    /// Guards the contract Repository.saveJournal relies on: native logging writes under the
+    /// app's strap deviceId ("my-whoop"), the SAME source the importer + InsightsView use, and
+    /// editing a day re-upserts (no duplicate). Existing tests use "devA"; this pins the real id.
+    func testLoggedUnderAppDeviceIdRoundTrips() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Did you have any caffeine?", answeredYes: true, notes: "AM"),
+        ], deviceId: "my-whoop")
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Did you have any caffeine?", answeredYes: false, notes: nil),
+        ], deviceId: "my-whoop")
+        let rows = try await store.journalEntries(deviceId: "my-whoop", from: "2026-06-08", to: "2026-06-08")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.answeredYes, false)
+        XCTAssertNil(rows.first?.notes)
+    }
+
+    func testDeleteJournalRemovesOnlyNamedQuestionsForDay() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Alkohol konsumiert?", answeredYes: true, notes: nil),
+            JournalEntry(day: "2026-06-08", question: "Did you drink any alcohol?", answeredYes: false, notes: nil),
+            JournalEntry(day: "2026-06-08", question: "Koffein konsumiert?", answeredYes: true, notes: nil),
+            JournalEntry(day: "2026-06-07", question: "Alkohol konsumiert?", answeredYes: true, notes: nil),
+        ], deviceId: "my-whoop")
+
+        // Collapse the duplicate alcohol variant on 06-08 only.
+        let n = try await store.deleteJournal(deviceId: "my-whoop", day: "2026-06-08",
+                                              questions: ["Did you drink any alcohol?"])
+        XCTAssertEqual(n, 1)
+
+        let d8 = try await store.journalEntries(deviceId: "my-whoop", from: "2026-06-08", to: "2026-06-08")
+        XCTAssertEqual(d8.map { $0.question }, ["Alkohol konsumiert?", "Koffein konsumiert?"])
+        // Other days and devices untouched.
+        let d7 = try await store.journalEntries(deviceId: "my-whoop", from: "2026-06-07", to: "2026-06-07")
+        XCTAssertEqual(d7.count, 1)
+    }
+
+    func testDeleteJournalEmptyQuestionsIsNoop() async throws {
+        let store = try await WhoopStore.inMemory()
+        try await store.upsertJournal([
+            JournalEntry(day: "2026-06-08", question: "Koffein konsumiert?", answeredYes: true, notes: nil),
+        ], deviceId: "my-whoop")
+        let n = try await store.deleteJournal(deviceId: "my-whoop", day: "2026-06-08", questions: [])
+        XCTAssertEqual(n, 0)
+        let rows = try await store.journalEntries(deviceId: "my-whoop", from: "2026-06-08", to: "2026-06-08")
+        XCTAssertEqual(rows.count, 1, "empty delete must not touch data")
+    }
+
     // MARK: - workout
 
     func testWorkoutUpsertReadAndIdempotency() async throws {

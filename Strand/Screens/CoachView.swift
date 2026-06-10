@@ -23,6 +23,8 @@ struct CoachView: View {
     /// The id typed in the "Custom…" field.
     @State private var customModelDraft: String = ""
     @FocusState private var composerFocused: Bool
+    /// Distinguishes the wide macOS/iPad canvas (.regular) from the narrow iPhone width (.compact).
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     /// Sentinel tag for the "Custom…" entry in the model Picker.
     private let customModelTag = "__custom__"
@@ -246,12 +248,29 @@ struct CoachView: View {
 
     private var connectedHeader: some View {
         HStack(spacing: 10) {
-            StatePill("\(coach.provider.displayName) · \(coach.model)", tone: .accent, showsDot: true)
+            StatePill("\(connectedHeaderLabel)", tone: .accent, showsDot: true)
             Spacer()
             if coach.sending {
                 StatePill("Thinking", tone: .accent, pulsing: true)
             }
         }
+    }
+
+    /// "provider · model" for the connected-header pill. On the narrow iPhone width a very long
+    /// model id (e.g. "claude-3-5-sonnet-20241022") is truncated so the overline-font pill stays a
+    /// single tidy line next to the trailing "Thinking" pill; the wide macOS/iPad canvas shows the
+    /// full id unchanged. The shared StatePill is untouched.
+    private var connectedHeaderLabel: String {
+        let provider = coach.provider.displayName
+        let model = coach.model
+        guard horizontalSizeClass == .compact else {
+            return "\(provider) · \(model)"
+        }
+        let maxModelChars = 18
+        let trimmedModel = model.count > maxModelChars
+            ? String(model.prefix(maxModelChars - 1)) + "…"
+            : model
+        return "\(provider) · \(trimmedModel)"
     }
 
     private var transcript: some View {
@@ -260,28 +279,46 @@ struct CoachView: View {
                 emptyTranscript
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(coach.messages) { message in
-                                bubble(message).id(message.id)
-                            }
-                            if coach.sending {
-                                typingIndicator.id("typing")
-                            }
+                    transcriptBody
+                        .onChange(of: coach.messages.count) { _ in
+                            scrollToEnd(proxy)
                         }
-                        .padding(.vertical, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(minHeight: 220, maxHeight: 460)
-                    .onChange(of: coach.messages.count) { _ in
-                        scrollToEnd(proxy)
-                    }
-                    .onChange(of: coach.sending) { _ in
-                        scrollToEnd(proxy)
-                    }
+                        .onChange(of: coach.sending) { _ in
+                            scrollToEnd(proxy)
+                        }
                 }
             }
         }
+    }
+
+    /// The scrolling/flow container for the message list. On macOS (wide canvas) the transcript
+    /// stays a bounded inner scroll pane (220–460pt); on iPhone (compact) it flows directly in the
+    /// ScreenScaffold page scroll so long answers use the full height and inner/outer scroll
+    /// gestures don't conflict.
+    @ViewBuilder
+    private var transcriptBody: some View {
+        #if os(macOS)
+        ScrollView {
+            transcriptMessages
+        }
+        .frame(minHeight: 220, maxHeight: 460)
+        #else
+        transcriptMessages
+        #endif
+    }
+
+    /// The ordered message bubbles plus the in-flight typing indicator.
+    private var transcriptMessages: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(coach.messages) { message in
+                bubble(message).id(message.id)
+            }
+            if coach.sending {
+                typingIndicator.id("typing")
+            }
+        }
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var emptyTranscript: some View {
@@ -413,11 +450,11 @@ struct CoachView: View {
             } label: {
                 if coach.sending {
                     ProgressView().controlSize(.small)
-                        .frame(width: 44, height: 36)
+                        .frame(width: 44, height: 44)
                 } else {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 36)
+                        .frame(width: 44, height: 44)
                 }
             }
             .buttonStyle(.borderedProminent)

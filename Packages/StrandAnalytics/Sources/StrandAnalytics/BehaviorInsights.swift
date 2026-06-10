@@ -147,7 +147,10 @@ public enum BehaviorInsights {
     /// Render an effect as a plain-English sentence for the UI, e.g.
     /// "On days you logged ‘Alcohol’, Recovery was 12% lower (avg 61 vs 69, n=140 vs 498)."
     /// Falls back to absolute units when pctChange is unavailable.
-    public static func sentence(_ e: BehaviorEffect) -> String {
+    /// `name` overrides the behaviour label shown in the sentence (e.g. a friendly catalog
+    /// label for a verbatim journal question). Defaults to `e.behavior`.
+    public static func sentence(_ e: BehaviorEffect, name: String? = nil) -> String {
+        let label = name ?? e.behavior
         let directionWord: String
         if e.delta > 0 { directionWord = "higher" }
         else if e.delta < 0 { directionWord = "lower" }
@@ -165,7 +168,7 @@ public enum BehaviorInsights {
         let avgWith = roundedInt(e.meanWith)
         let avgWithout = roundedInt(e.meanWithout)
 
-        return "On days you logged ‘\(e.behavior)’, \(e.outcome) was \(magnitude) "
+        return "On days you logged ‘\(label)’, \(e.outcome) was \(magnitude) "
             + "(avg \(avgWith) vs \(avgWithout), n=\(e.nWith) vs \(e.nWithout))."
     }
 

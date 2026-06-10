@@ -73,23 +73,35 @@ struct IntelligenceView: View {
                     Spacer()
                     SourceBadge("NOOP-computed")
                 }
-                HStack(spacing: 0) {
-                    stat("Recovery", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—", recoveryColor(d.recovery))
-                    stat("Strain", d.strain.map { String(format: "%.1f", $0) } ?? "—", StrandPalette.metricCyan)
-                    stat("Sleep", d.sleepMin.map { "\(Int(($0 / 60).rounded()))h \(Int($0.truncatingRemainder(dividingBy: 60)))m" } ?? "—", StrandPalette.metricPurple)
-                    stat("HRV", d.hrv.map { "\(Int($0.rounded()))" } ?? "—", StrandPalette.metricPurple)
-                    stat("RHR", d.rhr.map { "\($0)" } ?? "—", StrandPalette.metricRose)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 0) {
+                        statRow(d)
+                    }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), alignment: .leading)],
+                              alignment: .leading, spacing: 12) {
+                        statRow(d)
+                    }
                 }
             }
         }
     }
 
+    @ViewBuilder
+    private func statRow(_ d: IntelligenceEngine.Computed) -> some View {
+        stat("Recovery", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—", recoveryColor(d.recovery))
+        stat("Strain", d.strain.map { String(format: "%.1f", $0) } ?? "—", StrandPalette.metricCyan)
+        stat("Sleep", d.sleepMin.map { "\(Int(($0 / 60).rounded()))h \(Int($0.truncatingRemainder(dividingBy: 60)))m" } ?? "—", StrandPalette.metricPurple)
+        stat("HRV", d.hrv.map { "\(Int($0.rounded()))" } ?? "—", StrandPalette.metricPurple)
+        stat("RHR", d.rhr.map { "\($0)" } ?? "—", StrandPalette.metricRose)
+    }
+
     private func stat(_ label: String, _ value: String, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased()).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                .lineLimit(1).minimumScaleFactor(0.7)
             Text(value).font(StrandFont.number(20)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.6)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 96, maxWidth: .infinity, alignment: .leading)
     }
 
     private func recoveryColor(_ r: Double?) -> Color {

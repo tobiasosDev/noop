@@ -44,6 +44,11 @@ struct TrendsView: View {
 
     @State private var range: Range = .quarter
 
+    // Compact (iPhone) trims the hero footer to 3 cells; regular (macOS/iPad) keeps all 4.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    #endif
+
     // yyyy-MM-dd → Date (en_US_POSIX, UTC), per task spec.
     private static let dayParser: DateFormatter = {
         let f = DateFormatter()
@@ -102,20 +107,15 @@ struct TrendsView: View {
         var caption: String
     }
 
+    /// Resolve one metric at the SELECTED range — every chart honors the same window, so the range
+    /// control moves them together and a sparse window shows a placeholder rather than silently
+    /// auto-widening. Per-metric auto-widening previously let some charts sit at 90 days while others
+    /// (no recent data) jumped to all-history, and the split flipped into view the moment a partial
+    /// Apple-Health sync landed — the "looks good after import, then doesn't" regression.
     private func resolve(_ value: (DailyMetric) -> Double?) -> ResolvedMetric {
-        // Find the smallest range ≥ selected whose window has ≥1 point, keeping
-        // that window's points so we don't re-filter to read them back.
-        for r in range.widening {
-            let pts = points(days(for: r), value)
-            if !pts.isEmpty {
-                return ResolvedMetric(points: pts, effective: r,
-                                      widened: r != range, caption: caption(count: pts.count, eff: r))
-            }
-        }
-        // No range held data: fall back to ALL (matches effectiveRange()).
-        let pts = points(days(for: .all), value)
-        return ResolvedMetric(points: pts, effective: .all,
-                              widened: .all != range, caption: caption(count: pts.count, eff: .all))
+        let pts = points(days(for: range), value)
+        return ResolvedMetric(points: pts, effective: range,
+                              widened: false, caption: caption(count: pts.count, eff: range))
     }
 
     /// Caption text from an already-resolved count + effective range. Mirrors
@@ -190,10 +190,23 @@ struct TrendsView: View {
         let cap = recovery.caption
         let isWide = recovery.widened
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
-                Spacer()
-                Text(rangeSubtitle).strandOverline()
+            // On the wide macOS canvas the pills + trailing overline fit side-by-side;
+            // on the ~346pt iPhone width the 6-pill control alone fills the row, so fall
+            // back to stacking the subtitle below it. (The control itself horizontally
+            // scrolls via the shared SegmentedPillControl.)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
+                    Spacer()
+                    Text(rangeSubtitle).strandOverline()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
+                    HStack {
+                        Spacer()
+                        Text(rangeSubtitle).strandOverline()
+                    }
+                }
             }
             Text(cap)
                 .font(StrandFont.footnote)
@@ -207,6 +220,22 @@ struct TrendsView: View {
     private func heroRecovery(recovery: ResolvedMetric) -> some View {
         let pts = recovery.points
         let avg = mean(pts)
+        // The 4th cell ("Days") duplicates the caption's reading count; on the narrow
+        // iPhone footer the four cells crowd, so drop it on compact width. macOS/iPad
+        // (.regular, and any non-iOS build) keeps all four spread across the wide footer.
+        var footerItems: [(LocalizedStringKey, String)] = [
+            ("Avg", avg.map { "\(Int($0.rounded()))" } ?? "—"),
+            ("Peak", pts.map(\.value).max().map { "\(Int($0.rounded()))" } ?? "—"),
+            ("Low", pts.map(\.value).min().map { "\(Int($0.rounded()))" } ?? "—"),
+        ]
+        #if os(iOS)
+        let showsDays = hSizeClass != .compact
+        #else
+        let showsDays = true
+        #endif
+        if showsDays {
+            footerItems.append(("Days", "\(pts.count)"))
+        }
         return ChartCard(
             title: "Recovery",
             subtitle: recovery.caption,
@@ -224,12 +253,7 @@ struct TrendsView: View {
                 }
             },
             footer: {
-                ChartFooter([
-                    ("Avg", avg.map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Peak", pts.map(\.value).max().map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Low", pts.map(\.value).min().map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Days", "\(pts.count)"),
-                ])
+                ChartFooter(footerItems)
             }
         )
     }

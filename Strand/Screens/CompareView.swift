@@ -256,11 +256,25 @@ struct CompareView: View {
             SectionHeader("Metrics", overline: "Overlay 2–4 signals")
             NoopCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    HStack(alignment: .center) {
-                        SegmentedPillControl(CompareRange.allCases, selection: $range) { $0.label }
-                            .accessibilityLabel("Time range")
-                        Spacer()
-                        addMenu
+                    // On the wide canvas the range pills and the Add menu share one row;
+                    // on compact iPhone width that row overflows (the control alone fills
+                    // the content width), so fall back to stacking the Add menu below it.
+                    // The shared SegmentedPillControl scrolls its own pills when needed.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center) {
+                            SegmentedPillControl(CompareRange.allCases, selection: $range) { $0.label }
+                                .accessibilityLabel("Time range")
+                            Spacer()
+                            addMenu
+                        }
+                        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                            SegmentedPillControl(CompareRange.allCases, selection: $range) { $0.label }
+                                .accessibilityLabel("Time range")
+                            HStack {
+                                addMenu
+                                Spacer()
+                            }
+                        }
                     }
 
                     if selected.count >= minSelection {
@@ -297,7 +311,7 @@ struct CompareView: View {
                             Button {
                                 toggle(metric)
                             } label: {
-                                Label(metric.title, systemImage: isOn ? "checkmark" : metric.icon)
+                                Label(metric.titleKey, systemImage: isOn ? "checkmark" : metric.icon)
                             }
                             .disabled(!isOn && selected.count >= maxSelection)
                         }
@@ -363,7 +377,7 @@ struct CompareView: View {
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(s.color)
                         .frame(width: 14, height: 3)
-                    Text(s.metric.title)
+                    Text(s.metric.titleKey)
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
@@ -373,7 +387,7 @@ struct CompareView: View {
                 }
                 .padding(.vertical, 7)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(s.metric.title), range \(s.metric.format(s.realMin)) to \(s.metric.format(s.realMax))")
+                .accessibilityLabel("\(s.metric.localizedTitle), range \(s.metric.format(s.realMin)) to \(s.metric.format(s.realMax))")
                 if idx < series.count - 1 {
                     Divider().overlay(StrandPalette.hairline)
                 }
@@ -474,7 +488,7 @@ struct CompareView: View {
                         Circle().fill(p.a.color).frame(width: 8, height: 8)
                         Circle().fill(p.b.color).frame(width: 8, height: 8)
                     }
-                    Text("\(p.a.metric.title) ↔ \(p.b.metric.title)")
+                    Text(verbatim: "\(p.a.metric.localizedTitle) ↔ \(p.b.metric.localizedTitle)")
                         .font(StrandFont.headline)
                         .foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
@@ -494,7 +508,7 @@ struct CompareView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(p.a.metric.title) versus \(p.b.metric.title), r equals \(String(format: "%.2f", p.r)), \(p.n) days")
+        .accessibilityLabel("\(p.a.metric.localizedTitle) versus \(p.b.metric.localizedTitle), r equals \(String(format: "%.2f", p.r)), \(p.n) days")
     }
 
     // MARK: - Insight language
@@ -502,13 +516,13 @@ struct CompareView: View {
     /// "Weight ↔ Recovery: r = −0.34 (moderate negative) over 1Y" + a plain-English
     /// conclusion when |r| is notable.
     private func insightSentence(_ p: PairResult) -> String {
-        let head = "\(p.a.metric.title) ↔ \(p.b.metric.title): r = \(signedR(p.r)) (\(strengthWord(p.r)) \(directionWord(p.r))) over \(p.n) shared days."
+        let head = "\(p.a.metric.localizedTitle) ↔ \(p.b.metric.localizedTitle): r = \(signedR(p.r)) (\(strengthWord(p.r)) \(directionWord(p.r))) over \(p.n) shared days."
         guard abs(p.r) >= 0.3 else {
             return head + " No clear relationship — they move largely independently."
         }
         let lower = p.r < 0
-        let aT = p.a.metric.title.lowercased()
-        let bT = p.b.metric.title.lowercased()
+        let aT = p.a.metric.localizedTitle.lowercased()
+        let bT = p.b.metric.localizedTitle.lowercased()
         let verb = lower ? "tends to fall" : "tends to rise"
         return head + " When \(aT) rises, \(bT) \(verb) — a \(strengthWord(p.r)) \(directionWord(p.r)) link."
     }
@@ -554,7 +568,7 @@ private struct FlowChips: View {
                 let color = colorFor(metric)
                 HStack(spacing: 7) {
                     Circle().fill(color).frame(width: 8, height: 8)
-                    Text(metric.title)
+                    Text(metric.titleKey)
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textPrimary)
                         .lineLimit(1)
@@ -567,7 +581,7 @@ private struct FlowChips: View {
                             .foregroundStyle(StrandPalette.textTertiary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Remove \(metric.title)")
+                    .accessibilityLabel("Remove \(metric.localizedTitle)")
                 }
                 .padding(.horizontal, 11)
                 .padding(.vertical, 8)
@@ -748,7 +762,7 @@ private struct MultiTooltip: View {
             ForEach(series) { s in
                 HStack(spacing: 7) {
                     Circle().fill(s.color).frame(width: 7, height: 7)
-                    Text(s.metric.title)
+                    Text(s.metric.titleKey)
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textSecondary)
                     Spacer(minLength: 12)

@@ -144,14 +144,30 @@ public struct ChartFooter: View {
     let items: [(LocalizedStringKey, String)]
     public init(_ items: [(LocalizedStringKey, String)]) { self.items = items }
     public var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, it in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(it.0).textCase(.uppercase).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    Text(it.1).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textSecondary)
+        // Even-division single row on a wide canvas; on a narrow iPhone where 4+ stat cells
+        // would clip, wrap to a two-column grid so every value stays readable.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, it in
+                    cell(it).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            LazyVGrid(
+                columns: [GridItem(.flexible(), alignment: .leading),
+                          GridItem(.flexible(), alignment: .leading)],
+                alignment: .leading, spacing: 10
+            ) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, it in cell(it) }
+            }
+        }
+    }
+
+    private func cell(_ it: (LocalizedStringKey, String)) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(it.0).textCase(.uppercase).font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary).lineLimit(1)
+            Text(it.1).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textSecondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
     }
 }
@@ -186,6 +202,16 @@ public struct SegmentedPillControl<T: Hashable>: View {
         self.items = items; self._selection = selection; self.label = label
     }
     public var body: some View {
+        // Wide canvas (macOS / iPad): the pill row lays out at its ideal width, unchanged.
+        // Narrow iPhone where the segments would overflow the row: fall back to a horizontal
+        // ScrollView so every pill stays reachable instead of clipping off-screen.
+        ViewThatFits(in: .horizontal) {
+            pillRow
+            ScrollView(.horizontal, showsIndicators: false) { pillRow }
+        }
+    }
+
+    private var pillRow: some View {
         HStack(spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 let sel = item == selection

@@ -118,49 +118,55 @@ public struct YearHeatStrip: View {
         let gridWidth = gridOriginX + CGFloat(weeks.count) * (cellSize + spacing) - spacing
         let gridHeight = gridOriginY + 7 * (cellSize + spacing) - spacing
 
-        VStack(alignment: .leading, spacing: spacing) {
-            if showsMonthLabels {
-                HStack(spacing: spacing) {
-                    // align with the weekday-label gutter
-                    Color.clear.frame(width: gridOriginX - spacing, height: monthLabelHeight)
-                    ForEach(weeks) { week in
-                        Text(week.monthLabel ?? "")
-                            .font(.system(size: 8))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .frame(width: cellSize, alignment: .leading)
+        // A full year is ~819pt wide — wider than an iPhone. Scroll it horizontally so it
+        // never clips; on a wide canvas (macOS / iPad) that fits the grid it shows no scroll
+        // bar and reads identically. The grid keeps its fixed-size local coordinate space, so
+        // the hover hit-testing geometry below is unaffected.
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: spacing) {
+                if showsMonthLabels {
+                    HStack(spacing: spacing) {
+                        // align with the weekday-label gutter
+                        Color.clear.frame(width: gridOriginX - spacing, height: monthLabelHeight)
+                        ForEach(weeks) { week in
+                            Text(week.monthLabel ?? "")
+                                .font(.system(size: 8))
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .frame(width: cellSize, alignment: .leading)
+                        }
                     }
                 }
-            }
-            HStack(alignment: .top, spacing: spacing) {
-                // weekday gutter
-                VStack(alignment: .trailing, spacing: spacing) {
-                    ForEach(0..<7, id: \.self) { r in
-                        Text(rowLabels[r])
-                            .font(.system(size: 8))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .frame(width: gutterWidth, height: cellSize, alignment: .trailing)
+                HStack(alignment: .top, spacing: spacing) {
+                    // weekday gutter
+                    VStack(alignment: .trailing, spacing: spacing) {
+                        ForEach(0..<7, id: \.self) { r in
+                            Text(rowLabels[r])
+                                .font(.system(size: 8))
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .frame(width: gutterWidth, height: cellSize, alignment: .trailing)
+                        }
                     }
-                }
-                // week columns
-                ForEach(Array(weeks.enumerated()), id: \.element.id) { weekIndex, week in
-                    VStack(spacing: spacing) {
-                        ForEach(0..<7, id: \.self) { row in
-                            cell(week.cells[row], isHovered: isHovered(weekIndex, row))
+                    // week columns
+                    ForEach(Array(weeks.enumerated()), id: \.element.id) { weekIndex, week in
+                        VStack(spacing: spacing) {
+                            ForEach(0..<7, id: \.self) { row in
+                                cell(week.cells[row], isHovered: isHovered(weekIndex, row))
+                            }
                         }
                     }
                 }
             }
-        }
-        .frame(width: gridWidth, height: gridHeight, alignment: .topLeading)
-        .overlay(hoverOverlay(weeks: weeks, gridSize: CGSize(width: gridWidth, height: gridHeight)))
-        .contentShape(Rectangle())
-        .onContinuousHover(coordinateSpace: .local) { phase in
-            guard showsHover else { return }
-            switch phase {
-            case .active(let location):
-                hoverCell = cellIndex(at: location, weekCount: weeks.count)
-            case .ended:
-                hoverCell = nil
+            .frame(width: gridWidth, height: gridHeight, alignment: .topLeading)
+            .overlay(hoverOverlay(weeks: weeks, gridSize: CGSize(width: gridWidth, height: gridHeight)))
+            .contentShape(Rectangle())
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                guard showsHover else { return }
+                switch phase {
+                case .active(let location):
+                    hoverCell = cellIndex(at: location, weekCount: weeks.count)
+                case .ended:
+                    hoverCell = nil
+                }
             }
         }
     }

@@ -224,21 +224,55 @@ struct WorkoutsView: View {
                           overline: "Log",
                           trailing: "\(rows.count) total")
             NoopCard(padding: 0) {
-                LazyVStack(spacing: 0) {
-                    sessionHeaderRow
-                    Divider().overlay(StrandPalette.hairline)
-                    ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
-                        sessionRow(row)
-                            .background(idx % 2 == 1
-                                        ? StrandPalette.surfaceInset.opacity(0.4)
-                                        : Color.clear)
-                        if idx != rows.count - 1 {
-                            Divider().overlay(StrandPalette.hairline.opacity(0.5))
-                        }
+                // The 7-column log is built for the wide canvas: its fixed column
+                // widths sum to ~612pt and the rows pad to ~644pt, which overflows a
+                // 402pt iPhone. ViewThatFits keeps the wide canvas pixel-identical
+                // (the flexible table fits, so the Spacer still pushes SOURCE to the
+                // trailing edge) and falls back to a single horizontally-scrolling
+                // table on iPhone, where header and rows scroll together and stay
+                // column-aligned.
+                ViewThatFits(in: .horizontal) {
+                    // Pin a minWidth floor so the first child reliably reports its
+                    // natural 644pt width through the lazy, Spacer-greedy rows —
+                    // otherwise ViewThatFits could wrongly accept it at iPhone width
+                    // and leave the table clipped. On the wide canvas this floor is
+                    // below the available width, so the Spacer still expands and the
+                    // layout is pixel-identical.
+                    sessionsTable(rows: rows)
+                        .frame(minWidth: sessionsTableMinWidth, alignment: .leading)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        sessionsTable(rows: rows)
+                            .frame(width: sessionsTableMinWidth, alignment: .leading)
                     }
                 }
             }
         }
+    }
+
+    /// The header + striped session rows as one column-aligned block. Shared by the
+    /// wide-canvas layout and the iPhone horizontal-scroll fallback.
+    private func sessionsTable(rows: [WorkoutRow]) -> some View {
+        LazyVStack(spacing: 0) {
+            sessionHeaderRow
+            Divider().overlay(StrandPalette.hairline)
+            ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                sessionRow(row)
+                    .background(idx % 2 == 1
+                                ? StrandPalette.surfaceInset.opacity(0.4)
+                                : Color.clear)
+                if idx != rows.count - 1 {
+                    Divider().overlay(StrandPalette.hairline.opacity(0.5))
+                }
+            }
+        }
+    }
+
+    /// Sum of the fixed column widths plus the rows' horizontal card padding — the
+    /// natural width of the table, pinned so the scrolled columns keep their widths.
+    private var sessionsTableMinWidth: CGFloat {
+        ColWidth.date + ColWidth.sport + ColWidth.duration + ColWidth.hr
+            + ColWidth.kcal + ColWidth.dist + ColWidth.source
+            + NoopMetrics.cardPadding * 2
     }
 
     private var sessionHeaderRow: some View {

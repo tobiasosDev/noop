@@ -148,7 +148,7 @@ struct AppleHealthView: View {
     }
 
     var body: some View {
-        ScreenScaffold(title: "Apple Health", subtitle: "\(spanSubtitle)") {
+        ScreenScaffold(title: "Apple Health", subtitle: spanSubtitle.map { LocalizedStringKey($0) }) {
             if loaded && !hasAnyData {
                 ComingSoon(what: "Nothing imported yet. On an iPhone: Health app, tap your photo, Export All Health Data, then import the .zip here in Data Sources.")
             } else if !loaded {
@@ -224,10 +224,19 @@ struct AppleHealthView: View {
 
     private var rangeControl: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                SegmentedPillControl(RangeWindow.allCases, selection: $range) { $0.label }
-                Spacer()
-                Text(range.caption).strandOverline()
+            // Wide canvas (macOS / iPad): pill + trailing caption sit on one row, unchanged.
+            // Narrow iPhone where the 6-segment pill already consumes the width budget: the
+            // caption drops below the control so it never competes with the pills for space.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    SegmentedPillControl(RangeWindow.allCases, selection: $range) { $0.label }
+                    Spacer()
+                    Text(range.caption).strandOverline()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    SegmentedPillControl(RangeWindow.allCases, selection: $range) { $0.label }
+                    Text(range.caption).strandOverline()
+                }
             }
             Text(rangeSummaryCaption)
                 .font(StrandFont.footnote)
