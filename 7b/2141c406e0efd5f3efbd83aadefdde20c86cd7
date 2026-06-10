@@ -1,0 +1,23 @@
+docs/superpowers/plans/2026-06-10-whoop-parity-tier-a.md
+  s_ff049a8bced57c::t_4855b90dade3c6 1493-2152
+  s_ff049a8bced57c::t_3f79dfe9cabfdd 1-372
+  s_ff049a8bced57c::t_c1c929bcda1b21 1089-1492
+  s_ff049a8bced57c::t_cc2c6e62da45f7 796-1088
+  s_ff049a8bced57c::t_351e8b04871e12 373-795
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7b2141c406e0efd5f3efbd83aadefdde20c86cd7",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
