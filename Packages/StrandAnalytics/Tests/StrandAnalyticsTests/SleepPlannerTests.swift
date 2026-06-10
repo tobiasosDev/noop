@@ -18,7 +18,6 @@ final class SleepPlannerTests: XCTestCase {
         let r = SleepPlanner.recommend(wakeMinutes: 420, baseNeedMin: 450, debtMin: 0,
                                        efficiency: nil, goal: .getBy)
         XCTAssertEqual(r.bedMinutes, 70)
-        XCTAssertFalse(r.bedMinutes < 0)
     }
 
     func testDebtRepaymentAddsToNeed() {
@@ -34,6 +33,10 @@ final class SleepPlannerTests: XCTestCase {
         let r = SleepPlanner.recommend(wakeMinutes: 420, baseNeedMin: 450, debtMin: 0,
                                        efficiency: 0.5, goal: .peak)
         XCTAssertEqual(r.inBedMin, 600, accuracy: 0.5)
+        // Ceiling: efficiency > 1.0 clamps to 1.0 -> inBed = 450.
+        let r2 = SleepPlanner.recommend(wakeMinutes: 420, baseNeedMin: 450, debtMin: 0,
+                                        efficiency: 1.5, goal: .peak)
+        XCTAssertEqual(r2.inBedMin, 450, accuracy: 0.5)
     }
 
     func testGoalFractions() {
