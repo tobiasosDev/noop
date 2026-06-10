@@ -2,19 +2,34 @@ import SwiftUI
 import StrandDesign
 
 /// Standard scrollable screen container: title + dark surface + content column.
-struct ScreenScaffold<Content: View>: View {
+/// `trailing` is an optional accessory row rendered opposite the title (used by Home for
+/// battery / journal / support controls) — it lives in the scaffold, not `.toolbar`, so it
+/// renders identically on macOS and the NavigationStack-less iOS tab shell.
+struct ScreenScaffold<Content: View, Trailing: View>: View {
     let title: LocalizedStringKey
     var subtitle: LocalizedStringKey? = nil
     @ViewBuilder var content: () -> Content
+    @ViewBuilder var trailing: () -> Trailing
+
+    init(title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil,
+         @ViewBuilder content: @escaping () -> Content,
+         @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }) {
+        self.title = title; self.subtitle = subtitle
+        self.content = content; self.trailing = trailing
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
-                    if let subtitle {
-                        Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
+                        if let subtitle {
+                            Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                        }
                     }
+                    Spacer()
+                    trailing()
                 }
                 content()
             }
