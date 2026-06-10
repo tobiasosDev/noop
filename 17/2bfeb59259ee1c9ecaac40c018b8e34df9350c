@@ -1,0 +1,19 @@
+Strand/Resources/Localizable.xcstrings
+  s_673f67f9669206::t_63591cdebdfa26 223-273,3968-3984,5303-5319,5839-5855,6526-6542,9060-9076,9690-9740,10844-10860,10941-10953
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "172bfeb59259ee1c9ecaac40c018b8e34df9350c",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
