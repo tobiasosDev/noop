@@ -36,8 +36,8 @@ struct RootTabView: View {
                     switch dest {
                     case .insights: InsightsView()
                     case .workouts: WorkoutsView()
-                    case .sleep:    SleepView()
-                    case .trends:   TrendsView()
+                    // .sleep / .trends are tab destinations; openScreen never sheets them.
+                    default: EmptyView()
                     }
                 }
                 .background(StrandPalette.surfaceBase.ignoresSafeArea())

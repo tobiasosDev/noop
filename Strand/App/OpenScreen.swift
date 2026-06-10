@@ -12,11 +12,11 @@ enum HomeDestination: String, Identifiable {
 }
 
 private struct OpenScreenKey: EnvironmentKey {
-    static let defaultValue: @MainActor (HomeDestination) -> Void = { _ in }
+    static let defaultValue: @MainActor @Sendable (HomeDestination) -> Void = { _ in }
 }
 
 extension EnvironmentValues {
-    var openScreen: @MainActor (HomeDestination) -> Void {
+    var openScreen: @MainActor @Sendable (HomeDestination) -> Void {
         get { self[OpenScreenKey.self] }
         set { self[OpenScreenKey.self] = newValue }
     }
