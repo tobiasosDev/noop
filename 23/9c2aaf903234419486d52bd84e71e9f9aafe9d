@@ -1,0 +1,25 @@
+Strand/Screens/ReportView.swift
+  s_ff049a8bced57c::t_bc06ea55a9a136 63-64,69,80-94
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/PerformanceReportTests.swift
+  s_ff049a8bced57c::t_630779db8ba09d 77,80,90-106,116-126,133-136
+Packages/StrandAnalytics/Sources/StrandAnalytics/PerformanceReport.swift
+  s_ff049a8bced57c::t_f5a9342236dadd 131-132,134,137-138,142,145,149
+  s_ff049a8bced57c::t_9f71a3aead386b 68
+  s_ff049a8bced57c::t_c31933796abfa1 33-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "239c2aaf903234419486d52bd84e71e9f9aafe9d",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
