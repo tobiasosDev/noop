@@ -1,0 +1,24 @@
+project.yml
+  s_8dfefa1df8db42::t_0f1547c4c0373a 148
+Strand/Data/IntelligenceEngine.swift
+  s_8dfefa1df8db42::t_0cd7999e8209f9 99-100,104
+  s_8dfefa1df8db42::t_3eea1e5b10933f 145-146
+StrandiOS/Resources/Info.plist
+  s_8dfefa1df8db42::t_a258f0ab6c42c3 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "cba57f0693c4aeaf9ea4921913bca6087eb41aa3",
+  "prompts": {},
+  "sessions": {
+    "s_8dfefa1df8db42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a241603-438b-4ceb-93a7-5b8630d4c079",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
