@@ -25,6 +25,10 @@ import Foundation
 struct TodayView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var live: LiveState
+    @EnvironmentObject var profile: ProfileStore
+
+    // Strain Coach — intraday strain so far today (nil until ~10 min of HR exists).
+    @State private var dayStrain: Double? = nil
 
     // 14-day sparkline series, keyed by metric key. Loaded once in .task.
     @State private var sparks: [String: [Double]] = [:]
@@ -54,6 +58,7 @@ struct TodayView: View {
                     )
                 }
                 heroSection
+                strainCoachSection
                 heartRateTrendSection
                 readinessSection
                 metricsSection
@@ -198,6 +203,85 @@ struct TodayView: View {
             statusColor: score.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textTertiary
         )
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Strain Coach — today's exertion target from recovery, filled live.
+
+    @ViewBuilder
+    private var strainCoachSection: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Strain Coach", overline: "Today's exertion target")
+            NoopCard {
+                if let recovery = repo.today?.recovery {
+                    let band = StrainTarget.band(recovery: recovery)
+                    let current = dayStrain ?? 0
+                    // Wide: gauge + text side by side. Compact iPhone: stacked.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: NoopMetrics.gap * 2) {
+                            strainCoachGauge(current: current)
+                            strainCoachDetail(band: band, current: current)
+                            Spacer(minLength: 0)
+                        }
+                        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                            strainCoachGauge(current: current).frame(maxWidth: .infinity)
+                            strainCoachDetail(band: band, current: current)
+                        }
+                    }
+                } else {
+                    Text("No recovery yet today — your strain target appears once last night is scored.")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func strainCoachGauge(current: Double) -> some View {
+        StrainGauge(strain: current, diameter: 132, lineWidth: 11)
+            .frame(minWidth: 132)
+    }
+
+    @ViewBuilder
+    private func strainCoachDetail(band: StrainTarget.Band, current: Double) -> some View {
+        let state = band.state(currentStrain: current)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(String(format: "Aim %.1f–%.1f", band.low, band.high))
+                .font(StrandFont.headline)
+                .foregroundStyle(StrandPalette.textPrimary)
+            Text(strainCoachStateLine(state, band: band, current: current))
+                .font(StrandFont.subhead)
+                .foregroundStyle(strainCoachStateColor(state))
+                .fixedSize(horizontal: false, vertical: true)
+            if dayStrain == nil {
+                Text("Building — needs about 10 minutes of heart-rate data.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !live.connected {
+                Text("Strap not connected — showing the last synced value.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func strainCoachStateLine(_ s: StrainTarget.State, band: StrainTarget.Band, current: Double) -> String {
+        switch s {
+        case .building:     return String(format: "%.1f now — room to push today.", current)
+        case .onTarget:     return String(format: "%.1f now — right in your target band.", current)
+        case .overreaching: return String(format: "%.1f now — beyond today's recommendation.", current)
+        }
+    }
+
+    private func strainCoachStateColor(_ s: StrainTarget.State) -> Color {
+        switch s {
+        case .building:     return StrandPalette.textSecondary
+        case .onTarget:     return StrandPalette.accent
+        case .overreaching: return StrandPalette.statusWarning
+        }
     }
 
     // MARK: HEART RATE — today's continuous HR, off the strap's own ~1Hz history.
@@ -424,6 +508,11 @@ struct TodayView: View {
         let nowTs = Int(Date().timeIntervalSince1970)
         hrPoints = await repo.hrBuckets(from: startOfToday, to: nowTs, bucketSeconds: 300)
             .map { TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm) }
+
+        // Strain Coach — intraday strain from today's raw HR.
+        dayStrain = await DayStrain.compute(repo: repo, hrMax: profile.hrMax,
+                                            sex: profile.sex,
+                                            restingHr: repo.today?.restingHr)
     }
 
     /// Trailing-window values for a metric — NO fall back to all history. The section is labelled a

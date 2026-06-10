@@ -1,5 +1,6 @@
 import SwiftUI
 import StrandDesign
+import StrandAnalytics
 import WhoopProtocol
 
 /// Live — the connected strap in real time. Built on the shared design system
@@ -8,6 +9,11 @@ import WhoopProtocol
 struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
+    @EnvironmentObject private var repo: Repository
+    @EnvironmentObject private var profile: ProfileStore
+
+    /// Strain Coach strip — intraday strain so far today (nil until ~10 min of HR exists).
+    @State private var dayStrain: Double? = nil
 
     /// Which strap the user is pairing — persists across launches. Drives which
     /// BLE service we scan for so a WHOOP 4.0 scan never hangs on a WHOOP 5 wrist.
@@ -38,6 +44,11 @@ struct LiveView: View {
             }
         }
         .onAppear { refreshLiveSession() }
+        .task(id: repo.refreshSeq) {
+            dayStrain = await DayStrain.compute(repo: repo, hrMax: profile.hrMax,
+                                                sex: profile.sex,
+                                                restingHr: repo.today?.restingHr)
+        }
         .onDisappear { model.stopRealtimeHR() }
         .onChange(of: live.bonded) { _ in refreshLiveSession() }
         .onChange(of: live.connected) { _ in refreshLiveSession() }
@@ -86,6 +97,13 @@ struct LiveView: View {
                 if !live.rr.isEmpty {
                     Text("R-R: " + live.rr.suffix(4).map(String.init).joined(separator: " · ") + " ms")
                         .font(StrandFont.mono).foregroundStyle(StrandPalette.textTertiary)
+                }
+                if let s = dayStrain, let recovery = repo.today?.recovery {
+                    let band = StrainTarget.band(recovery: recovery)
+                    Text(String(format: "Day strain %.1f / target %.1f–%.1f", s, band.low, band.high))
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity).padding(.vertical, 20)
