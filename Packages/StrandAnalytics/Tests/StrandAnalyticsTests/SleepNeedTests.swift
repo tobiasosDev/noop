@@ -15,6 +15,7 @@ final class SleepNeedTests: XCTestCase {
     func testZerosAndEmptyIgnored() {
         XCTAssertEqual(SleepNeed.needMin(totalSleepMinsByNight: []), 450, accuracy: 1e-9)
         XCTAssertEqual(SleepNeed.needMin(totalSleepMinsByNight: [0, 0, 480]), 480, accuracy: 1e-9)
+        XCTAssertEqual(SleepNeed.needMin(totalSleepMinsByNight: [-30, 480]), 480, accuracy: 1e-9)
     }
 
     func testDebtFlooredAtZero() {
