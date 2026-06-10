@@ -78,4 +78,31 @@ final class PerformanceReportTests: XCTestCase {
         let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
         XCTAssertTrue(s.takeaways.contains(where: { $0.contains("above your strain target") }))
     }
+
+    func testTakeawayForRecoveryUp() {
+        // Prior week mean recovery 40, current 60 → delta +20 ≥ +8 threshold.
+        let days = [
+            day("2026-05-29", recovery: 40),   // prior window (05-28..06-03)
+            day("2026-06-05", recovery: 60),
+        ]
+        let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
+        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("Recovery up") }))
+    }
+
+    func testTakeawayForHRVDown() {
+        // Prior week mean HRV 60, current 50 → delta −10 ≤ −3 threshold.
+        let days = [
+            day("2026-05-29", hrv: 60),        // prior window (05-28..06-03)
+            day("2026-06-05", hrv: 50),
+        ]
+        let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
+        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("HRV trending down") }))
+    }
+
+    func testTakeawayForLowSleepPerformance() {
+        // 300 min/night vs the 450-min need floor → 66.7% < 70% warn threshold.
+        let days = (4...9).map { day("2026-06-0\($0)", sleep: 300) }
+        let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
+        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("of your sleep need") }))
+    }
 }

@@ -12,6 +12,13 @@ public enum PerformanceReport {
         public var days: Int { self == .weekly ? 7 : 28 }
     }
 
+    /// Takeaway thresholds — named so the rules read as policy, not magic numbers.
+    public static let takeawayOverreachMinDays: Int = 2
+    public static let takeawayHRVDeltaThreshold: Double = 3.0
+    public static let takeawayRecoveryDeltaThreshold: Double = 8.0
+    public static let takeawaySleepPerformanceWarnPct: Double = 70.0
+    public static let sleepPerformanceCap: Double = 125.0
+
     public struct Average: Equatable, Sendable {
         public let value: Double
         /// Δ vs the prior window; nil when the prior window has no data for this metric.
@@ -92,7 +99,7 @@ public enum PerformanceReport {
         // Sleep (need over the FULL history passed in, matching SleepView).
         let need = SleepNeed.needMin(totalSleepMinsByNight: days.compactMap { $0.totalSleepMin })
         let sleepAvg = avg { $0.totalSleepMin }
-        let perfPct = sleepAvg.map { min(125, $0.value / need * 100) }
+        let perfPct = sleepAvg.map { min(sleepPerformanceCap, $0.value / need * 100) }
 
         // Strain vs the per-day recovery-derived target band.
         var over = 0, under = 0
@@ -106,25 +113,33 @@ public enum PerformanceReport {
         }
         let strainVals = window.compactMap { $0.strain }
         let strainAvg = avg { $0.strain }
+        let recoveryAvg = avg { $0.recovery }
+        let hrvAvg = avg { $0.avgHrv }
 
         // Rule-based takeaways.
         var notes: [String] = []
-        if over >= 2 { notes.append("\(over) days above your strain target — watch recovery.") }
-        if let hrvD = avg({ $0.avgHrv })?.delta {
-            if hrvD >= 3 { notes.append("HRV trending up — adaptation is going well.") }
-            if hrvD <= -3 { notes.append("HRV trending down — consider easing off.") }
+        if over >= takeawayOverreachMinDays {
+            notes.append("\(over) days above your strain target — watch recovery.")
         }
-        if let recD = avg({ $0.recovery })?.delta {
-            if recD >= 8 { notes.append(String(format: "Recovery up %.0f%% vs the prior period.", recD)) }
-            if recD <= -8 { notes.append(String(format: "Recovery down %.0f%% vs the prior period.", abs(recD))) }
+        if let hrvD = hrvAvg?.delta {
+            if hrvD >= takeawayHRVDeltaThreshold { notes.append("HRV trending up — adaptation is going well.") }
+            if hrvD <= -takeawayHRVDeltaThreshold { notes.append("HRV trending down — consider easing off.") }
         }
-        if let p = perfPct, p < 70 {
+        if let recD = recoveryAvg?.delta {
+            if recD >= takeawayRecoveryDeltaThreshold {
+                notes.append(String(format: "Recovery up %.0f%% vs the prior period.", recD))
+            }
+            if recD <= -takeawayRecoveryDeltaThreshold {
+                notes.append(String(format: "Recovery down %.0f%% vs the prior period.", abs(recD)))
+            }
+        }
+        if let p = perfPct, p < takeawaySleepPerformanceWarnPct {
             notes.append(String(format: "Averaging only %.0f%% of your sleep need.", p))
         }
 
         return Summary(period: period, fromDay: from, toDay: today, coverage: coverage,
-                       recovery: avg { $0.recovery }, bestRecoveryDay: best, worstRecoveryDay: worst,
-                       hrv: avg { $0.avgHrv }, rhr: avg { $0.restingHr.map(Double.init) },
+                       recovery: recoveryAvg, bestRecoveryDay: best, worstRecoveryDay: worst,
+                       hrv: hrvAvg, rhr: avg { $0.restingHr.map(Double.init) },
                        sleepMin: sleepAvg, sleepNeedMin: need, sleepPerformancePct: perfPct,
                        strain: strainAvg,
                        totalStrain: strainVals.isEmpty ? nil : strainVals.reduce(0, +),
