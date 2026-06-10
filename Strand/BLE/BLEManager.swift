@@ -84,6 +84,12 @@ public final class BLEManager: NSObject, ObservableObject {
     /// True inside the pre-wake keep-alive window: re-arm realtime even when the Live tab is closed,
     /// so frames keep waking the app to fire on time — without clobbering the Live-tab `wantsRealtime`.
     private var wakeWindowActive = false
+    /// Opt-in (behavior.reliableWristAlarm): hold the link hot from ARM time through wake, not just the
+    /// 2 h auto-window. Set eagerly while the app is foreground so the realtime stream is already
+    /// flowing when the phone locks — iOS keeps waking a `bluetooth-central` app per inbound frame, so
+    /// the live RUN_ALARM can fire while locked. Released after fire / on disarm. (A backgrounded app
+    /// can't open the auto-window itself: no frame → no wake-up → chicken-and-egg.)
+    private var holdLinkForWake = false
     /// Persisted epoch of the wake we last fired — idempotent across relaunch / BLE state restoration.
     static let lastFiredWakeKey = "wakeAlarmLastFired"
     /// Last-offload-attempt time (unix seconds), persisted so the rate limiter survives relaunch
@@ -669,7 +675,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // skip them for 5/MG (it keeps the experimental strap log clean — re-subscribe + the 120s
         // bounce above are what keep a 5/MG link healthy).
         guard selectedModel.deviceFamily == .whoop4 else { return }
-        if wantsRealtime || wakeWindowActive {   // also keep it hot through the pre-wake window
+        if wantsRealtime || wakeWindowActive || holdLinkForWake {   // keep hot through window / eager hold
             send(.sendR10R11Realtime, payload: [0x01])
             send(.toggleRealtimeHR, payload: [0x01])
         }   // re-arm so it can't lapse
@@ -914,12 +920,35 @@ public final class BLEManager: NSObject, ObservableObject {
         case .idle:
             if wakeWindowActive { closeWakeWindow() }
         case .openKeepAliveWindow:
-            if !wakeWindowActive { openWakeKeepAliveWindow() }
+            // The opt-in eager hold already keeps the link hot; only the auto-window needs opening.
+            if !wakeWindowActive, !holdLinkForWake { openWakeKeepAliveWindow() }
         case .fire:
             fireWakeAlarm()
             // Persist BEFORE anything else so a crash/disconnect right after can't double-fire.
             UserDefaults.standard.set(target.timeIntervalSince1970, forKey: Self.lastFiredWakeKey)
             if wakeWindowActive { closeWakeWindow() }
+            if holdLinkForWake { setWakeKeepAlive(false) }   // release the held link once fired
+        }
+    }
+
+    /// Opt-in eager keep-alive: hold (on=true) or release (on=false) the link from arm time through
+    /// wake. Called by `AppModel.applySmartAlarm` with `behavior.reliableWristAlarm`. Starting the
+    /// realtime stream while the app is foreground is what lets it survive the phone locking — the
+    /// stream then keeps waking the app per frame so the live RUN_ALARM can fire while locked.
+    func setWakeKeepAlive(_ on: Bool) {
+        holdLinkForWake = on
+        guard selectedModel.deviceFamily == .whoop4 else { return }
+        if on {
+            log("Wake alarm: holding link hot from now through wake (reliable wrist buzz — more battery)")
+            guard state.connected, didBond else { return }   // re-armed by onCommandChannelReady on connect
+            enableLiveNotifications(reason: "wake hold")
+            send(.sendR10R11Realtime, payload: [0x01])
+            send(.toggleRealtimeHR, payload: [0x01])
+        } else {
+            log("Wake alarm: releasing held link")
+            guard !wantsRealtime, !wakeWindowActive else { return }   // don't stop a stream still in use
+            send(.toggleRealtimeHR, payload: [0x00])
+            send(.sendR10R11Realtime, payload: [0x00])
         }
     }
 

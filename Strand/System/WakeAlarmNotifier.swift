@@ -1,9 +1,12 @@
 import Foundation
 import UserNotifications
 
-/// Layer 1 of the live-fire alarm: a local notification at the wake instant — the GUARANTEED
-/// alarm. It fires on the phone even when the BLE link is down, the app is suspended, or the
-/// strap's firmware alarm is wedged (see `whoop4-deep-discharge-state`). The live wrist buzz
+/// Layer 1 of the live-fire alarm: a local notification at the wake instant — the most reliable
+/// layer. It fires on the phone even when the BLE link is down, the app is suspended, or the
+/// strap's firmware alarm is wedged (see `whoop4-deep-discharge-state`). With the time-sensitive
+/// entitlement it breaks through a sleep/Do-Not-Disturb Focus, but it is still a best-effort phone
+/// alert — it respects the ringer switch/volume and needs notification permission (a true can't-miss
+/// alarm would require the Apple-approved Critical Alerts entitlement). The live wrist buzz
 /// (RUN_ALARM over BLE, driven by `WakeAlarmScheduler` in `BLEManager`) is the opportunistic
 /// Layer 2 on top of this; the firmware cmd-66 alarm is the free Layer 3 backstop.
 ///

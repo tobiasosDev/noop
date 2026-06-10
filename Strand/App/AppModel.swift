@@ -381,6 +381,7 @@ final class AppModel: ObservableObject {
         guard behavior.smartAlarmEnabled else {
             ble.disableStrapAlarm()
             ble.wakeTarget = nil
+            ble.setWakeKeepAlive(false)
             WakeAlarmNotifier.cancel()
             return
         }
@@ -390,15 +391,17 @@ final class AppModel: ObservableObject {
         var next = cal.date(bySettingHour: behavior.smartAlarmMinutes / 60,
                             minute: behavior.smartAlarmMinutes % 60, second: 0, of: now) ?? now
         if next <= now { next = cal.date(byAdding: .day, value: 1, to: next) ?? next }
-        // Three layers, strongest-guarantee first (see whoop4-deep-discharge-state verdict):
-        //  1. GUARANTEED — phone notification at the wake instant; fires even with the link down or
-        //     the strap's firmware alarm wedged (WakeAlarmNotifier).
+        // Three layers, most-reliable first (see whoop4-deep-discharge-state verdict):
+        //  1. PHONE ALERT — best-effort local notification at the wake instant; fires even with the
+        //     link down or the strap's firmware alarm wedged, and (with the time-sensitive
+        //     entitlement) breaks through a Focus. Respects ringer/volume (WakeAlarmNotifier).
         //  2. OPPORTUNISTIC — live RUN_ALARM buzzed on the wrist over a kept-alive link, driven off
         //     `wakeTarget` by WakeAlarmScheduler in BLEManager (cmd 68 is proven to buzz this strap).
         //  3. FREE BACKSTOP — the firmware cmd-66 alarm via armStrapAlarm (acked-not-stored today,
         //     but costs nothing and recovers automatically if the NVM wedge clears).
         WakeAlarmNotifier.schedule(at: next)
         ble.wakeTarget = next
+        ble.setWakeKeepAlive(behavior.reliableWristAlarm)   // opt-in: hold link hot so the wrist fires while locked
         ble.armStrapAlarm(at: next)
     }
 

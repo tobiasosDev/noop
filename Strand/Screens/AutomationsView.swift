@@ -117,7 +117,7 @@ struct AutomationsView: View {
 
     private var alarmCard: some View {
         Section2(icon: "alarm.fill", title: "Smart alarm",
-                 blurb: "Wake to a wrist buzz. This arms the strap's own firmware alarm, so it still fires if the Mac is asleep or NOOP is closed.") {
+                 blurb: "Wake to a wrist buzz, backed by a phone notification at your wake time so you're never missed.") {
             VStack(spacing: 0) {
                 ToggleRow(label: "Enable smart alarm", help: "Arms the strap to buzz at your wake time.",
                           isOn: $behavior.smartAlarmEnabled)
@@ -130,9 +130,13 @@ struct AutomationsView: View {
                             .labelsHidden().datePickerStyle(.compact)
                     }
                     .frame(minHeight: 42).padding(.vertical, 4)
+                    rowDivider
+                    ToggleRow(label: "Reliable wrist buzz",
+                              help: "Keeps the strap link active from now until wake so the wrist buzz fires even while your phone is locked. Uses more battery overnight. The phone notification fires either way.",
+                              isOn: $behavior.reliableWristAlarm)
                 }
                 if behavior.smartAlarmEnabled {
-                    Text("On WHOOP 5/MG this is experimental — arming is confirmed, but a strap-driven wake-up hasn't been verified yet, so don't rely on it as your only alarm there. WHOOP 4 is the proven path.")
+                    Text("You always get a phone notification at your wake time. The wrist buzz is delivered live over Bluetooth — turn on “Reliable wrist buzz” to keep it firing while the phone is locked. On WHOOP 5/MG the wrist path is experimental.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -141,6 +145,7 @@ struct AutomationsView: View {
             }
             .onChange(of: behavior.smartAlarmEnabled) { _ in model.applySmartAlarm() }
             .onChange(of: behavior.smartAlarmMinutes) { _ in model.applySmartAlarm() }
+            .onChange(of: behavior.reliableWristAlarm) { _ in model.applySmartAlarm() }
         }
     }
 
