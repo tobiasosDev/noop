@@ -1,0 +1,24 @@
+Packages/WhoopProtocol/Sources/WhoopProtocol/PostHooks.swift
+  s_ff049a8bced57c::t_18bb38c5a2e153 173-177
+Strand/BLE/BLEManager.swift
+  s_ff049a8bced57c::t_bce998f54a70ed 775-780
+  s_ff049a8bced57c::t_47f665c396a3da 1269-1289
+Strand/BLE/FrameRouter.swift
+  s_ff049a8bced57c::t_58c0ccdf7214f7 53-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "5413243429b84f19d169b72eefe3ec672957c73a",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
