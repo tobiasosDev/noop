@@ -317,13 +317,14 @@ struct TodayView: View {
     @ViewBuilder
     private var goalsSection: some View {
         if !goalStore.goals.isEmpty {
+            let weekDays = goalWeekDays()
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 SectionHeader("Goals", overline: "Today's score")
                 NoopCard {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(goalStore.goals, id: \.id) { goal in
                             if let kind = GoalProgress.Kind(rawValue: goal.kind) {
-                                goalChipRow(goal: goal, kind: kind)
+                                goalChipRow(goal: goal, kind: kind, weekDays: weekDays)
                             }
                         }
                     }
@@ -334,23 +335,11 @@ struct TodayView: View {
     }
 
     @ViewBuilder
-    private func goalChipRow(goal: GoalRow, kind: GoalProgress.Kind) -> some View {
-        let week = (0..<7).reversed().map {
-            Repository.localDayKey(Calendar.current.date(byAdding: .day, value: -$0, to: Date()) ?? Date())
-        }
-        let values: [String: Double] = {
-            switch kind {
-            case .sleepDuration:
-                return Dictionary(uniqueKeysWithValues:
-                    repo.days.compactMap { d in d.totalSleepMin.map { (d.day, $0) } })
-            case .weeklyStrain:
-                return Dictionary(uniqueKeysWithValues:
-                    repo.days.compactMap { d in d.strain.map { (d.day, $0) } })
-            case .dailySteps:
-                return goalStepsByDay
-            }
-        }()
-        let p = GoalProgress.evaluate(kind: kind, target: goal.target, values: values, weekDays: week)
+    private func goalChipRow(goal: GoalRow, kind: GoalProgress.Kind, weekDays: [String]) -> some View {
+        let p = GoalProgress.evaluate(
+            kind: kind, target: goal.target,
+            values: kind.weekValues(days: repo.days, stepsByDay: goalStepsByDay, weekDays: weekDays),
+            weekDays: weekDays)
         HStack(spacing: 10) {
             Circle()
                 .fill(goalChipColor(p, kind: kind))

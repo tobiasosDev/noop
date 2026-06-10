@@ -23,6 +23,32 @@ extension GoalProgress.Kind {
         case .dailySteps:    return "figure.walk"
         }
     }
+
+    /// Day-keyed metric values for this goal kind, narrowed to the given week.
+    /// Shared by GoalsView and the Today goal chips so the kind→source mapping
+    /// lives in exactly one place.
+    func weekValues(days: [DailyMetric], stepsByDay: [String: Double], weekDays: [String]) -> [String: Double] {
+        let wanted = Set(weekDays)
+        switch self {
+        case .sleepDuration:
+            return Dictionary(uniqueKeysWithValues: days.compactMap { d in
+                wanted.contains(d.day) ? d.totalSleepMin.map { (d.day, $0) } : nil })
+        case .weeklyStrain:
+            return Dictionary(uniqueKeysWithValues: days.compactMap { d in
+                wanted.contains(d.day) ? d.strain.map { (d.day, $0) } : nil })
+        case .dailySteps:
+            return stepsByDay.filter { wanted.contains($0.key) }
+        }
+    }
+}
+
+/// Trailing 7 day-keys ending today, oldest→newest — the week every goal is
+/// evaluated over. Compute once per render and pass down.
+@MainActor
+func goalWeekDays() -> [String] {
+    (0..<7).reversed().map {
+        Repository.localDayKey(Calendar.current.date(byAdding: .day, value: -$0, to: Date()) ?? Date())
+    }
 }
 
 // MARK: - Non-linguistic number fragments (interpolated into localized sentences)
@@ -52,23 +78,17 @@ struct GoalsView: View {
     @State private var showingAdd = false
     @State private var stepsByDay: [String: Double] = [:]
 
-    /// Trailing 7 day-keys ending today, oldest→newest.
-    private var weekDays: [String] {
-        (0..<7).reversed().map {
-            Repository.localDayKey(Calendar.current.date(byAdding: .day, value: -$0, to: Date()) ?? Date())
-        }
-    }
-
     var body: some View {
         ScreenScaffold(title: "Goals",
                        subtitle: "Pick a target, then let the week keep score.") {
+            let weekDays = goalWeekDays()
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 if goalStore.goals.isEmpty {
                     ComingSoon(what: "No goals yet. Set one — sleep duration, weekly strain or daily steps — and adherence shows up here and on Today.")
                 } else {
                     VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                         ForEach(goalStore.goals, id: \.id) { goal in
-                            goalCard(goal)
+                            goalCard(goal, weekDays: weekDays)
                         }
                     }
                 }
@@ -97,24 +117,13 @@ struct GoalsView: View {
 
     // MARK: Per-goal card
 
-    private func values(for kind: GoalProgress.Kind) -> [String: Double] {
-        switch kind {
-        case .sleepDuration:
-            return Dictionary(uniqueKeysWithValues:
-                repo.days.compactMap { d in d.totalSleepMin.map { (d.day, $0) } })
-        case .weeklyStrain:
-            return Dictionary(uniqueKeysWithValues:
-                repo.days.compactMap { d in d.strain.map { (d.day, $0) } })
-        case .dailySteps:
-            return stepsByDay
-        }
-    }
-
     @ViewBuilder
-    private func goalCard(_ goal: GoalRow) -> some View {
+    private func goalCard(_ goal: GoalRow, weekDays: [String]) -> some View {
         if let kind = GoalProgress.Kind(rawValue: goal.kind) {
-            let p = GoalProgress.evaluate(kind: kind, target: goal.target,
-                                          values: values(for: kind), weekDays: weekDays)
+            let p = GoalProgress.evaluate(
+                kind: kind, target: goal.target,
+                values: kind.weekValues(days: repo.days, stepsByDay: stepsByDay, weekDays: weekDays),
+                weekDays: weekDays)
             NoopCard {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
