@@ -37,6 +37,7 @@ struct RootTabView: View {
                     link("Insights", "lightbulb.fill") { InsightsView() }
                     link("Explore", "square.grid.2x2.fill") { MetricExplorerView() }
                     link("Compare", "rectangle.split.2x1.fill") { CompareView() }
+                    link("Report", "doc.text.below.ecg") { ReportView() }
                 }
                 Section("Body") {
                     link("Workouts", "figure.run") { WorkoutsView() }
@@ -117,6 +118,7 @@ struct DebugScreenHost: View {
         case "journal": JournalView()
         case "sleep": SleepView()
         case "trends": TrendsView()
+        case "report": ReportView()
         case "workouts": WorkoutsView()
         case "health": HealthView()
         case "stress": StressView()
