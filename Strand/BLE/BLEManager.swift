@@ -810,6 +810,15 @@ public final class BLEManager: NSObject, ObservableObject {
         case "rev2":   payload = [0x02, 0x01] + epochLE + [0x00, 0x00]      // rev2 + alarmId
         case "rev4":   payload = AlarmPayload.setAlarmRev4(
                            wakeEpochMs: Int64((date.timeIntervalSince1970 * 1000).rounded()))
+        // whoof (madhursatija/whoof client.js setAlarm): W4 payload is the BARE u32 LE epoch —
+        // no leading sub-command byte, no subsecond tail. If the firmware reads the epoch at
+        // offset 0, our rev1 form decodes as epoch 0x29xxxx01 ≈ year 1992 → silently rejected
+        // as past time, which matches every observed symptom.
+        case "rev0":    payload = epochLE
+        // whoopsie (official-app HCI capture): inner frame zero-padded to a 4-byte boundary.
+        // Appending pad zeros to the payload is byte-identical to padding the inner frame.
+        case "rev0pad": payload = epochLE + [0x00]                          // inner 7 → 8
+        case "rev1pad": payload = [0x01] + epochLE + [0x00, 0x00, 0x00, 0x00] // inner 10 → 12
         default:       payload = WhoopCommand.setAlarmPayload(epochSec: epochSec)
         }
         // "rev1ack" diagnosis variant: identical rev1 bytes, but ACKED writes (.withResponse —
