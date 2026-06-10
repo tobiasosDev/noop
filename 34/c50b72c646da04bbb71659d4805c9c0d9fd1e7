@@ -1,0 +1,24 @@
+Strand/App/AppModel.swift
+  s_726b35ba1d2ca4::t_b4ab3d08650e2a 116-124,126
+Strand/BLE/BLEManager.swift
+  s_726b35ba1d2ca4::t_1907961ea87519 1122
+  s_726b35ba1d2ca4::t_ed76136162095a 760-766
+  s_726b35ba1d2ca4::t_4c3677f993f957 107-113
+  s_726b35ba1d2ca4::t_6024c1831291a3 1171-1175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "34c50b72c646da04bbb71659d4805c9c0d9fd1e7",
+  "prompts": {},
+  "sessions": {
+    "s_726b35ba1d2ca4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c4a81b3-50d5-4819-96a9-5fef87e4139e",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
