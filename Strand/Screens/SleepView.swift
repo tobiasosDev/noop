@@ -7,6 +7,10 @@ import WhoopStore
 // MARK: - SleepView
 //
 // Whoop-sleep clarity on the locked Noop component system. Scannable in two seconds:
+//   0. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
+//      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
+//      manual stepper) and, on iOS, the wind-down reminder toggle. Renders above BOTH
+//      branches — with no nights yet it falls back to defaults and says so.
 //   1. HERO ChartCard "Last night" — the stage breakdown (Hypnogram if intervals
 //      reconstruct from stagesJSON, else a clean proportional stacked stage bar),
 //      trailing = total asleep, footer = REM/Deep/Light/Awake each "Xh Ym · NN%".
@@ -24,6 +28,7 @@ import WhoopStore
 struct SleepView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var live: LiveState
+    @EnvironmentObject private var behavior: BehaviorStore
 
     // The standard tile grid: ONE adaptive column set, used for every tile group.
     private let tileColumns = [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)]
@@ -46,14 +51,15 @@ struct SleepView: View {
         let key = dataKey
         let resolved: SleepModel? = (key == modelKey) ? model : buildModel()
         ScreenScaffold(title: "Sleep", subtitle: "Last night, read in two seconds.") {
-            Group {
+            // The planner leads BOTH branches — even with no nights yet it answers
+            // "when should I go to bed tonight?" from defaults (and says so).
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                plannerSection
                 if let resolved {
-                    VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                        hero(resolved)
-                        metricGrid(resolved)
-                        stagesVsTypical(resolved)
-                        durationTrend(resolved)
-                    }
+                    hero(resolved)
+                    metricGrid(resolved)
+                    stagesVsTypical(resolved)
+                    durationTrend(resolved)
                 } else {
                     emptyState
                 }
@@ -73,6 +79,111 @@ struct SleepView: View {
             }
         }
     }
+
+    // MARK: - 0. Sleep Planner — tonight's plan
+
+    @ViewBuilder
+    private var plannerSection: some View {
+        let rec = plannerRecommendation
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Sleep Planner", overline: "Tonight's plan")
+            NoopCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    // Goal chips — how much of tonight's need to bank.
+                    SegmentedPillControl(SleepPlanner.Goal.allCases,
+                                         selection: Binding(
+                                            get: { plannerGoal },
+                                            set: { behavior.plannerGoalRaw = $0.rawValue }),
+                                         label: { goalLabel($0) })
+                    // The one number to walk away with.
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("In bed by")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        Text(verbatim: Self.clock(rec.bedMinutes))
+                            .font(StrandFont.number(44))
+                            .foregroundStyle(StrandPalette.accent)
+                    }
+                    // Breakdown: need → goal → in-bed.
+                    VStack(alignment: .leading, spacing: 4) {
+                        plannerRow("Sleep need", minutesText(rec.needMin))
+                        plannerRow("Goal (\(goalLabel(plannerGoal)))", minutesText(rec.goalSleepMin))
+                        plannerRow("Time in bed", minutesText(rec.inBedMin))
+                        if rec.usedDefaults {
+                            Text("Based on defaults — sharpens after a few nights.")
+                                .font(StrandFont.caption)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                        }
+                    }
+                    Divider().overlay(StrandPalette.hairline)
+                    // Wake time: the strap alarm wins; manual stepper otherwise.
+                    if behavior.smartAlarmEnabled {
+                        HStack(spacing: 8) {
+                            Image(systemName: "alarm.fill")
+                                .foregroundStyle(StrandPalette.accent)
+                            Text("Wake \(Self.clock(behavior.smartAlarmMinutes)) — from your strap alarm")
+                                .font(StrandFont.subhead)
+                                .foregroundStyle(StrandPalette.textSecondary)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("Wake time")
+                                .font(StrandFont.subhead)
+                                .foregroundStyle(StrandPalette.textSecondary)
+                            Stepper(value: Binding(
+                                        get: { behavior.plannerWakeMinutes },
+                                        set: { behavior.plannerWakeMinutes = (($0 % 1440) + 1440) % 1440 }),
+                                    in: 0...1439, step: 15) {
+                                Text(verbatim: Self.clock(behavior.plannerWakeMinutes))
+                                    .font(StrandFont.headline.monospacedDigit())
+                                    .foregroundStyle(StrandPalette.textPrimary)
+                            }
+                        }
+                    }
+                    #if os(iOS)
+                    Toggle("Remind me 30 min before bedtime", isOn: $behavior.bedtimeReminderEnabled)
+                        .font(StrandFont.subhead)
+                        .tint(StrandPalette.accent)
+                    #endif
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        #if os(iOS)
+        .onChange(of: behavior.bedtimeReminderEnabled) { _ in syncBedtimeReminder() }
+        .onChange(of: plannerRecommendation) { _ in syncBedtimeReminder() }
+        .onAppear { syncBedtimeReminder() }
+        #endif
+    }
+
+    private func goalLabel(_ g: SleepPlanner.Goal) -> String {
+        switch g {
+        case .peak:    return String(localized: "Peak")
+        case .perform: return String(localized: "Perform")
+        case .getBy:   return String(localized: "Get By")
+        }
+    }
+
+    /// "7h 30m" — duration text; non-linguistic, rendered verbatim (matches durationText).
+    private func minutesText(_ m: Double) -> String {
+        let h = Int(m) / 60, r = Int(m) % 60
+        return "\(h)h \(String(format: "%02d", r))m"
+    }
+
+    private func plannerRow(_ label: LocalizedStringKey, _ value: String) -> some View {
+        HStack {
+            Text(label).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+            Spacer()
+            Text(verbatim: value).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textSecondary)
+        }
+    }
+
+    #if os(iOS)
+    private func syncBedtimeReminder() {
+        BedtimeReminderScheduler.shared.apply(enabled: behavior.bedtimeReminderEnabled,
+                                              bedMinutes: plannerRecommendation.bedMinutes)
+    }
+    #endif
 
     // MARK: - 1. HERO — stage breakdown
 
@@ -496,6 +607,38 @@ struct SleepView: View {
         SleepNeed.needMin(totalSleepMinsByNight: repo.days.compactMap { $0.totalSleepMin })
     }
 
+    // MARK: - Sleep Planner inputs
+
+    private var plannerGoal: SleepPlanner.Goal {
+        SleepPlanner.Goal(rawValue: behavior.plannerGoalRaw) ?? .perform
+    }
+
+    /// Strap alarm wins when enabled; manual planner time otherwise.
+    private var plannerWakeMinutes: Int {
+        behavior.smartAlarmEnabled ? behavior.smartAlarmMinutes : behavior.plannerWakeMinutes
+    }
+
+    /// Personal typical efficiency as 0–1, nil without history.
+    private var typicalEfficiency: Double? {
+        let vals = repo.days.compactMap { $0.efficiency }.map { $0 <= 1.0 ? $0 : $0 / 100 }
+        guard !vals.isEmpty else { return nil }
+        return vals.reduce(0, +) / Double(vals.count)
+    }
+
+    private var plannerRecommendation: SleepPlanner.Recommendation {
+        let lastDebt = sleepDebtSeries.latest ?? 0
+        return SleepPlanner.recommend(wakeMinutes: plannerWakeMinutes,
+                                      baseNeedMin: sleepNeedMin,
+                                      debtMin: lastDebt,
+                                      efficiency: typicalEfficiency,
+                                      goal: plannerGoal)
+    }
+
+    /// "HH:MM" from minutes-since-midnight — non-linguistic, rendered verbatim.
+    private static func clock(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
+    }
+
     // MARK: - Trend points
 
     /// Trailing 30 days of total sleep, plotted in HOURS. Falls back to all nights with
@@ -746,6 +889,7 @@ private struct Night {
     SleepView()
         .environmentObject(Repository.previewSleep())
         .environmentObject(LiveState())
+        .environmentObject(BehaviorStore())
         .frame(width: 980, height: 1180)
         .preferredColorScheme(.dark)
 }
