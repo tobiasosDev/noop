@@ -1,0 +1,24 @@
+Strand/Screens/GoalsView.swift
+  s_ff049a8bced57c::t_a5da63f16f5cb7 84,91
+  s_ff049a8bced57c::t_e480108034612e 121,123-126
+  s_ff049a8bced57c::t_91de2f1adfb2bf 47
+  s_ff049a8bced57c::t_e058f6669c4f2d 26-46,48-51
+Strand/Screens/TodayView.swift
+  s_ff049a8bced57c::t_0cd8b2f45785e9 320,327,338-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "3195a24af68b92c66b7f78b7a2ba13ff88a9610c",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
