@@ -1,0 +1,29 @@
+Strand/Screens/LiveView.swift
+  s_ff049a8bced57c::t_dc8b1322593f9a 47-51
+  s_ff049a8bced57c::t_32578775d15575 12-16
+  s_ff049a8bced57c::t_0ae7a7a76f21cd 3
+  s_ff049a8bced57c::t_4ee8a8ebc67f12 101-107
+Strand/Screens/TodayView.swift
+  s_ff049a8bced57c::t_e687c47ad15c0e 61
+  s_ff049a8bced57c::t_c3e296773617ce 28-31
+  s_ff049a8bced57c::t_aa63a20f70cac3 511-515
+  s_ff049a8bced57c::t_8c8b3ae0051b2c 208-286
+Strand/Data/DayStrain.swift
+  s_ff049a8bced57c::t_3d415efa29d2db 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e9cbb65c863bbdf60d8dba353ebddade5d863a2b",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
