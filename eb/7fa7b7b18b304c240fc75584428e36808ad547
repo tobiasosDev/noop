@@ -1,0 +1,25 @@
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/SleepNeedTests.swift
+  s_ff049a8bced57c::t_cc8b8fee567cd5 1-24
+Strand/Screens/SleepView.swift
+  s_ff049a8bced57c::t_51e1977b284c33 494,496
+  s_ff049a8bced57c::t_d1160b635305c1 489
+  s_ff049a8bced57c::t_271e796c04f4d1 3
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepNeed.swift
+  s_ff049a8bced57c::t_6543d488c7bcb7 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "eb7fa7b7b18b304c240fc75584428e36808ad547",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
