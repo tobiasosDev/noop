@@ -339,9 +339,40 @@ final class AppModel: ObservableObject {
         ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
     }
 
+    /// One-shot guard for the NOOP_REBOOT_STRAP diagnostic hook (see applySmartAlarm).
+    private static var didSendRebootStrap = false
+
     /// Arm (or clear) the strap's firmware alarm from the smart-alarm settings. The firmware alarm
     /// fires even if the Mac is asleep / NOOP is closed. No-op until bonded (send is gated on bond).
     func applySmartAlarm() {
+        // Remote-diagnosis hook: NOOP_ALARM_IN_MIN=<n> in the launch environment arms the strap
+        // alarm n minutes from now, bypassing the saved settings — lets a remote session (devicectl
+        // launch) run a full arm→fire test without anyone touching the UI. Env-gated, not a build
+        // flag, so a normal launch is unaffected.
+        let env = ProcessInfo.processInfo.environment
+        if env["NOOP_REBOOT_STRAP"] != nil, !AppModel.didSendRebootStrap {
+            // ONE-SHOT guard: this hook runs on every command-channel-ready, and the strap
+            // reconnects right after rebooting — without the flag this would reboot-loop.
+            AppModel.didSendRebootStrap = true
+            live.append(log: "TEST: REBOOT_STRAP (user-consented diagnostic)")
+            ble.sendRebootStrap()
+            return
+        }
+        if env["NOOP_RUN_ALARM"] != nil {
+            // Fire the strap's STORED alarm immediately (cmd 68) — discriminates the alarm
+            // EXECUTION path from the alarm STORAGE path (haptics engine is already proven
+            // by RUN_HAPTICS_PATTERN). Expect a wrist buzz + APP_DRIVEN_ALARM_EXECUTED(58).
+            live.append(log: "TEST: RUN_ALARM — firing stored alarm now (env hook)")
+            ble.send(.runAlarm, payload: [0x01])
+            return
+        }
+        if let minStr = env["NOOP_ALARM_IN_MIN"], let min = Int(minStr) {
+            let at = Date().addingTimeInterval(TimeInterval(min * 60))
+            let form = env["NOOP_ALARM_FORM"]
+            live.append(log: "TEST: arming alarm in \(min) min (env hook, form \(form ?? "rev1"))")
+            ble.armStrapAlarm(at: at, testForm: form)
+            return
+        }
         guard behavior.smartAlarmEnabled else { ble.disableStrapAlarm(); return }
         let cal = Calendar.current
         let now = Date()

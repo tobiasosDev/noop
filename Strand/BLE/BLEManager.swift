@@ -775,7 +775,7 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Android rev-4 frame has been ACKed by a real 5/MG when arming, but a strap-driven wake fire
     /// has NOT been captured on our side (no STRAP_DRIVEN_ALARM_EXECUTED event observed yet) — do
     /// not present the 5/MG alarm as guaranteed until one is.
-    func armStrapAlarm(at date: Date) {
+    func armStrapAlarm(at date: Date, testForm: String? = nil) {
         // Honesty gate: if the command channel is down, the sends below would be silently
         // dropped and the "armed" log would lie (the restore-path #59 regression). Say so instead;
         // `onCommandChannelReady` re-arms once the link is provably up.
@@ -799,15 +799,67 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         // Clamp rather than trap: an out-of-range alarm date (pre-1970 / post-2106) must not crash.
         let epochSec = UInt32(clamping: Int64(date.timeIntervalSince1970))
-        send(.setClock, payload: BLEManager.setClockPayload())
-        send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: epochSec))
-        log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec))")
-        // Verify what the strap actually stored (alarm diagnosis): the read-backs land in the
-        // exported log via the cmd-response hooks. 1s delay lets the two writes settle first.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.send(.getClock, payload: [])        // strap expects EMPTY payload here
-            self?.send(.getAlarmTime, payload: [0x01])
+        let epochLE: [UInt8] = [UInt8(epochSec & 0xFF), UInt8((epochSec >> 8) & 0xFF),
+                                UInt8((epochSec >> 16) & 0xFF), UInt8((epochSec >> 24) & 0xFF)]
+        // Alarm diagnosis: alternate SET_ALARM_TIME body layouts, selectable via the
+        // NOOP_ALARM_FORM env hook — the rev1 form is acked but not stored on this strap
+        // (read-back zeros, no fire), so we A/B the other decompiled-client revisions.
+        let payload: [UInt8]
+        switch testForm {
+        case "rev1id": payload = [0x01, 0x01] + epochLE + [0x00, 0x00]      // rev1 + alarmId
+        case "rev2":   payload = [0x02, 0x01] + epochLE + [0x00, 0x00]      // rev2 + alarmId
+        case "rev4":   payload = AlarmPayload.setAlarmRev4(
+                           wakeEpochMs: Int64((date.timeIntervalSince1970 * 1000).rounded()))
+        default:       payload = WhoopCommand.setAlarmPayload(epochSec: epochSec)
         }
+        // "rev1ack" diagnosis variant: identical rev1 bytes, but ACKED writes (.withResponse —
+        // errors surface in didWriteValueFor) and delayed 3 s past the connect burst. Discriminates
+        // the silent-drop hypothesis: plain .withoutResponse writeValue calls during the connect
+        // burst can be discarded by CoreBluetooth without trace (no canSendWriteWithoutResponse
+        // backpressure anywhere in this class), which would explain acked-elsewhere-ignored-here.
+        let acked = (testForm == "rev1ack" || testForm == "rev1clear")
+        let writeType: CBCharacteristicWriteType = acked ? .withResponse : .withoutResponse
+        let sendDelay: Double = acked ? 3.0 : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + sendDelay) { [weak self] in
+            guard let self else { return }
+            if testForm == "rev1clear" {
+                // Clear possibly-corrupt alarm state first (deep-discharge artifact theory):
+                // the GET_ALARM_TIME response tail is a constant 04 00 20 — if that encodes
+                // stuffed/garbage alarm slots, a SET may be refused until they're cleared.
+                self.send(.disableAlarm, payload: [0x01], writeType: writeType)
+            }
+            self.send(.setClock, payload: BLEManager.setClockPayload(), writeType: writeType)
+            self.send(.setAlarmTime, payload: payload, writeType: writeType)
+            self.log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec), form \(testForm ?? "rev1"))")
+            // Verify what the strap actually stored (alarm diagnosis): the read-backs land in the
+            // exported log via the cmd-response hooks. 1s delay lets the two writes settle first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                // [0x00] like every other Harvard GET — the empty-payload form gets no reply at all
+                // (observed: zero GET_CLOCK responses across whole sessions while [0x00] GETs answer).
+                self?.send(.getClock, payload: [0x00])
+                self?.send(.getAlarmTime, payload: [0x01])
+                self?.send(.reportVersionInfo, payload: [0x00])   // firmware build — alarm-handler suspect
+            }
+        }
+    }
+
+    /// One-shot, USER-CONSENTED diagnostic: REBOOT_STRAP (cmd 29). Deliberately not in
+    /// WhoopCommand (destructive class) — only reachable via the NOOP_REBOOT_STRAP env hook.
+    /// Purpose: un-wedge the alarm-storage engine after the deep-discharge state (all four
+    /// SET_ALARM_TIME layouts acked-but-ignored while RUN_ALARM fires fine).
+    func sendRebootStrap() {
+        guard state.connected, let p = peripheral, p.state == .connected, let ch = cmdCharacteristic else {
+            log("Reboot: strap unreachable — not sent")
+            return
+        }
+        guard selectedModel.deviceFamily == .whoop4 else {
+            log("Reboot: only attempted on WHOOP 4.0 — not sent")
+            return
+        }
+        seq = seq &+ 1
+        let frame = WhoopCommand.rawFrame(cmd: 29, seq: seq, payload: [0x00])
+        p.writeValue(Data(frame), for: ch, type: .withResponse)
+        log("→ REBOOT_STRAP sent (diagnostic, user-consented) — expect ~30s offline")
     }
 
     /// Disarm the currently-armed firmware alarm.
@@ -1303,24 +1355,44 @@ extension BLEManager: CBPeripheralDelegate {
                 }
                 // Alarm diagnosis: surface the strap's clock / alarm answers in the exported
                 // log — without these read-backs an armed-but-never-firing alarm is invisible.
-                if frame.count > 6, frame[6] == WhoopCommand.getClock.rawValue {
-                    let parsed = parseFrame(frame)
-                    if let clock = parsed.parsed["clock"]?.intValue {
-                        let delta = clock - Int(Date().timeIntervalSince1970)
-                        log("Clock readback: strap epoch=\(clock) (Δ\(delta)s vs phone)")
-                    } else {
-                        log("Clock readback (unparsed) raw=\(hex(Array(frame.dropFirst(7)))) ")
+                // Readback instrumentation: gate on the COMMAND/COMMAND_RESPONSE packet types
+                // (frame[4] == 35/36) — a bare frame[6] check also matches history/metadata
+                // frames whose payload bytes collide with the cmd number (observed: backfill
+                // frames misattributed as clock/alarm readbacks).
+                if frame.count > 6, frame[4] == 35 || frame[4] == 36 {
+                    // Result codes for the alarm/clock command family: a SET that is REJECTED
+                    // (non-zero result, like the 5/MG haptics result=0x03) reads very differently
+                    // from one that is accepted-then-dropped. pay[1] is the observed status byte.
+                    let alarmFamily: [UInt8] = [WhoopCommand.setClock.rawValue, WhoopCommand.setAlarmTime.rawValue,
+                                                WhoopCommand.runAlarm.rawValue, WhoopCommand.disableAlarm.rawValue,
+                                                WhoopCommand.reportVersionInfo.rawValue]
+                    if alarmFamily.contains(frame[6]) {
+                        log("Cmd \(frame[6]) response frame: \(hex(frame))")
                     }
-                }
-                if frame.count > 6, frame[6] == WhoopCommand.getAlarmTime.rawValue {
-                    let parsed = parseFrame(frame)
-                    if let armed = parsed.parsed["alarm_epoch"]?.intValue, armed > 0 {
-                        let inS = armed - Int(Date().timeIntervalSince1970)
-                        log("Alarm readback: armed epoch=\(armed) (fires in \(inS)s)")
-                    } else {
-                        log("Alarm readback: nothing armed or unknown layout")
+                    if frame[6] == WhoopCommand.reportVersionInfo.rawValue {
+                        let parsed = parseFrame(frame)
+                        let fields = parsed.parsed.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " ")
+                        log("Version info: \(fields)")
                     }
-                    log("Alarm readback raw: \(hex(Array(frame.dropFirst(7))))")
+                    if frame[6] == WhoopCommand.getClock.rawValue {
+                        let parsed = parseFrame(frame)
+                        if let clock = parsed.parsed["clock"]?.intValue {
+                            let delta = clock - Int(Date().timeIntervalSince1970)
+                            log("Clock readback: strap epoch=\(clock) (Δ\(delta)s vs phone)")
+                        } else {
+                            log("Clock readback (unparsed) frame=\(hex(frame))")
+                        }
+                    }
+                    if frame[6] == WhoopCommand.getAlarmTime.rawValue {
+                        let parsed = parseFrame(frame)
+                        if let armed = parsed.parsed["alarm_epoch"]?.intValue, armed > 0 {
+                            let inS = armed - Int(Date().timeIntervalSince1970)
+                            log("Alarm readback: armed epoch=\(armed) (fires in \(inS)s)")
+                        } else {
+                            log("Alarm readback: nothing armed or unknown layout")
+                        }
+                        log("Alarm readback frame: \(hex(frame))")
+                    }
                 }
                 // Clock correlation runs in both live and backfill modes. Once established it
                 // unblocks both the Collector (live path) and the Backfiller (chunk decoding).
