@@ -1,0 +1,21 @@
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/MyDayTests.swift
+  s_673f67f9669206::t_1f9cb3bbb71957 1-56
+Packages/StrandAnalytics/Sources/StrandAnalytics/MyDay.swift
+  s_673f67f9669206::t_e6a3dab728a9d8 1-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b2c3b18b4118967a648c8d447e1f237b87774f55",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
