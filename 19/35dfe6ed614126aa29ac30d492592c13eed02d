@@ -1,0 +1,31 @@
+Packages/WhoopStore/Sources/WhoopStore/Goals.swift
+  s_ff049a8bced57c::t_a929b7024977cd 1-54
+Packages/WhoopStore/Tests/WhoopStoreTests/MigrationTests.swift
+  s_ff049a8bced57c::t_019914d84ae189 43
+Packages/WhoopStore/Sources/WhoopStore/WhoopStore.swift
+  s_ff049a8bced57c::t_ccaef8f306745d 9
+Packages/WhoopStore/Tests/WhoopStoreTests/GoalsTests.swift
+  s_ff049a8bced57c::t_a2b73a7e3a30f1 1-48
+Packages/WhoopStore/Tests/WhoopStoreTests/MetricsCacheTests.swift
+  s_ff049a8bced57c::t_3992f9ff32a014 19
+Packages/WhoopStore/Tests/WhoopStoreTests/ScaffoldTests.swift
+  s_ff049a8bced57c::t_712aa74da7dc94 14
+Packages/WhoopStore/Sources/WhoopStore/Database.swift
+  s_ff049a8bced57c::t_520d7a838f10f9 229-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1935dfe6ed614126aa29ac30d492592c13eed02d",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
