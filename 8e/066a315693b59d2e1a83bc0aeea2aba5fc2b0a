@@ -1,0 +1,154 @@
+Strand/App/ContentView.swift
+  s_7a14da145ef7b7::t_17dc307cd76f4e 13-15
+  s_7a14da145ef7b7::t_4a4f65ec5f87fd 16-23
+Strand/Screens/WorkoutsView.swift
+  s_7a14da145ef7b7::t_8e68eeb8d4f993 227-234,241,243-245,252-275
+  s_7a14da145ef7b7::t_c38e0303cbf43e 235-240,242
+Packages/StrandDesign/Sources/StrandDesign/YearHeatStrip.swift
+  s_7a14da145ef7b7::t_23bfe7bcd95523 121-136,139-147,149-154,159-169
+Strand/Data/JournalCatalog.swift
+  s_7a14da145ef7b7::t_b1f60f8a54ea7f 2
+  s_7a14da145ef7b7::t_fe43a4fb4286e7 19-25
+Strand/Screens/AppleHealthView.swift
+  s_7a14da145ef7b7::t_e5d9297061ebc5 227-239
+StrandiOS/Resources/de.lproj/InfoPlist.strings
+  s_7a14da145ef7b7::t_42b458a3ac3762 1-15
+Strand/Screens/SettingsView.swift
+  s_7a14da145ef7b7::t_797bc0820608c4 33-41
+  s_7a14da145ef7b7::t_aa0bdd9c7952f4 44
+  s_7a14da145ef7b7::t_6c060e3250326e 83-102
+  s_7a14da145ef7b7::t_80c256089406fa 309
+  s_7a14da145ef7b7::t_31afb72e5a8bd7 139-152
+Strand/Screens/AutomationsView.swift
+  s_7a14da145ef7b7::t_e602baf76b4fed 173-180,182-192
+Strand/Screens/IntervalTimerView.swift
+  s_7a14da145ef7b7::t_d1cd66aaf2c370 27-29
+  s_7a14da145ef7b7::t_ad9d9442b09bd2 260-279
+  s_7a14da145ef7b7::t_ec50f0f652fac8 292
+  s_7a14da145ef7b7::t_bab1119a86f2dd 294-295
+Strand/Screens/TodayView.swift
+  s_7a14da145ef7b7::t_f5c981a01d2961 493,497-499,504
+  s_7a14da145ef7b7::t_78bcd0dce57be0 461-463,469-470
+  s_7a14da145ef7b7::t_a521245e3c80b4 480,482-486
+  s_7a14da145ef7b7::t_4bee826eb0c0d6 157-168,174-197
+  s_7a14da145ef7b7::t_e7172620cb6186 538
+Strand/Screens/StressView.swift
+  s_7a14da145ef7b7::t_d5e9b9d632d682 303-305
+Strand/Screens/JournalView.swift
+  s_7a14da145ef7b7::t_07a571e39c7cfc 182
+  s_7a14da145ef7b7::t_5e784816b669c7 263-267
+  s_7a14da145ef7b7::t_d8fc6cc1d017a6 318-321
+  s_7a14da145ef7b7::t_24340305545689 362
+  s_7a14da145ef7b7::t_451e615758e2fd 200
+  s_7a14da145ef7b7::t_601f02caeb2852 329-331
+  s_7a14da145ef7b7::t_0a30777f7fdb46 159,168
+Packages/StrandDesign/Sources/StrandDesign/Palette.swift
+  s_7a14da145ef7b7::t_9e6768bd9cfc11 217-218,220,222-225,227
+  s_7a14da145ef7b7::t_ed8f7e254f89a4 140,142-146,148-149
+Packages/StrandDesign/Sources/StrandDesign/Components.swift
+  s_7a14da145ef7b7::t_d0894a378ffbda 147-152,155-170
+  s_7a14da145ef7b7::t_66d51836f88954 205-214
+Strand/Resources/de.lproj/InfoPlist.strings
+  s_7a14da145ef7b7::t_42b458a3ac3762 1-9
+Strand/Screens/SupportView.swift
+  s_7a14da145ef7b7::t_2c27beb89e8e69 8-20
+  s_7a14da145ef7b7::t_189d4f4555de47 104-105
+  s_7a14da145ef7b7::t_e90e4068d33370 210-222
+  s_7a14da145ef7b7::t_f726cb73a8f46c 232
+  s_7a14da145ef7b7::t_974635882e4a6e 143
+  s_7a14da145ef7b7::t_c5940900dcc54e 140-141
+  s_7a14da145ef7b7::t_f1c9c2b20bae58 122-123,127-128
+  s_7a14da145ef7b7::t_1fe562198663c2 142,144-161
+  s_7a14da145ef7b7::t_0b1dc2a134c794 114-121,125-126,129
+  s_7a14da145ef7b7::t_437f4a52c4c44f 195-209
+Strand/Screens/LiveView.swift
+  s_7a14da145ef7b7::t_ecaab3f2627379 177-186,188-191,193-194,196-218,220-221
+  s_7a14da145ef7b7::t_4cf3d64c167bf3 241-242,245-246,249-250
+  s_7a14da145ef7b7::t_7ec96c234d4f66 94-101,105-111
+StrandiOS/App/RootTabView.swift
+  s_7a14da145ef7b7::t_8ffe94087cc5e1 79,84-85
+  s_7a14da145ef7b7::t_fd6ee3f8de049e 78,86-132
+  s_7a14da145ef7b7::t_dfaf79402c2a37 80-83
+StrandiOSWidgets/de.lproj/Localizable.strings
+  s_7a14da145ef7b7::t_42b458a3ac3762 1-42
+StrandiOSWidgets/de.lproj/InfoPlist.strings
+  s_7a14da145ef7b7::t_42b458a3ac3762 1-6
+Strand/Screens/MetricExplorerView.swift
+  s_7a14da145ef7b7::t_d1697e7f9d8d62 349-355,358-366,369-374
+  s_7a14da145ef7b7::t_9357e71c618a3a 309
+  s_7a14da145ef7b7::t_da6764e658937f 356-357
+  s_7a14da145ef7b7::t_f63a40f9bd8ffc 367-368
+  s_7a14da145ef7b7::t_992c2da6d0c096 532
+  s_7a14da145ef7b7::t_ededcdbfb6b35a 119
+  s_7a14da145ef7b7::t_e8163b5f3b8f9f 179
+  s_7a14da145ef7b7::t_a15654b8302020 209
+  s_7a14da145ef7b7::t_ad5619d9316293 560,563
+  s_7a14da145ef7b7::t_9191f709788288 411
+  s_7a14da145ef7b7::t_fdb41e252f672d 585
+  s_7a14da145ef7b7::t_3f5bff592cea6c 320
+Strand/Screens/CompareView.swift
+  s_7a14da145ef7b7::t_6acf74f98b614a 390
+  s_7a14da145ef7b7::t_500f94b2da1cb7 259-277
+  s_7a14da145ef7b7::t_c6b67b32c8e27c 314
+  s_7a14da145ef7b7::t_82ce06ebca10f3 380
+  s_7a14da145ef7b7::t_30402118e6396d 511
+  s_7a14da145ef7b7::t_472523b9503340 571
+  s_7a14da145ef7b7::t_a13cdbb3af1cbf 519,524-525
+  s_7a14da145ef7b7::t_11378cddd09b28 491
+  s_7a14da145ef7b7::t_b90868a85b00ad 584
+  s_7a14da145ef7b7::t_ac9e13847bbf61 765
+Strand/Resources/Localizable.xcstrings
+  s_7a14da145ef7b7::t_a602a62bb78b75 8987-9020
+  s_7a14da145ef7b7::t_42b458a3ac3762 5-12,78-87,137,489-498,531-540,685-694,825-833,1139-1148,1215-1223,1403-1411,1541-1570,1619-1628,2077-2086,2153-2161,2323-2342,2664,2792-2801,2818-2827,2988-2997,3062-3071,3136-3145,3242-3251,3253,3269-3278,3343-3362,3571-3580,3693-3702,3785-3793,4021-4029,4033-4051,4149,4154,4156-4167,4591-4600,4827-4835,5287-5295,5393-5411,5638-5646,5679-5688,5706,5738-5747,5812-5821,5840-5848,5995,6763-6772,6901-6910,7039-7048,7273-7282,7315-7324,7341-7359
+  s_7a14da145ef7b7::t_10dadc1fba0dc3 5514,9154-9204
+  s_7a14da145ef7b7::t_f5ccdd873a5182 7440-7524
+  s_7a14da145ef7b7::t_0191ed7274d165 7525-8986
+  s_7a14da145ef7b7::t_f4e97e9c56c6d5 9021-9153,9205-9207
+Strand/Data/MetricCatalog.swift
+  s_7a14da145ef7b7::t_4b01673f73a7c1 2
+  s_7a14da145ef7b7::t_f318c131644ada 17-19,23-25
+  s_7a14da145ef7b7::t_5f4715d63fc4ec 20-22
+Strand/Screens/CoachView.swift
+  s_7a14da145ef7b7::t_7dbd09c34b705f 453,457
+  s_7a14da145ef7b7::t_2e26db7ac2c921 282-287
+  s_7a14da145ef7b7::t_987ebec9caf48d 251,259-270,273
+  s_7a14da145ef7b7::t_bb8b1abdaa2009 26-27
+  s_7a14da145ef7b7::t_f4d375ca130973 271-272
+  s_7a14da145ef7b7::t_68074ac6e2a7bb 294-323
+Strand/Screens/BreathingView.swift
+  s_7a14da145ef7b7::t_45d9983f2cfd45 345
+  s_7a14da145ef7b7::t_39fe5482803251 17-18
+  s_7a14da145ef7b7::t_0e3c2a843dbdb7 28-30
+  s_7a14da145ef7b7::t_44ec2720ea0f6b 283-286,288-297,301-321
+Strand/Screens/InsightsView.swift
+  s_7a14da145ef7b7::t_b00a4764a27d64 42-45
+  s_7a14da145ef7b7::t_13b3b93d03f246 60-63
+  s_7a14da145ef7b7::t_d75294493a9a36 143
+Strand/Screens/IntelligenceView.swift
+  s_7a14da145ef7b7::t_b8016932dc708c 76-83
+  s_7a14da145ef7b7::t_31008cdaeceb07 89-97,101,104
+Strand/Screens/TrendsView.swift
+  s_7a14da145ef7b7::t_f497444ab00291 193-209
+  s_7a14da145ef7b7::t_07e93fdf0dc3a8 47-51
+  s_7a14da145ef7b7::t_d470c4e86153fc 256
+  s_7a14da145ef7b7::t_0b7e76a97559b3 226
+  s_7a14da145ef7b7::t_bd63a51f7d5712 223-225,227-238
+StrandiOS/Resources/de.lproj/AppShortcuts.strings
+  s_7a14da145ef7b7::t_42b458a3ac3762 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8e066a315693b59d2e1a83bc0aeea2aba5fc2b0a",
+  "prompts": {},
+  "sessions": {
+    "s_7a14da145ef7b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7f7a9c7-6104-4e94-869a-5a7b40a4c621",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
