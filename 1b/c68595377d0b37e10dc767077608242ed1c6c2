@@ -1,0 +1,87 @@
+android/app/src/main/java/com/noop/ui/LiveScreen.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 91-113,292-304
+android/app/src/main/java/com/noop/protocol/AlarmPayload.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-71
+Strand/System/AppChangelog.swift
+  s_ff049a8bced57c::t_4172ab4cf79d50 10,22-56
+Strand/BLE/BLEManager.swift
+  s_ff049a8bced57c::t_4172ab4cf79d50 358-363,365-366,1120-1128
+android/app/src/test/java/com/noop/protocol/Whoop5HistoricalDecodeTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 65-84
+Strand/Collect/Backfiller.swift
+  s_ff049a8bced57c::t_4172ab4cf79d50 161-168
+android/app/src/test/java/com/noop/ui/RecoveryCalibrationTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-72
+android/app/src/main/java/com/noop/analytics/IntelligenceEngine.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 80,106-108,124,147,158,183-187,207,219-220,294-303
+android/app/src/main/java/com/noop/ui/TodayScreen.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 36,65-69,144,150-155,167,175,188,195-196,208-227,235,241-242,245
+Strand/Resources/Info.plist
+  s_ff049a8bced57c::t_4172ab4cf79d50 22
+android/app/src/main/java/com/noop/ui/LogExport.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 47-89
+project.yml
+  s_ff049a8bced57c::t_5a494084792047 14,59
+android/app/build.gradle.kts
+  s_ff049a8bced57c::t_4172ab4cf79d50 25-26
+android/app/src/main/java/com/noop/protocol/BackfillCaptureJsonl.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-101
+android/app/src/main/java/com/noop/protocol/Framing.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 183-192,244-246,252-307
+android/app/src/main/java/com/noop/protocol/BackfillCaptureSummary.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-48
+android/app/src/main/java/com/noop/protocol/HistoricalStreams.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 143-152,180-191
+Packages/WhoopProtocol/Sources/WhoopProtocol/Streams.swift
+  s_ff049a8bced57c::t_4172ab4cf79d50 111-118
+android/app/src/main/java/com/noop/ble/WhoopBleClient.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 31-34,41-45,50,109-115,233-256,309-311,441-442,445-484,491-499,612-629,739-742,817-830,847-853,894-924,973,976-986,995-1001,1070,1076-1081,1187-1194,1200-1206,1212,1251-1279,1725-1742,1886-1887,1889-1908,1913-1919,1979-1994,2003-2024,2027,2060-2065,2083-2090,2134-2139,2176-2254
+android/app/src/test/java/com/noop/protocol/FramingTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 349-406
+android/app/src/test/java/com/noop/protocol/HistoricalFallbackTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-73
+android/app/src/main/java/com/noop/ui/AppViewModel.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 197-199,201
+Strand/Screens/SleepView.swift
+  s_ff049a8bced57c::t_4172ab4cf79d50 501-506,508-515,785-816,886-888,897-898,900
+android/app/src/main/java/com/noop/analytics/AnalyticsModels.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 222,244-250
+android/app/src/main/java/com/noop/ble/PuffinExperiment.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 26-32,40-41
+android/app/src/main/java/com/noop/analytics/AnalyticsEngine.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 6,94-97,251-260,280,292,295-336
+android/app/src/test/java/com/noop/protocol/AlarmPayloadTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-100
+android/app/src/test/java/com/noop/ui/RelativeAgoTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-41
+android/app/src/test/java/com/noop/protocol/BackfillCaptureJsonlTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-75
+android/app/src/test/java/com/noop/protocol/BackfillCaptureSummaryTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-39
+android/app/src/main/java/com/noop/ble/Backfiller.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 4,53-65,160,164-171,174,190
+android/app/src/main/java/com/noop/ui/SettingsScreen.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 185,494-533
+android/app/src/test/java/com/noop/analytics/SkinTempAnalyticsTest.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 1-118
+CHANGELOG.md
+  s_ff049a8bced57c::t_4172ab4cf79d50 20-135
+android/app/src/main/java/com/noop/ui/AppChangelog.kt
+  s_ff049a8bced57c::t_4172ab4cf79d50 28,39-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1bc68595377d0b37e10dc767077608242ed1c6c2",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
