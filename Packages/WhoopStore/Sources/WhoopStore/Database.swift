@@ -226,6 +226,19 @@ extension WhoopStore {
                 t.primaryKey(["deviceId", "ts"])
             }
         }
+
+        // v11 (Tier A goals): user goal definitions. Adherence is computed at read
+        // time from metricSeries — no tracking table. Additive only (same rationale
+        // as v10: never rebuild destructively).
+        migrator.registerMigration("v11") { db in
+            try db.create(table: "goal") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("kind", .text).notNull()       // GoalProgress.Kind rawValue
+                t.column("target", .double).notNull()
+                t.column("createdAt", .integer).notNull()
+                t.column("archivedAt", .integer)        // NULL = active
+            }
+        }
         return migrator
     }
 }

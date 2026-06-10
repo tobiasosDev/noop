@@ -10,6 +10,7 @@ struct StrandApp: App {
                 .environmentObject(model)
                 .environmentObject(model.live)
                 .environmentObject(model.repo)
+                .environmentObject(model.goalStore)
                 .environmentObject(model.profile)
                 .environmentObject(model.behavior)
                 .environmentObject(model.journal)
@@ -26,10 +27,12 @@ struct StrandApp: App {
             MenuBarContent()
                 .environmentObject(model)
                 .environmentObject(model.repo)
+                .environmentObject(model.goalStore)
                 .environmentObject(model.live)
         } label: {
             MenuBarLabel()
                 .environmentObject(model.repo)
+                .environmentObject(model.goalStore)
                 .environmentObject(model.live)
         }
         .menuBarExtraStyle(.window)

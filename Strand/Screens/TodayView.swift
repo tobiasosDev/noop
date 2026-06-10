@@ -25,6 +25,14 @@ import Foundation
 struct TodayView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var live: LiveState
+    @EnvironmentObject var profile: ProfileStore
+    @EnvironmentObject var goalStore: GoalStore
+
+    // Strain Coach — intraday strain so far today (nil until ~10 min of HR exists).
+    @State private var dayStrain: Double? = nil
+
+    // Goals chips — steps series for the daily-steps goal evaluation.
+    @State private var goalStepsByDay: [String: Double] = [:]
 
     // 14-day sparkline series, keyed by metric key. Loaded once in .task.
     @State private var sparks: [String: [Double]] = [:]
@@ -54,6 +62,8 @@ struct TodayView: View {
                     )
                 }
                 heroSection
+                strainCoachSection
+                goalsSection
                 heartRateTrendSection
                 readinessSection
                 metricsSection
@@ -198,6 +208,173 @@ struct TodayView: View {
             statusColor: score.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textTertiary
         )
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Strain Coach — today's exertion target from recovery, filled live.
+
+    @ViewBuilder
+    private var strainCoachSection: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Strain Coach", overline: "Today's exertion target")
+            NoopCard {
+                if let recovery = repo.today?.recovery {
+                    let band = StrainTarget.band(recovery: recovery)
+                    let current = dayStrain ?? 0
+                    // Wide: gauge + text side by side. Compact iPhone: stacked.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: NoopMetrics.gap * 2) {
+                            strainCoachGauge(current: current)
+                            strainCoachDetail(band: band, current: current)
+                            Spacer(minLength: 0)
+                        }
+                        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                            strainCoachGauge(current: current).frame(maxWidth: .infinity)
+                            strainCoachDetail(band: band, current: current)
+                        }
+                    }
+                } else {
+                    Text("No recovery yet today — your strain target appears once last night is scored.")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func strainCoachGauge(current: Double) -> some View {
+        // While the score is still building (dayStrain == nil), the gauge renders as a
+        // dimmed, unlabelled dial with an em-dash placeholder — an instrument warming
+        // up — instead of claiming "0.0" as a real reading.
+        let pending = dayStrain == nil
+        return StrainGauge(strain: current, diameter: 132, lineWidth: 11,
+                           showsLabel: !pending, showsHover: !pending)
+            .opacity(pending ? 0.55 : 1)
+            .overlay {
+                if pending {
+                    VStack(spacing: 2) {
+                        Text(verbatim: "—")
+                            .font(StrandFont.display(132 * 0.26))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                        Text("STRAIN")
+                            .font(StrandFont.overline)
+                            .tracking(StrandFont.overlineTracking)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                }
+            }
+            .frame(minWidth: 132)
+    }
+
+    @ViewBuilder
+    private func strainCoachDetail(band: StrainTarget.Band, current: Double) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Aim \(band.low, specifier: "%.1f")–\(band.high, specifier: "%.1f")")
+                .font(StrandFont.headline)
+                .foregroundStyle(StrandPalette.textPrimary)
+            if dayStrain == nil {
+                // No reading yet — only the building note, never a numeric state claim.
+                Text("Building — needs about 10 minutes of heart-rate data.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let state = band.state(currentStrain: current)
+                Text(strainCoachStateLine(state, current: current))
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(strainCoachStateColor(state))
+                    .fixedSize(horizontal: false, vertical: true)
+                if !live.connected {
+                    Text("Strap not connected — showing the last synced value.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// LocalizedStringKey (not String(format:)) so these lines land in the String Catalog.
+    private func strainCoachStateLine(_ s: StrainTarget.State, current: Double) -> LocalizedStringKey {
+        switch s {
+        case .building:     return "\(current, specifier: "%.1f") now — room to push today."
+        case .onTarget:     return "\(current, specifier: "%.1f") now — right in your target band."
+        case .overreaching: return "\(current, specifier: "%.1f") now — beyond today's recommendation."
+        }
+    }
+
+    private func strainCoachStateColor(_ s: StrainTarget.State) -> Color {
+        switch s {
+        case .building:     return StrandPalette.textSecondary
+        case .onTarget:     return StrandPalette.accent
+        case .overreaching: return StrandPalette.statusWarning
+        }
+    }
+
+    // MARK: Goals — today's status per active goal. Hidden with no goals.
+
+    @ViewBuilder
+    private var goalsSection: some View {
+        if !goalStore.goals.isEmpty {
+            let weekDays = goalWeekDays()
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                SectionHeader("Goals", overline: "Today's score")
+                NoopCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(goalStore.goals, id: \.id) { goal in
+                            if let kind = GoalProgress.Kind(rawValue: goal.kind) {
+                                goalChipRow(goal: goal, kind: kind, weekDays: weekDays)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func goalChipRow(goal: GoalRow, kind: GoalProgress.Kind, weekDays: [String]) -> some View {
+        let p = GoalProgress.evaluate(
+            kind: kind, target: goal.target,
+            values: kind.weekValues(days: repo.days, stepsByDay: goalStepsByDay, weekDays: weekDays),
+            weekDays: weekDays)
+        HStack(spacing: 10) {
+            Circle()
+                .fill(goalChipColor(p, kind: kind))
+                .frame(width: 9, height: 9)
+            Text(kind.displayTitle)
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.textPrimary)
+            Spacer()
+            Text(goalChipStatus(p, kind: kind))
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// .weeklyStrain scores the WEEK AVERAGE — per-day hit is advisory only
+    /// (GoalProgress.swift header), so its chip goes green off the weekly average
+    /// reaching target ("On track"), never off today's value alone.
+    private func goalAchieved(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> Bool {
+        kind == .weeklyStrain ? p.percent >= 100 : p.todayHit
+    }
+
+    private func goalChipColor(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> Color {
+        if goalAchieved(p, kind: kind) { return StrandPalette.accent }
+        if p.todayValue != nil { return StrandPalette.statusWarning }
+        return StrandPalette.textTertiary
+    }
+
+    private func goalChipStatus(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> LocalizedStringKey {
+        if goalAchieved(p, kind: kind) {
+            if kind == .weeklyStrain { return "On track" }
+            return "Hit"
+        }
+        if p.todayValue != nil { return "In progress" }
+        return "No data yet"
     }
 
     // MARK: HEART RATE — today's continuous HR, off the strap's own ~1Hz history.
@@ -424,6 +601,17 @@ struct TodayView: View {
         let nowTs = Int(Date().timeIntervalSince1970)
         hrPoints = await repo.hrBuckets(from: startOfToday, to: nowTs, bucketSeconds: 300)
             .map { TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm) }
+
+        // Strain Coach — intraday strain from today's raw HR.
+        dayStrain = await DayStrain.compute(repo: repo, hrMax: profile.hrMax,
+                                            sex: profile.sex,
+                                            restingHr: repo.today?.restingHr)
+
+        // Goals chips.
+        await goalStore.load()
+        goalStepsByDay = Dictionary(
+            await repo.series(key: "steps", source: "apple-health").map { ($0.day, $0.value) },
+            uniquingKeysWith: { _, new in new })
     }
 
     /// Trailing-window values for a metric — NO fall back to all history. The section is labelled a

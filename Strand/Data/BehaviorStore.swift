@@ -30,6 +30,14 @@ final class BehaviorStore: ObservableObject {
     /// Light-sleep window before the target, in minutes (wake early if a light phase is detected).
     @Published var smartAlarmWindow: Int { didSet { d.set(smartAlarmWindow, forKey: K.alarmWindow) } }
 
+    // MARK: Sleep planner
+    /// Manual wake time (minutes since local midnight) when the strap alarm is off.
+    @Published var plannerWakeMinutes: Int { didSet { d.set(plannerWakeMinutes, forKey: K.plannerWake) } }
+    /// SleepPlanner.Goal rawValue ("peak" / "perform" / "getBy").
+    @Published var plannerGoalRaw: String { didSet { d.set(plannerGoalRaw, forKey: K.plannerGoal) } }
+    /// iOS: schedule a wind-down notification 30 min before the recommended bedtime.
+    @Published var bedtimeReminderEnabled: Bool { didSet { d.set(bedtimeReminderEnabled, forKey: K.bedtimeReminder) } }
+
     // MARK: Illness early-warning
     @Published var illnessWatch: Bool { didSet { d.set(illnessWatch, forKey: K.illness) } }
 
@@ -46,6 +54,9 @@ final class BehaviorStore: ObservableObject {
         static let alarmTime = "behavior.smartAlarmMinutes"
         static let alarmWindow = "behavior.smartAlarmWindow"
         static let illness = "behavior.illnessWatch"
+        static let plannerWake = "planner.wakeMinutes"
+        static let plannerGoal = "planner.goal"
+        static let bedtimeReminder = "planner.bedtimeReminderEnabled"
     }
 
     init() {
@@ -60,5 +71,8 @@ final class BehaviorStore: ObservableObject {
         smartAlarmMinutes = d.object(forKey: K.alarmTime) as? Int ?? 7 * 60       // 07:00
         smartAlarmWindow = d.object(forKey: K.alarmWindow) as? Int ?? 30          // wake up to 30m early
         illnessWatch = d.object(forKey: K.illness) as? Bool ?? false
+        plannerWakeMinutes = d.object(forKey: K.plannerWake) as? Int ?? 7 * 60     // 07:00
+        plannerGoalRaw = d.string(forKey: K.plannerGoal) ?? "perform"
+        bedtimeReminderEnabled = d.object(forKey: K.bedtimeReminder) as? Bool ?? false
     }
 }

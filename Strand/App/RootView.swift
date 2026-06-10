@@ -14,6 +14,8 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     case journal = "Journal"
     case sleep = "Sleep"
     case trends = "Trends"
+    case report = "Report"
+    case goals = "Goals"
     case workouts = "Workouts"
     case health = "Health"
     case stress = "Stress"
@@ -42,6 +44,8 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .journal: return "Journal"
         case .sleep: return "Sleep"
         case .trends: return "Trends"
+        case .report: return "Report"
+        case .goals: return "Goals"
         case .workouts: return "Workouts"
         case .health: return "Health"
         case .stress: return "Stress"
@@ -68,6 +72,8 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .journal: return "book.pages.fill"
         case .sleep: return "moon.stars.fill"
         case .trends: return "chart.xyaxis.line"
+        case .report: return "doc.text.below.ecg"
+        case .goals: return "target"
         case .workouts: return "figure.run"
         case .health: return "heart.text.square.fill"
         case .stress: return "gauge.with.dots.needle.50percent"
@@ -135,6 +141,8 @@ struct RootView: View {
         case .journal: JournalView()
         case .sleep: SleepView()
         case .trends: TrendsView()
+        case .report: ReportView()
+        case .goals: GoalsView()
         case .workouts: WorkoutsView()
         case .health: HealthView()
         case .stress: StressView()
