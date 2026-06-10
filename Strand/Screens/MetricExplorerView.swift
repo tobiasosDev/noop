@@ -116,7 +116,7 @@ struct MetricExplorerView: View {
                     let metrics = MetricCatalog.inCategory(category)
                     if !metrics.isEmpty {
                         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                            SectionHeader("\(category)", overline: "Category",
+                            SectionHeader(metrics[0].categoryKey, overline: "Category",
                                           trailing: "\(metrics.count)")
                             NoopCard(padding: 0) {
                                 VStack(spacing: 0) {
@@ -176,7 +176,7 @@ private struct MetricRow: View {
             .frame(width: 34, height: 34)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(metric.title)
+                Text(metric.titleKey)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(metric.source == "apple-health" ? "Apple Health" : "Whoop")
@@ -206,7 +206,7 @@ private struct MetricRow: View {
         .padding(.vertical, 11)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(metric.title), \(metric.unit.isEmpty ? metric.category : metric.unit)\(isEmpty ? ", no data" : "")")
+        .accessibilityLabel("\(metric.localizedTitle), \(metric.unit.isEmpty ? metric.localizedCategory : metric.unit)\(isEmpty ? ", no data" : "")")
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -306,7 +306,7 @@ struct MetricDetailView: View {
                     // ONLY genuine empty state: no data in the entire history.
                     ComingSoon(what: "Import your history first. A WHOOP export in Data Sources fills every metric you can explore here in about a minute.")
                 } else if !loaded {
-                    ComingSoon(what: "Reading your \(metric.title.lowercased())…")
+                    ComingSoon(what: "Reading your \(metric.localizedTitle.lowercased())…")
                 } else {
                     heroChart(effectiveRange: effRange, windowed: win, windowFellBack: fellBack)
                     statRow(effectiveRange: effRange, windowed: win)
@@ -317,7 +317,7 @@ struct MetricDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(StrandPalette.surfaceBase)
-        .navigationTitle(metric.title)
+        .navigationTitle(metric.titleKey)
         .task(id: metric.id) { await load() }
         // Range changes the window, hence the correlation inputs — recompute the
         // cached scan rather than letting `correlationCard` run it inside body.
@@ -346,15 +346,33 @@ struct MetricDetailView: View {
                                    windowed: windowed,
                                    windowFellBack: windowFellBack)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(metric.category.uppercased()).strandOverline()
-                    Text(metric.title)
-                        .font(StrandFont.title2)
-                        .foregroundStyle(StrandPalette.textPrimary)
+            // Title + 6-segment range control. On the wide macOS canvas they sit
+            // side-by-side (first child); on iPhone the row can't fit, so ViewThatFits
+            // falls back to stacking the control on its own full-width line below the
+            // title (the shared control then scrolls horizontally if even that is tight).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(metric.localizedCategory.uppercased()).strandOverline()
+                        Text(metric.titleKey)
+                            .font(StrandFont.title2)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                    }
+                    Spacer()
+                    SegmentedPillControl(ExploreRange.allCases, selection: $range) { $0.label }
                 }
-                Spacer()
-                SegmentedPillControl(ExploreRange.allCases, selection: $range) { $0.label }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(metric.localizedCategory.uppercased()).strandOverline()
+                            Text(metric.titleKey)
+                                .font(StrandFont.title2)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                        }
+                        Spacer()
+                    }
+                    SegmentedPillControl(ExploreRange.allCases, selection: $range) { $0.label }
+                }
             }
             Text(caption)
                 .font(StrandFont.footnote)
@@ -390,7 +408,7 @@ struct MetricDetailView: View {
             ? "Sparse — widened to \(effectiveRange.name) · \(windowed.count) readings"
             : "\(windowed.count) readings · \(range.name)"
         return ChartCard(
-            title: "\(metric.title)",
+            title: metric.titleKey,
             subtitle: subtitle,
             trailing: "\(heroValue) · \(asOf)"
         ) {
@@ -511,7 +529,7 @@ struct MetricDetailView: View {
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
                 if rows.isEmpty {
-                    Text("Nothing in the catalog moves clearly with \(metric.title.lowercased()) over this window. Widen the range to surface relationships.")
+                    Text("Nothing in the catalog moves clearly with \(metric.localizedTitle.lowercased()) over this window. Widen the range to surface relationships.")
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
@@ -539,10 +557,10 @@ struct MetricDetailView: View {
                 .foregroundStyle(StrandPalette.textSecondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.metric.title)
+                Text(row.metric.titleKey)
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
-                Text("\(row.metric.category) · n = \(row.n)")
+                Text("\(row.metric.localizedCategory) · n = \(row.n)")
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
             }
@@ -564,7 +582,7 @@ struct MetricDetailView: View {
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.metric.title), correlation \(String(format: "%.2f", row.r)), \(row.n) days")
+        .accessibilityLabel("\(row.metric.localizedTitle), correlation \(String(format: "%.2f", row.r)), \(row.n) days")
     }
 
     // MARK: Helpers

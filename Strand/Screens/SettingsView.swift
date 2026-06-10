@@ -30,9 +30,18 @@ struct SettingsView: View {
     @StateObject private var updateChecker = UpdateChecker()
     @Environment(\.openURL) private var openURL
 
+    /// Header subtitle — keep the device noun platform-correct.
+    private var headerSubtitle: LocalizedStringKey {
+        #if os(macOS)
+        "Your numbers, your strap, and how NOOP works. All on this Mac."
+        #else
+        "Your numbers, your strap, and how NOOP works. All on this iPhone."
+        #endif
+    }
+
     var body: some View {
         ScreenScaffold(title: "Settings",
-                       subtitle: "Your numbers, your strap, and how NOOP works. All on this Mac.") {
+                       subtitle: headerSubtitle) {
             profileCard
             strapCard
             journalCard
@@ -71,16 +80,27 @@ struct SettingsView: View {
                     }
                 }
                 rowDivider
-                FormRow(label: "Sex") {
-                    Picker("Sex", selection: $profile.sex) {
-                        Text("Male").tag("male")
-                        Text("Female").tag("female")
-                        Text("Non-binary").tag("nonbinary")
+                // Two-column row on the wide macOS canvas; on the narrow iPhone the
+                // label + .fixedSize() picker can't fit side by side, so ViewThatFits
+                // falls back to a stacked layout (label above a full-width picker)
+                // instead of squeezing the "Sex" label into "Se\nx".
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 16) {
+                        Text("Sex")
+                            .font(StrandFont.body)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        sexPicker
+                            .fixedSize()
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .accessibilityLabel("Sex")
+                    .frame(minHeight: 32)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Sex")
+                            .font(StrandFont.body)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        sexPicker
+                    }
                 }
                 rowDivider
                 FormRow(label: "Weight") {
@@ -114,6 +134,20 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// Segmented Sex picker — no .fixedSize() here; callers add it for the wide
+    /// (horizontal) layout and omit it for the stacked iPhone fallback so the
+    /// control fills the card width without truncating "Non-binary".
+    private var sexPicker: some View {
+        Picker("Sex", selection: $profile.sex) {
+            Text("Male").tag("male")
+            Text("Female").tag("female")
+            Text("Non-binary").tag("nonbinary")
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Sex")
     }
 
     /// Numeric weight/height field: tabular value + small +/- stepper.
@@ -272,7 +306,7 @@ struct SettingsView: View {
                             .foregroundStyle(StrandPalette.textSecondary)
                         ForEach(JournalCatalog.inCategory(category)) { behavior in
                             Toggle(isOn: trackedBinding(behavior.id)) {
-                                Label(behavior.shortLabel, systemImage: behavior.icon)
+                                Label(behavior.shortLabelKey, systemImage: behavior.icon)
                                     .font(StrandFont.subhead)
                                     .foregroundStyle(StrandPalette.textPrimary)
                             }

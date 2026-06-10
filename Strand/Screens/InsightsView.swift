@@ -39,10 +39,10 @@ struct InsightsView: View {
         /// Short segment label.
         var label: String {
             switch self {
-            case .recovery: return "Recovery"
-            case .hrv:      return "HRV"
-            case .sleep:    return "Sleep"
-            case .rhr:      return "RHR"
+            case .recovery: return String(localized: "Recovery")
+            case .hrv:      return String(localized: "HRV")
+            case .sleep:    return String(localized: "Sleep")
+            case .rhr:      return String(localized: "RHR")
             }
         }
         /// The metricSeries key (source is always "my-whoop" for these).
@@ -57,10 +57,10 @@ struct InsightsView: View {
         /// The human outcome name used by BehaviorInsights.sentence.
         var outcomeName: String {
             switch self {
-            case .recovery: return "Recovery"
-            case .hrv:      return "HRV"
-            case .sleep:    return "Sleep performance"
-            case .rhr:      return "Resting HR"
+            case .recovery: return String(localized: "Recovery")
+            case .hrv:      return String(localized: "HRV")
+            case .sleep:    return String(localized: "Sleep performance")
+            case .rhr:      return String(localized: "Resting HR")
             }
         }
         /// Whether a higher value is the "good" direction (drives tint).
@@ -140,7 +140,7 @@ struct InsightsView: View {
     /// German WHOOP export string); resolve it through the alias-aware catalog so impact rows read
     /// "Caffeine" rather than "Koffein konsumiert?". Falls back to the raw key if unresolved.
     func behaviorLabel(_ key: String) -> String {
-        JournalCatalog.byQuestion(key)?.shortLabel ?? key
+        JournalCatalog.byQuestion(key)?.localizedShortLabel ?? key
     }
 
     private func load() async {

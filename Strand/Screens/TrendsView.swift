@@ -44,6 +44,11 @@ struct TrendsView: View {
 
     @State private var range: Range = .quarter
 
+    // Compact (iPhone) trims the hero footer to 3 cells; regular (macOS/iPad) keeps all 4.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    #endif
+
     // yyyy-MM-dd → Date (en_US_POSIX, UTC), per task spec.
     private static let dayParser: DateFormatter = {
         let f = DateFormatter()
@@ -185,10 +190,23 @@ struct TrendsView: View {
         let cap = recovery.caption
         let isWide = recovery.widened
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
-                Spacer()
-                Text(rangeSubtitle).strandOverline()
+            // On the wide macOS canvas the pills + trailing overline fit side-by-side;
+            // on the ~346pt iPhone width the 6-pill control alone fills the row, so fall
+            // back to stacking the subtitle below it. (The control itself horizontally
+            // scrolls via the shared SegmentedPillControl.)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
+                    Spacer()
+                    Text(rangeSubtitle).strandOverline()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    SegmentedPillControl(Range.allCases, selection: $range) { $0.label }
+                    HStack {
+                        Spacer()
+                        Text(rangeSubtitle).strandOverline()
+                    }
+                }
             }
             Text(cap)
                 .font(StrandFont.footnote)
@@ -202,6 +220,22 @@ struct TrendsView: View {
     private func heroRecovery(recovery: ResolvedMetric) -> some View {
         let pts = recovery.points
         let avg = mean(pts)
+        // The 4th cell ("Days") duplicates the caption's reading count; on the narrow
+        // iPhone footer the four cells crowd, so drop it on compact width. macOS/iPad
+        // (.regular, and any non-iOS build) keeps all four spread across the wide footer.
+        var footerItems: [(LocalizedStringKey, String)] = [
+            ("Avg", avg.map { "\(Int($0.rounded()))" } ?? "—"),
+            ("Peak", pts.map(\.value).max().map { "\(Int($0.rounded()))" } ?? "—"),
+            ("Low", pts.map(\.value).min().map { "\(Int($0.rounded()))" } ?? "—"),
+        ]
+        #if os(iOS)
+        let showsDays = hSizeClass != .compact
+        #else
+        let showsDays = true
+        #endif
+        if showsDays {
+            footerItems.append(("Days", "\(pts.count)"))
+        }
         return ChartCard(
             title: "Recovery",
             subtitle: recovery.caption,
@@ -219,12 +253,7 @@ struct TrendsView: View {
                 }
             },
             footer: {
-                ChartFooter([
-                    ("Avg", avg.map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Peak", pts.map(\.value).max().map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Low", pts.map(\.value).min().map { "\(Int($0.rounded()))" } ?? "—"),
-                    ("Days", "\(pts.count)"),
-                ])
+                ChartFooter(footerItems)
             }
         )
     }

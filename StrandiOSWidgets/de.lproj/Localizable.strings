@@ -1,0 +1,42 @@
+/* No comment provided by engineer. */
+"–" = "–";
+
+/* No comment provided by engineer. */
+"%" = "%";
+
+/* No comment provided by engineer. */
+"%@" = "%@";
+
+/* No comment provided by engineer. */
+"%@ bpm" = "%@ bpm";
+
+/* No comment provided by engineer. */
+"%@ bpm · %@" = "%@ bpm · %@";
+
+/* No comment provided by engineer. */
+"%lld" = "%lld";
+
+/* No comment provided by engineer. */
+"%lld%%" = "%lld%%";
+
+/* No comment provided by engineer. */
+"NOOP" = "NOOP";
+
+/* No comment provided by engineer. */
+"NOOP Recovery" = "NOOP Recovery";
+
+/* No comment provided by engineer. */
+"Recovery" = "Erholung";
+
+/* No comment provided by engineer. */
+"Recovery %@%%" = "Erholung %@%%";
+
+/* No comment provided by engineer. */
+"Recovery, live heart rate, and strap battery at a glance." = "Erholung, Live-Herzfrequenz und Strap-Akku auf einen Blick.";
+
+/* No comment provided by engineer. */
+"Strap connected" = "Strap verbunden";
+
+/* No comment provided by engineer. */
+"Strap offline" = "Strap offline";
+

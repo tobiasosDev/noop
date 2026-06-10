@@ -10,6 +10,17 @@ struct ContentView: View {
     @State private var showWhatsNew = false
 
     var body: some View {
+        #if os(iOS) && targetEnvironment(simulator)
+        // Screenshot harness (simulator-only): when launched with NOOP_SCREEN set, render that
+        // single screen directly (bypassing the tab shell + onboarding) for deterministic capture.
+        if let host = DebugScreenHost.fromEnvironment() {
+            return AnyView(host)
+        }
+        #endif
+        return AnyView(mainContent)
+    }
+
+    private var mainContent: some View {
         ZStack {
             #if os(macOS)
             RootView()

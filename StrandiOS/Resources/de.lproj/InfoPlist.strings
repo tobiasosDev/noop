@@ -1,0 +1,15 @@
+/* Bundle display name */
+"CFBundleDisplayName" = "NOOP";
+
+/* Bundle name */
+"CFBundleName" = "NOOPWidgets";
+
+/* Privacy - Bluetooth Always Usage Description */
+"NSBluetoothAlwaysUsageDescription" = "NOOP verbindet sich direkt über Bluetooth mit deinem WHOOP-Strap, um Herzfrequenz, R-R-Intervalle, Akku und Sensordaten lokal auf deinem iPhone zu lesen. Nichts verlässt dein Gerät.";
+
+/* Privacy - Health Share Usage Description */
+"NSHealthShareUsageDescription" = "NOOP liest deine eigenen Apple-Health-Daten direkt auf dem Gerät, um Erholung, Belastung und Schlaf zu berechnen. Nichts verlässt dein Gerät.";
+
+/* Privacy - Health Update Usage Description */
+"NSHealthUpdateUsageDescription" = "NOOP schreibt die aus deinem Strap berechneten Metriken zurück in Apple Health, direkt auf dem Gerät und nur, wenn du es erlaubst.";
+

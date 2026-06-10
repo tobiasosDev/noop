@@ -300,9 +300,9 @@ enum StressBand {
 
     var title: String {
         switch self {
-        case .low:    return "LOW"
-        case .medium: return "MEDIUM"
-        case .high:   return "HIGH"
+        case .low:    return String(localized: "LOW")
+        case .medium: return String(localized: "MEDIUM")
+        case .high:   return String(localized: "HIGH")
         }
     }
 

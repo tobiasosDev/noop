@@ -156,7 +156,7 @@ struct JournalView: View {
     /// but keyed by the verbatim question so the imported history keeps counting).
     private func importedCategoryCard(_ category: String, _ questions: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(category.uppercased())
+            Text((JournalCatalog.byQuestion(questions.first ?? "")?.localizedCategory ?? category).uppercased())
                 .font(StrandFont.overline)
                 .tracking(StrandFont.overlineTracking)
                 .foregroundStyle(StrandPalette.textTertiary)
@@ -165,7 +165,7 @@ struct JournalView: View {
                     ForEach(Array(questions.enumerated()), id: \.element) { idx, q in
                         let b = JournalCatalog.byQuestion(q)
                         entryRow(question: q,
-                                 label: b?.shortLabel ?? Self.prettify(q),
+                                 label: b?.localizedShortLabel ?? Self.prettify(q),
                                  icon: b?.icon ?? "questionmark.circle",
                                  goodWhenYes: b?.goodWhenYes)
                         if idx < questions.count - 1 {
@@ -179,7 +179,7 @@ struct JournalView: View {
 
     private func categoryCard(_ category: String, _ items: [JournalBehavior]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(category.uppercased())
+            Text((items.first?.localizedCategory ?? category).uppercased())
                 .font(StrandFont.overline)
                 .tracking(StrandFont.overlineTracking)
                 .foregroundStyle(StrandPalette.textTertiary)
@@ -197,7 +197,7 @@ struct JournalView: View {
     }
 
     private func behaviorRow(_ b: JournalBehavior) -> some View {
-        entryRow(question: b.question, label: b.shortLabel, icon: b.icon, goodWhenYes: b.goodWhenYes)
+        entryRow(question: b.question, label: b.localizedShortLabel, icon: b.icon, goodWhenYes: b.goodWhenYes)
     }
 
     /// A single loggable row, keyed by its verbatim question. Used for both catalog behaviours and
@@ -260,6 +260,11 @@ struct JournalView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        // Grow only the hit area to Apple's 44pt minimum so one-tap logging is comfortable on
+        // iPhone; the rendered capsule (minWidth 34 / vertical padding 7) is untouched, so the
+        // wide macOS layout looks and spaces identically.
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     /// Save bar pinned to the bottom of the screen so it's always reachable without scrolling.
@@ -310,6 +315,10 @@ struct JournalView: View {
         HStack(spacing: 12) {
             Button { shiftDay(-1) } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.plain)
+                // Reach a 44pt hit target on iPhone without changing the glyph; the wide macOS
+                // header has room and the symbol size/weight stay as-is.
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
             Text(dayLabel(selectedDay))
                 .font(StrandFont.captionNumber)
                 .foregroundStyle(StrandPalette.textSecondary)
@@ -317,6 +326,9 @@ struct JournalView: View {
                 .multilineTextAlignment(.center)
             Button { shiftDay(1) } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.plain)
+                // Match the back chevron: 44pt hit target on iPhone, glyph unchanged on macOS.
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
                 .disabled(selectedDay >= Repository.localDayKey(Date()))
                 .opacity(selectedDay >= Repository.localDayKey(Date()) ? 0.3 : 1)
         }
@@ -347,7 +359,7 @@ struct JournalView: View {
     private func historyRow(_ day: String) -> some View {
         let entries = history[day] ?? []
         let yes = entries.filter(\.answeredYes)
-            .map { JournalCatalog.byQuestion($0.question)?.shortLabel ?? $0.question }
+            .map { JournalCatalog.byQuestion($0.question)?.localizedShortLabel ?? $0.question }
         let recovery = repo.days.first { $0.day == day }?.recovery
         let isSelected = day == selectedDay
         return Button { selectDay(day) } label: {

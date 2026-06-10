@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// One journalable behaviour. `question` is the canonical key and MUST match WHOOP's
 /// exported question text verbatim so natively-logged answers unify with imported ones
@@ -15,6 +16,13 @@ struct JournalBehavior: Identifiable, Hashable {
     let icon: String        // SF Symbol
     let goodWhenYes: Bool?   // true = healthy when yes, false = unhealthy, nil = neutral
     var aliases: [String] = []  // localized/variant question strings that map to this behaviour
+
+    /// Localized display forms (resolved against the app String Catalog for the current locale).
+    /// `shortLabel`/`category`/`question` stay canonical (DB key + grouping); only display uses these.
+    var shortLabelKey: LocalizedStringKey { LocalizedStringKey(shortLabel) }
+    var localizedShortLabel: String { String(localized: String.LocalizationValue(shortLabel)) }
+    var categoryKey: LocalizedStringKey { LocalizedStringKey(category) }
+    var localizedCategory: String { String(localized: String.LocalizationValue(category)) }
 }
 
 /// Curated WHOOP-aligned behaviour catalog. Mirrors `MetricCatalog`.

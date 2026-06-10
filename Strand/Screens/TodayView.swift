@@ -154,28 +154,47 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Today’s Synthesis", overline: "At a glance",
                           trailing: greetingWord)
-            HStack(alignment: .top, spacing: NoopMetrics.gap) {
-                // Left: the signature ring in a card.
-                NoopCard {
-                    RecoveryRing(
-                        score: score ?? 0,
-                        supporting: ringSupporting(d),
-                        diameter: 168
-                    )
-                    .frame(maxWidth: .infinity)
+            // The ring is hard-framed at 168pt. On a wide (macOS/iPad) canvas the two
+            // cards sit side-by-side, each with ample column width. On a compact iPhone
+            // the half-width column is narrower than the ring, so ViewThatFits falls back
+            // to stacking the cards vertically at full width where the ring fits cleanly.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: NoopMetrics.gap) {
+                    heroRingCard(score: score, d: d)
+                    heroInsightCard(score: score, d: d)
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-
-                // Right: the plain-English read-out, equal width.
-                InsightCard(
-                    category: "Recovery",
-                    status: "\(synthesisWord(score))",
-                    detail: "\(synthesisDetail(d))",
-                    statusColor: score.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textTertiary
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    heroRingCard(score: score, d: d)
+                    heroInsightCard(score: score, d: d)
+                }
             }
         }
+    }
+
+    /// Left: the signature ring in a card.
+    @ViewBuilder
+    private func heroRingCard(score: Double?, d: DailyMetric?) -> some View {
+        NoopCard {
+            RecoveryRing(
+                score: score ?? 0,
+                supporting: ringSupporting(d),
+                diameter: 168
+            )
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    /// Right: the plain-English read-out, equal width.
+    @ViewBuilder
+    private func heroInsightCard(score: Double?, d: DailyMetric?) -> some View {
+        InsightCard(
+            category: "Recovery",
+            status: "\(synthesisWord(score))",
+            detail: "\(synthesisDetail(d))",
+            statusColor: score.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textTertiary
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: HEART RATE — today's continuous HR, off the strap's own ~1Hz history.
@@ -439,15 +458,16 @@ struct TodayView: View {
     private var greetingWord: String {
         let h = Calendar.current.component(.hour, from: Date())
         switch h {
-        case ..<12:   return "Good morning"
-        case 12..<17: return "Good afternoon"
-        default:      return "Good evening"
+        case ..<12:   return String(localized: "Good morning")
+        case 12..<17: return String(localized: "Good afternoon")
+        default:      return String(localized: "Good evening")
         }
     }
 
     private var dateLine: String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
+        // Display date in the user's locale (German shows "Dienstag, 9. Juni"); parsing/keys stay POSIX.
+        f.locale = Locale.current
         f.dateFormat = "EEEE, d MMMM"
         if let day = repo.today?.day, let date = Self.dayParser.date(from: day) {
             return f.string(from: date)
@@ -457,31 +477,31 @@ struct TodayView: View {
 
     /// A short recovery state word for the synthesis hero.
     private func synthesisWord(_ score: Double?) -> String {
-        guard let s = score else { return "No Data" }
+        guard let s = score else { return String(localized: "No Data") }
         switch s {
-        case ..<25:  return "Depleted"
-        case ..<50:  return "Low"
-        case ..<70:  return "Steady"
-        case ..<88:  return "Primed"
-        default:     return "Peak"
+        case ..<25:  return String(localized: "Depleted")
+        case ..<50:  return String(localized: "Low")
+        case ..<70:  return String(localized: "Steady")
+        case ..<88:  return String(localized: "Primed")
+        default:     return String(localized: "Peak")
         }
     }
 
     /// Plain-English synthesis of recovery + sleep.
     private func synthesisDetail(_ d: DailyMetric?) -> String {
         guard let d, let rec = d.recovery else {
-            return "No metrics yet. Import your Whoop export or wear the strap to begin."
+            return String(localized: "No metrics yet. Import your Whoop export or wear the strap to begin.")
         }
         let recPart: String
         switch rec {
-        case ..<50:  recPart = "Recovery is low"
-        case ..<70:  recPart = "Recovery is steady"
-        default:     recPart = "Recovery is strong"
+        case ..<50:  recPart = String(localized: "Recovery is low")
+        case ..<70:  recPart = String(localized: "Recovery is steady")
+        default:     recPart = String(localized: "Recovery is strong")
         }
         let sleepPart: String
         if let mins = d.totalSleepMin {
             let h = mins / 60.0
-            sleepPart = h >= 7 ? " and sleep was consistent" : " but sleep ran short"
+            sleepPart = h >= 7 ? String(localized: " and sleep was consistent") : String(localized: " but sleep ran short")
         } else {
             sleepPart = ""
         }
@@ -515,7 +535,7 @@ struct TodayView: View {
 
     private func workoutCaption(_ w: WorkoutRow) -> String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
+        f.locale = Locale.current
         f.dateFormat = "d MMM"
         let date = f.string(from: Date(timeIntervalSince1970: TimeInterval(w.startTs)))
         if let hr = w.avgHr { return "\(date) · \(hr) bpm" }

@@ -170,15 +170,27 @@ struct AutomationsView: View {
             .frame(maxWidth: 320)
     }
 
+    private func shortcutFieldLabel(_ label: String, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+            Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func shortcutFieldRow(_ label: String, help: String, text: Binding<String>) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+        // Wide canvas (macOS) keeps the label + field side-by-side; on the narrow
+        // iPhone viewport the field drops below the label instead of compressing.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 16) {
+                shortcutFieldLabel(label, help: help)
+                Spacer()
+                shortcutField("Shortcut name", text: text)
             }
-            Spacer()
-            shortcutField("Shortcut name", text: text)
+            VStack(alignment: .leading, spacing: 8) {
+                shortcutFieldLabel(label, help: help)
+                shortcutField("Shortcut name", text: text)
+            }
         }
         .frame(minHeight: 42).padding(.vertical, 4)
     }
