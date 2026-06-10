@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 @testable import WhoopStore
 
 final class GoalsTests: XCTestCase {
@@ -17,6 +18,7 @@ final class GoalsTests: XCTestCase {
         XCTAssertEqual(goals[0].id, id)
         XCTAssertEqual(goals[0].kind, "sleepDuration")
         XCTAssertEqual(goals[0].target, 450, accuracy: 1e-9)
+        XCTAssertEqual(goals[0].createdAt, 1000)
         XCTAssertNil(goals[0].archivedAt)
     }
 
@@ -28,6 +30,14 @@ final class GoalsTests: XCTestCase {
         let goals = try await store.activeGoals()
         XCTAssertEqual(goals.count, 1)
         XCTAssertEqual(goals[0].target, 480, accuracy: 1e-9)
+
+        // Soft-delete, not hard-delete: the superseded row survives with archivedAt stamped.
+        let rows = try await store.syncRead { db in
+            try Row.fetchAll(db, sql: "SELECT archivedAt FROM goal WHERE kind = 'sleepDuration' ORDER BY id")
+        }
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[0]["archivedAt"] as Int?, 2000)
+        XCTAssertNil(rows[1]["archivedAt"] as Int?)
     }
 
     func testDifferentKindsCoexist() async throws {
