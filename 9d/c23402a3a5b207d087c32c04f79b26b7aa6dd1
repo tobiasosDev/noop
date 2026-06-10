@@ -1,0 +1,21 @@
+Strand/Screens/LiveView.swift
+  s_ff049a8bced57c::t_bcfa9a33a016d6 103
+Strand/Screens/TodayView.swift
+  s_ff049a8bced57c::t_923bdc4ad692ac 242-261,268,272,277-281,283-288,293-294,296-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9dc23402a3a5b207d087c32c04f79b26b7aa6dd1",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
