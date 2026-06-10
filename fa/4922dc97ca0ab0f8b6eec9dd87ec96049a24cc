@@ -1,0 +1,20 @@
+project.yml
+  s_ff049a8bced57c::t_2ccf01eef0c46d 211-214
+  s_ff049a8bced57c::t_141e19b449b5d7 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "fa4922dc97ca0ab0f8b6eec9dd87ec96049a24cc",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
