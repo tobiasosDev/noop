@@ -1,0 +1,30 @@
+Strand/Screens/TodayView.swift
+  s_673f67f9669206::t_e35d03938b7b31 640,643-644
+  s_673f67f9669206::t_92cf228d29bfbd 571,574-575
+  s_673f67f9669206::t_2266f7a15b64e9 170-171
+  s_673f67f9669206::t_37644a729af882 156-157
+  s_673f67f9669206::t_dd5e22820a0d0f 180-181
+  s_673f67f9669206::t_79be544ef0c52c 129
+  s_673f67f9669206::t_6052442c75ca5e 524,535,543-544,546
+  s_673f67f9669206::t_1717550eafe609 411-413,415-417
+  s_673f67f9669206::t_428572371a162f 555
+  s_673f67f9669206::t_980e132fbb77a8 76-79,84,89
+Strand/Screens/ScreenScaffold.swift
+  s_673f67f9669206::t_e6cc155b8e8d8d 5-8,12-19,24-29,31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a56961cdf8d3ee9fbe1e6782153c6bf8fba16ea0",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
