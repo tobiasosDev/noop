@@ -46,6 +46,8 @@ final class AppModel: ObservableObject {
     let intelligence: IntelligenceEngine
     /// Opt-in AI coach (bring-your-own-key) — the one networked feature, off until the user enables it.
     let coach: AICoachEngine
+    /// Active user goals (sleep duration / weekly strain / daily steps) — CRUD over WhoopStore.
+    var goalStore: GoalStore!
 
     /// Timestamps of moments marked via a double-tap (persisted).
     @Published var moments: [Date] = []
@@ -100,6 +102,7 @@ final class AppModel: ObservableObject {
         self.live = live
         self.ble = BLEManager(state: live, deviceId: "my-whoop")
         self.repo = Repository(deviceId: "my-whoop")
+        self.goalStore = GoalStore(repo: repo)
         self.intelligence = IntelligenceEngine(repo: repo, profile: profile, deviceId: "my-whoop")
         self.coach = AICoachEngine(repo: repo)
         // Smooth HR centrally so it's solid everywhere it's shown.
