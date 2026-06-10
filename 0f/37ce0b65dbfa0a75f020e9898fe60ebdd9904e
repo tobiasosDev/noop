@@ -1,0 +1,23 @@
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/PerformanceReportTests.swift
+  s_ff049a8bced57c::t_d39fa220a0d17d 81-107
+Packages/StrandAnalytics/Sources/StrandAnalytics/PerformanceReport.swift
+  s_ff049a8bced57c::t_12ba562be270b5 102
+  s_ff049a8bced57c::t_c41c0efbf6296f 15-21
+  s_ff049a8bced57c::t_fbbf07ccba64e8 116-117,121-126,128-134,136,141-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "0f37ce0b65dbfa0a75f020e9898fe60ebdd9904e",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
