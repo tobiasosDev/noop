@@ -170,6 +170,11 @@ func registerPostHooks() {
         case "GET_CLOCK" where pay.count >= 6:
             let v = UInt32(pay[2]) | (UInt32(pay[3]) << 8) | (UInt32(pay[4]) << 16) | (UInt32(pay[5]) << 24)
             fb.parsed["clock"] = .int(Int(v))
+        case "GET_ALARM_TIME" where pay.count >= 6:
+            // Assumed mirror of GET_CLOCK's body layout (epoch u32 LE at pay[2..5]);
+            // BLEManager also logs the raw body so a different layout is still diagnosable.
+            let v = UInt32(pay[2]) | (UInt32(pay[3]) << 8) | (UInt32(pay[4]) << 16) | (UInt32(pay[5]) << 24)
+            fb.parsed["alarm_epoch"] = .int(Int(v))
         case "GET_EXTENDED_BATTERY_INFO" where pay.count >= 9:
             let v = Int(pay[7]) | (Int(pay[8]) << 8)
             fb.parsed["battery_mV"] = .int(v)

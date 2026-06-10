@@ -772,6 +772,12 @@ public final class BLEManager: NSObject, ObservableObject {
         let epochSec = UInt32(clamping: Int64(date.timeIntervalSince1970))
         send(.setClock, payload: BLEManager.setClockPayload())
         send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: epochSec))
+        // Verify what the strap actually stored (alarm diagnosis): the read-backs land in the
+        // exported log via the cmd-response hooks. 1s delay lets the two writes settle first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.send(.getClock, payload: [])        // strap expects EMPTY payload here
+            self?.send(.getAlarmTime, payload: [0x01])
+        }
         // Log the wake time in the user's LOCAL zone. `Date` prints in UTC by default, so an alarm
         // for (say) 07:00 in New York logged as "11:00:00 +0000" reads like a timezone bug — but it
         // isn't: SET_ALARM_TIME carries the absolute instant of the chosen local time, and the strap
@@ -1259,6 +1265,27 @@ extension BLEManager: CBPeripheralDelegate {
                 if frame.count > 6, frame[6] == WhoopCommand.getDataRange.rawValue,
                    let newest = BLEManager.dataRangeNewestUnix(from: frame) {
                     strapNewestTs = newest                        // feeds the liveness watchdog
+                }
+                // Alarm diagnosis: surface the strap's clock / alarm answers in the exported
+                // log — without these read-backs an armed-but-never-firing alarm is invisible.
+                if frame.count > 6, frame[6] == WhoopCommand.getClock.rawValue {
+                    let parsed = parseFrame(frame)
+                    if let clock = parsed.parsed["clock"]?.intValue {
+                        let delta = clock - Int(Date().timeIntervalSince1970)
+                        log("Clock readback: strap epoch=\(clock) (Δ\(delta)s vs phone)")
+                    } else {
+                        log("Clock readback (unparsed) raw=\(hex(Array(frame.dropFirst(7)))) ")
+                    }
+                }
+                if frame.count > 6, frame[6] == WhoopCommand.getAlarmTime.rawValue {
+                    let parsed = parseFrame(frame)
+                    if let armed = parsed.parsed["alarm_epoch"]?.intValue, armed > 0 {
+                        let inS = armed - Int(Date().timeIntervalSince1970)
+                        log("Alarm readback: armed epoch=\(armed) (fires in \(inS)s)")
+                    } else {
+                        log("Alarm readback: nothing armed or unknown layout")
+                    }
+                    log("Alarm readback raw: \(hex(Array(frame.dropFirst(7))))")
                 }
                 // Clock correlation runs in both live and backfill modes. Once established it
                 // unblocks both the Collector (live path) and the Backfiller (chunk decoding).

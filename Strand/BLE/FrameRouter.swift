@@ -50,6 +50,12 @@ public final class FrameRouter {
         case "EVENT":
             if let ev = parsed.parsed["event"]?.stringValue {
                 state.lastEvent = ev
+                // Alarm diagnosis: alarm-lifecycle + RTC events otherwise only hit the Live
+                // tile and vanish — surface them in the exported log (ALARM_SET=56 proves the
+                // strap ACCEPTED an arm; EXECUTED=57 proves it fired; RTC_LOST=13 kills both).
+                if ev.contains("ALARM") || ev.hasPrefix("RTC_") {
+                    state.append(log: "Event: \(ev)")
+                }
                 // Strap-pushed event = "I may have new data" → kick a (rate-limited) sync.
                 onSyncTrigger?()
                 // Belt-and-suspenders: a BLE_BONDED event confirms the link is bonded.
