@@ -92,5 +92,48 @@ public final class LiveState: ObservableObject {
     public func append(log line: String) {
         log.append(line)
         if log.count > 200 { log.removeFirst(log.count - 200) }
+        LiveState.persist(line)
+    }
+
+    // MARK: - On-disk mirror (remote diagnosis)
+    // The in-memory log dies with the process and is only reachable through the Live screen, so a
+    // remote session can't inspect it. Mirror every line to Documents/strap-log.txt — pullable via
+    // `devicectl device copy` from the app data container without touching the device. Append-only,
+    // trimmed to the last ~4000 lines on launch so it stays a few hundred KB at most.
+
+    private static let persistURL: URL? = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("strap-log.txt")
+
+    private static let persistDayFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+
+    private static let persistQueue = DispatchQueue(label: "strap-log-persist", qos: .utility)
+
+    private static let persistTrimOnce: Void = {
+        guard let url = persistURL,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count > 4000 {
+            let kept = lines.suffix(4000).joined(separator: "\n")
+            try? kept.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }()
+
+    private static func persist(_ line: String) {
+        _ = persistTrimOnce
+        guard let url = persistURL else { return }
+        let stamped = "\(persistDayFormatter.string(from: Date())) \(line)\n"
+        persistQueue.async {
+            guard let data = stamped.data(using: .utf8) else { return }
+            if let h = try? FileHandle(forWritingTo: url) {
+                defer { try? h.close() }
+                _ = try? h.seekToEnd()
+                try? h.write(contentsOf: data)
+            } else {
+                try? data.write(to: url)
+            }
+        }
     }
 }

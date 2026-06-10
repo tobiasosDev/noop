@@ -164,6 +164,11 @@ final class AppModel: ObservableObject {
 
         AppModel.shared = self   // publish for App Intents (Shortcuts) — see the static above (#42)
 
+        // Arm the guaranteed wake notification (Layer 1) from saved settings at launch, before any
+        // strap connects — the notification needs no link. Re-synced on connect (onCommandChannelReady)
+        // and on settings change (AutomationsView). Disabled-alarm branch cancels any pending one.
+        applySmartAlarm()
+
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.
         // IntelligenceEngine computes, persists under "my-whoop-noop", and refreshes the dashboard.
@@ -339,15 +344,64 @@ final class AppModel: ObservableObject {
         ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
     }
 
+    /// One-shot guard for the NOOP_REBOOT_STRAP diagnostic hook (see applySmartAlarm).
+    private static var didSendRebootStrap = false
+
     /// Arm (or clear) the strap's firmware alarm from the smart-alarm settings. The firmware alarm
     /// fires even if the Mac is asleep / NOOP is closed. No-op until bonded (send is gated on bond).
     func applySmartAlarm() {
-        guard behavior.smartAlarmEnabled else { ble.disableStrapAlarm(); return }
+        // Remote-diagnosis hook: NOOP_ALARM_IN_MIN=<n> in the launch environment arms the strap
+        // alarm n minutes from now, bypassing the saved settings — lets a remote session (devicectl
+        // launch) run a full arm→fire test without anyone touching the UI. Env-gated, not a build
+        // flag, so a normal launch is unaffected.
+        let env = ProcessInfo.processInfo.environment
+        if env["NOOP_REBOOT_STRAP"] != nil, !AppModel.didSendRebootStrap {
+            // ONE-SHOT guard: this hook runs on every command-channel-ready, and the strap
+            // reconnects right after rebooting — without the flag this would reboot-loop.
+            AppModel.didSendRebootStrap = true
+            live.append(log: "TEST: REBOOT_STRAP (user-consented diagnostic)")
+            ble.sendRebootStrap()
+            return
+        }
+        if env["NOOP_RUN_ALARM"] != nil {
+            // Fire the strap's STORED alarm immediately (cmd 68) — discriminates the alarm
+            // EXECUTION path from the alarm STORAGE path (haptics engine is already proven
+            // by RUN_HAPTICS_PATTERN). Expect a wrist buzz + APP_DRIVEN_ALARM_EXECUTED(58).
+            live.append(log: "TEST: RUN_ALARM — firing stored alarm now (env hook)")
+            ble.send(.runAlarm, payload: [0x01])
+            return
+        }
+        if let minStr = env["NOOP_ALARM_IN_MIN"], let min = Int(minStr) {
+            let at = Date().addingTimeInterval(TimeInterval(min * 60))
+            let form = env["NOOP_ALARM_FORM"]
+            live.append(log: "TEST: arming alarm in \(min) min (env hook, form \(form ?? "rev1"))")
+            ble.armStrapAlarm(at: at, testForm: form)
+            return
+        }
+        guard behavior.smartAlarmEnabled else {
+            ble.disableStrapAlarm()
+            ble.wakeTarget = nil
+            ble.setWakeKeepAlive(false)
+            WakeAlarmNotifier.cancel()
+            return
+        }
+        WakeAlarmNotifier.requestAuthorization()   // no-op after the first grant; never re-prompts
         let cal = Calendar.current
         let now = Date()
         var next = cal.date(bySettingHour: behavior.smartAlarmMinutes / 60,
                             minute: behavior.smartAlarmMinutes % 60, second: 0, of: now) ?? now
         if next <= now { next = cal.date(byAdding: .day, value: 1, to: next) ?? next }
+        // Three layers, most-reliable first (see whoop4-deep-discharge-state verdict):
+        //  1. PHONE ALERT — best-effort local notification at the wake instant; fires even with the
+        //     link down or the strap's firmware alarm wedged, and (with the time-sensitive
+        //     entitlement) breaks through a Focus. Respects ringer/volume (WakeAlarmNotifier).
+        //  2. OPPORTUNISTIC — live RUN_ALARM buzzed on the wrist over a kept-alive link, driven off
+        //     `wakeTarget` by WakeAlarmScheduler in BLEManager (cmd 68 is proven to buzz this strap).
+        //  3. FREE BACKSTOP — the firmware cmd-66 alarm via armStrapAlarm (acked-not-stored today,
+        //     but costs nothing and recovers automatically if the NVM wedge clears).
+        WakeAlarmNotifier.schedule(at: next)
+        ble.wakeTarget = next
+        ble.setWakeKeepAlive(behavior.reliableWristAlarm)   // opt-in: hold link hot so the wrist fires while locked
         ble.armStrapAlarm(at: next)
     }
 

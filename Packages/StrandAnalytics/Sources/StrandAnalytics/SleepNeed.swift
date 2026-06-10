@@ -21,4 +21,12 @@ public enum SleepNeed {
     public static func debtMin(needMin: Double, asleepMin: Double) -> Double {
         Swift.max(0, needMin - asleepMin)
     }
+
+    /// Sleep performance % for the Home sleep ring = asleep ÷ need, capped at 100.
+    /// nil when there is no positive sleep tonight or no positive need — the ring
+    /// shows an honest empty state instead of a fake 0.
+    public static func performancePct(needMin: Double, asleepMin: Double?) -> Double? {
+        guard let asleep = asleepMin, asleep > 0, needMin > 0 else { return nil }
+        return Swift.min(100, asleep / needMin * 100)
+    }
 }
