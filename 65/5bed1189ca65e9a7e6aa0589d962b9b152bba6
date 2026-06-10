@@ -1,0 +1,21 @@
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/StrainTargetTests.swift
+  s_ff049a8bced57c::t_0b2a8d8ad89c76 1-32
+Packages/StrandAnalytics/Sources/StrandAnalytics/StrainTarget.swift
+  s_ff049a8bced57c::t_3b5f13ffc9e186 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "655bed1189ca65e9a7e6aa0589d962b9b152bba6",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
