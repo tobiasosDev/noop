@@ -47,6 +47,24 @@ final class GoalProgressTests: XCTestCase {
         XCTAssertEqual(p.streak, 0)
     }
 
+    func testMissTodayBreaksStreakImmediately() {
+        // Today has data but is a miss -> streak 0 despite prior hits.
+        let values = ["2026-06-08": 12000.0, "2026-06-09": 11000.0, "2026-06-10": 3000.0]
+        let p = GoalProgress.evaluate(kind: .dailySteps, target: 10000,
+                                      values: values, weekDays: week)
+        XCTAssertEqual(p.streak, 0)
+        XCTAssertFalse(p.todayHit)
+    }
+
+    func testEmptyWeekDaysDoesNotTrap() {
+        // Contract violation guard: empty weekDays must not crash.
+        let p = GoalProgress.evaluate(kind: .dailySteps, target: 10000,
+                                      values: [:], weekDays: [])
+        XCTAssertEqual(p.streak, 0)
+        XCTAssertEqual(p.percent, 0)
+        XCTAssertNil(p.todayValue)
+    }
+
     func testNoDataAtAll() {
         let p = GoalProgress.evaluate(kind: .sleepDuration, target: 450,
                                       values: [:], weekDays: week)

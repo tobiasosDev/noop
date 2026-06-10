@@ -20,6 +20,9 @@ public enum GoalProgress {
         public let hit: Bool
     }
 
+    // NOTE: DayStatus.hit compares each day's value against the target for EVERY
+    // kind — for .weeklyStrain (a week-average goal) per-day hit/miss is advisory
+    // only; UI should not render it as success/failure for that kind.
     public struct Progress: Equatable, Sendable {
         public let kind: Kind
         public let target: Double
@@ -60,7 +63,7 @@ public enum GoalProgress {
         // Streak: walk newest→oldest; a data-less TODAY doesn't break it (the day
         // isn't over), but any other data-less or missed day does.
         var streak = 0
-        if kind.isDaily {
+        if kind.isDaily && !week.isEmpty {
             var entries = Array(week.reversed())
             if entries.first?.value == nil { entries.removeFirst() }
             for e in entries {
@@ -70,7 +73,7 @@ public enum GoalProgress {
 
         let today = week.last
         return Progress(kind: kind, target: target, week: week, percent: percent,
-                        streak: streak, todayValue: today?.value ?? nil,
+                        streak: streak, todayValue: today?.value,
                         todayHit: today?.hit ?? false)
     }
 }
