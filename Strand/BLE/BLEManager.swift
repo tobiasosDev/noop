@@ -104,6 +104,13 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Force the puffin capture buffer to disk so the Settings export/reveal targets a current file.
     public func flushPuffinCaptures() { puffinRecorder.flush() }
 
+    /// Fired once per connection, at the END of the connect handshake — the first moment the
+    /// command channel is provably usable (bond acked, characteristics discovered, RTC set).
+    /// Use this (NOT the `bonded` flag edge) for per-connection command re-application like the
+    /// smart-alarm re-arm: `willRestoreState` seeds `bonded = true` while the link is still down,
+    /// so commands sent on that edge are silently dropped (#59 regression on the restore path).
+    public var onCommandChannelReady: (() -> Void)?
+
     // MARK: CoreBluetooth
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -750,6 +757,13 @@ public final class BLEManager: NSObject, ObservableObject {
     /// On-device verification needed: confirm the strap ACKs SET_ALARM_TIME and that the
     /// alarm persists across BLE disconnect (cannot be verified in the simulator).
     func armStrapAlarm(at date: Date) {
+        // Honesty gate: if the command channel is down, the two sends below would be silently
+        // dropped and the "armed" log would lie (the restore-path #59 regression). Say so instead;
+        // `onCommandChannelReady` re-arms once the link is provably up.
+        guard state.connected, peripheral?.state == .connected, cmdCharacteristic != nil else {
+            log("Alarm: NOT armed — strap unreachable; will re-arm when the connection is back")
+            return
+        }
         // Clamp rather than trap: an out-of-range alarm date (pre-1970 / post-2106) must not crash.
         let epochSec = UInt32(clamping: Int64(date.timeIntervalSince1970))
         send(.setClock, payload: BLEManager.setClockPayload())
@@ -1105,6 +1119,7 @@ extension BLEManager: CBPeripheralDelegate {
                 // connectHandshakeDone, so a racing foreground/restore trigger can't fire it early.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.requestSync(.connect) }
                 startBackfillTimer()            // re-offload the type-47 store every backfillIntervalSeconds
+                onCommandChannelReady?()        // 5/MG parity: channel provably up (see property doc)
             }
             return
         }
@@ -1153,6 +1168,11 @@ extension BLEManager: CBPeripheralDelegate {
             send(.sendR10R11Realtime, payload: [0x01])
             send(.toggleRealtimeHR, payload: [0x01])
         }
+        // The command channel is now provably up (bond acked, characteristics live, clock set).
+        // Fire the readiness hook so deferred per-connection commands (smart-alarm re-arm) go out
+        // NOW rather than on the `bonded` flag edge — willRestoreState seeds `bonded = true` before
+        // the link is usable, so a flag-edge re-arm dropped both writes on the restore path.
+        onCommandChannelReady?()
     }
 
     /// SET_CLOCK(10) payload = the strap's 8-byte form: [seconds u32 LE][subseconds
