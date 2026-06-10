@@ -1,0 +1,21 @@
+Strand/App/OpenScreen.swift
+  s_673f67f9669206::t_b166b662a7aaf1 15,19
+StrandiOS/App/RootTabView.swift
+  s_673f67f9669206::t_921ae10b50fcf6 39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8eda7392e4949b6e2ffaa27b2ba1ef131bb531af",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
