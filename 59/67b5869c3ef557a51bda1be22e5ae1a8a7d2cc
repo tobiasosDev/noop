@@ -1,0 +1,20 @@
+docs/superpowers/specs/2026-06-10-home-redesign-design.md
+  s_673f67f9669206::t_46e13ae2164ffb 1-59,62-145
+  s_673f67f9669206::t_03c4736e3b4faa 60-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "5967b5869c3ef557a51bda1be22e5ae1a8a7d2cc",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
