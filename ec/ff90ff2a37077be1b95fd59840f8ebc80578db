@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-06-10-home-redesign.md
+  s_673f67f9669206::t_3c07238648570c 1-1111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ecff90ff2a37077be1b95fd59840f8ebc80578db",
+  "prompts": {},
+  "sessions": {
+    "s_673f67f9669206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24f15826-5428-4de8-9adf-018ab85dafdd",
+        "model": "unknown"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
