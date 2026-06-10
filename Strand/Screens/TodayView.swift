@@ -26,9 +26,13 @@ struct TodayView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
+    @EnvironmentObject var goalStore: GoalStore
 
     // Strain Coach — intraday strain so far today (nil until ~10 min of HR exists).
     @State private var dayStrain: Double? = nil
+
+    // Goals chips — steps series for the daily-steps goal evaluation.
+    @State private var goalStepsByDay: [String: Double] = [:]
 
     // 14-day sparkline series, keyed by metric key. Loaded once in .task.
     @State private var sparks: [String: [Double]] = [:]
@@ -59,6 +63,7 @@ struct TodayView: View {
                 }
                 heroSection
                 strainCoachSection
+                goalsSection
                 heartRateTrendSection
                 readinessSection
                 metricsSection
@@ -307,6 +312,82 @@ struct TodayView: View {
         }
     }
 
+    // MARK: Goals — today's status per active goal. Hidden with no goals.
+
+    @ViewBuilder
+    private var goalsSection: some View {
+        if !goalStore.goals.isEmpty {
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                SectionHeader("Goals", overline: "Today's score")
+                NoopCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(goalStore.goals, id: \.id) { goal in
+                            if let kind = GoalProgress.Kind(rawValue: goal.kind) {
+                                goalChipRow(goal: goal, kind: kind)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func goalChipRow(goal: GoalRow, kind: GoalProgress.Kind) -> some View {
+        let week = (0..<7).reversed().map {
+            Repository.localDayKey(Calendar.current.date(byAdding: .day, value: -$0, to: Date()) ?? Date())
+        }
+        let values: [String: Double] = {
+            switch kind {
+            case .sleepDuration:
+                return Dictionary(uniqueKeysWithValues:
+                    repo.days.compactMap { d in d.totalSleepMin.map { (d.day, $0) } })
+            case .weeklyStrain:
+                return Dictionary(uniqueKeysWithValues:
+                    repo.days.compactMap { d in d.strain.map { (d.day, $0) } })
+            case .dailySteps:
+                return goalStepsByDay
+            }
+        }()
+        let p = GoalProgress.evaluate(kind: kind, target: goal.target, values: values, weekDays: week)
+        HStack(spacing: 10) {
+            Circle()
+                .fill(goalChipColor(p, kind: kind))
+                .frame(width: 9, height: 9)
+            Text(kind.displayTitle)
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.textPrimary)
+            Spacer()
+            Text(goalChipStatus(p, kind: kind))
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// .weeklyStrain scores the WEEK AVERAGE — per-day hit is advisory only
+    /// (GoalProgress.swift header), so its chip goes green off the weekly average
+    /// reaching target ("On track"), never off today's value alone.
+    private func goalAchieved(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> Bool {
+        kind == .weeklyStrain ? p.percent >= 100 : p.todayHit
+    }
+
+    private func goalChipColor(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> Color {
+        if goalAchieved(p, kind: kind) { return StrandPalette.accent }
+        if p.todayValue != nil { return StrandPalette.statusWarning }
+        return StrandPalette.textTertiary
+    }
+
+    private func goalChipStatus(_ p: GoalProgress.Progress, kind: GoalProgress.Kind) -> LocalizedStringKey {
+        if goalAchieved(p, kind: kind) {
+            if kind == .weeklyStrain { return "On track" }
+            return "Hit"
+        }
+        if p.todayValue != nil { return "In progress" }
+        return "No data yet"
+    }
+
     // MARK: HEART RATE — today's continuous HR, off the strap's own ~1Hz history.
 
     /// A full-width 24-hour heart-rate trend, plotted from 5-minute bucket means of the strap's
@@ -536,6 +617,12 @@ struct TodayView: View {
         dayStrain = await DayStrain.compute(repo: repo, hrMax: profile.hrMax,
                                             sex: profile.sex,
                                             restingHr: repo.today?.restingHr)
+
+        // Goals chips.
+        await goalStore.load()
+        goalStepsByDay = Dictionary(
+            await repo.series(key: "steps", source: "apple-health").map { ($0.day, $0.value) },
+            uniquingKeysWith: { _, new in new })
     }
 
     /// Trailing-window values for a metric — NO fall back to all history. The section is labelled a
