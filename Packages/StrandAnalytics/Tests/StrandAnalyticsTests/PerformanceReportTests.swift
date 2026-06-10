@@ -74,9 +74,10 @@ final class PerformanceReportTests: XCTestCase {
     }
 
     func testTakeawayForOverreach() {
+        // Recovery 30 → band [7.35, 9.35]; strain 15 overreaches on all 6 window days.
         let days = (4...9).map { day("2026-06-0\($0)", recovery: 30, strain: 15) }
         let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
-        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("above your strain target") }))
+        XCTAssertTrue(s.takeaways.contains(.overreach(days: 6)))
     }
 
     func testTakeawayForRecoveryUp() {
@@ -86,7 +87,23 @@ final class PerformanceReportTests: XCTestCase {
             day("2026-06-05", recovery: 60),
         ]
         let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
-        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("Recovery up") }))
+        XCTAssertTrue(s.takeaways.contains(where: {
+            if case .recoveryUp(let pct) = $0 { return abs(pct - 20) < 1e-9 }
+            return false
+        }))
+    }
+
+    func testTakeawayForRecoveryDown() {
+        // Prior week mean recovery 60, current 40 → delta −20 ≤ −8 threshold; payload is the magnitude.
+        let days = [
+            day("2026-05-29", recovery: 60),   // prior window (05-28..06-03)
+            day("2026-06-05", recovery: 40),
+        ]
+        let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
+        XCTAssertTrue(s.takeaways.contains(where: {
+            if case .recoveryDown(let pct) = $0 { return abs(pct - 20) < 1e-9 }
+            return false
+        }))
     }
 
     func testTakeawayForHRVDown() {
@@ -96,13 +113,26 @@ final class PerformanceReportTests: XCTestCase {
             day("2026-06-05", hrv: 50),
         ]
         let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
-        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("HRV trending down") }))
+        XCTAssertTrue(s.takeaways.contains(.hrvDown))
+    }
+
+    func testTakeawayForHRVUp() {
+        // Prior week mean HRV 50, current 60 → delta +10 ≥ +3 threshold.
+        let days = [
+            day("2026-05-29", hrv: 50),        // prior window (05-28..06-03)
+            day("2026-06-05", hrv: 60),
+        ]
+        let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
+        XCTAssertTrue(s.takeaways.contains(.hrvUp))
     }
 
     func testTakeawayForLowSleepPerformance() {
         // 300 min/night vs the 450-min need floor → 66.7% < 70% warn threshold.
         let days = (4...9).map { day("2026-06-0\($0)", sleep: 300) }
         let s = PerformanceReport.build(days: days, period: .weekly, today: "2026-06-10")
-        XCTAssertTrue(s.takeaways.contains(where: { $0.contains("of your sleep need") }))
+        XCTAssertTrue(s.takeaways.contains(where: {
+            if case .lowSleepPerformance(let pct) = $0 { return abs(pct - 300.0 / 450.0 * 100.0) < 1e-9 }
+            return false
+        }))
     }
 }

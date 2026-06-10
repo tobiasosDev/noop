@@ -30,6 +30,18 @@ public enum PerformanceReport {
         public let value: Double
     }
 
+    /// Structured takeaway facts. The engine emits cases (data, not prose) so the UI
+    /// layer can render each one as a localizable sentence — keeps the package free
+    /// of user-facing language. Hashable so views can use them as ForEach ids.
+    public enum Takeaway: Equatable, Hashable, Sendable {
+        case overreach(days: Int)
+        case hrvUp
+        case hrvDown
+        case recoveryUp(pct: Double)
+        case recoveryDown(pct: Double)
+        case lowSleepPerformance(pct: Double)
+    }
+
     public struct Summary: Equatable, Sendable {
         public let period: Period
         public let fromDay: String
@@ -53,7 +65,7 @@ public enum PerformanceReport {
         public let overreachDays: Int
         public let underreachDays: Int
 
-        public let takeaways: [String]
+        public let takeaways: [Takeaway]
     }
 
     /// ISO day-key calendar math (yyyy-MM-dd, en_US_POSIX — matches Repository).
@@ -116,25 +128,25 @@ public enum PerformanceReport {
         let recoveryAvg = avg { $0.recovery }
         let hrvAvg = avg { $0.avgHrv }
 
-        // Rule-based takeaways.
-        var notes: [String] = []
+        // Rule-based takeaways (structured facts; the UI renders localized sentences).
+        var notes: [Takeaway] = []
         if over >= takeawayOverreachMinDays {
-            notes.append("\(over) days above your strain target — watch recovery.")
+            notes.append(.overreach(days: over))
         }
         if let hrvD = hrvAvg?.delta {
-            if hrvD >= takeawayHRVDeltaThreshold { notes.append("HRV trending up — adaptation is going well.") }
-            if hrvD <= -takeawayHRVDeltaThreshold { notes.append("HRV trending down — consider easing off.") }
+            if hrvD >= takeawayHRVDeltaThreshold { notes.append(.hrvUp) }
+            if hrvD <= -takeawayHRVDeltaThreshold { notes.append(.hrvDown) }
         }
         if let recD = recoveryAvg?.delta {
             if recD >= takeawayRecoveryDeltaThreshold {
-                notes.append(String(format: "Recovery up %.0f%% vs the prior period.", recD))
+                notes.append(.recoveryUp(pct: recD))
             }
             if recD <= -takeawayRecoveryDeltaThreshold {
-                notes.append(String(format: "Recovery down %.0f%% vs the prior period.", abs(recD)))
+                notes.append(.recoveryDown(pct: abs(recD)))
             }
         }
         if let p = perfPct, p < takeawaySleepPerformanceWarnPct {
-            notes.append(String(format: "Averaging only %.0f%% of your sleep need.", p))
+            notes.append(.lowSleepPerformance(pct: p))
         }
 
         return Summary(period: period, fromDay: from, toDay: today, coverage: coverage,

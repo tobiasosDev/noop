@@ -60,13 +60,13 @@ struct ReportView: View {
             SectionHeader("Takeaways", overline: "What the period says")
             NoopCard {
                 VStack(alignment: .leading, spacing: 8) {
-                    // Takeaway sentences are composed inside PerformanceReport (English) —
-                    // rendered verbatim so they don't extract as broken catalog keys.
+                    // PerformanceReport emits structured facts; the sentences live here
+                    // as LocalizedStringKeys so every takeaway ships through the catalog.
                     ForEach(s.takeaways, id: \.self) { t in
                         HStack(alignment: .top, spacing: 8) {
                             Circle().fill(StrandPalette.accent).frame(width: 7, height: 7)
                                 .padding(.top, 5)
-                            Text(verbatim: t).font(StrandFont.subhead)
+                            takeawayText(t).font(StrandFont.subhead)
                                 .foregroundStyle(StrandPalette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -74,6 +74,24 @@ struct ReportView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func takeawayText(_ t: PerformanceReport.Takeaway) -> some View {
+        switch t {
+        case .overreach(let days):
+            Text("\(days) days above your strain target — watch recovery.")
+        case .hrvUp:
+            Text("HRV trending up — adaptation is going well.")
+        case .hrvDown:
+            Text("HRV trending down — consider easing off.")
+        case .recoveryUp(let p):
+            Text("Recovery up \(p, specifier: "%.0f")% vs the prior period.")
+        case .recoveryDown(let p):
+            Text("Recovery down \(p, specifier: "%.0f")% vs the prior period.")
+        case .lowSleepPerformance(let p):
+            Text("Averaging only \(p, specifier: "%.0f")% of your sleep need.")
         }
     }
 
