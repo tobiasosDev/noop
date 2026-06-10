@@ -1,0 +1,36 @@
+Strand/BLE/Commands.swift
+  s_ff049a8bced57c::t_469e7a01e30cc4 117-124
+Strand/App/AppModel.swift
+  s_ff049a8bced57c::t_6ce680663324c4 348-351,370,374-375
+  s_ff049a8bced57c::t_0bb77ae32ca8a8 352,361-369,371-373
+  s_ff049a8bced57c::t_81c1c3455c4bff 353-360
+  s_ff049a8bced57c::t_11f9d57c59ccc8 342-344
+Strand/BLE/BLEManager.swift
+  s_ff049a8bced57c::t_61a1bdd4dc9ded 846-857,859-862
+  s_ff049a8bced57c::t_cbee3c52158257 1358-1362,1377-1394
+  s_ff049a8bced57c::t_09bb72f6c85ccb 815-819,821-824,831-840,842
+  s_ff049a8bced57c::t_4d7b81d47a7908 778
+  s_ff049a8bced57c::t_9d8f1841ae24cf 802-814
+  s_ff049a8bced57c::t_0f03a57ed84f6f 841
+  s_ff049a8bced57c::t_98f45f719a9652 1367-1368,1372-1375
+  s_ff049a8bced57c::t_79117bb766c218 1363-1366,1369-1370,1376
+  s_ff049a8bced57c::t_89e80e2f77835d 820,825-830
+Strand/BLE/LiveState.swift
+  s_ff049a8bced57c::t_6a7fa4516d149a 95-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "fa08148195a0cebdf82a17876cb9ae55f1bd330a",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
