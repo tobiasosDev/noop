@@ -1,0 +1,20 @@
+docs/superpowers/specs/2026-06-10-whoop-parity-tier-a-design.md
+  s_ff049a8bced57c::t_a087b576d923a6 74
+  s_ff049a8bced57c::t_ba18da28ff6f97 1-73,75-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f0bb6a3e592bb770c823c9697b86fe4bd392c64a",
+  "prompts": {},
+  "sessions": {
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
