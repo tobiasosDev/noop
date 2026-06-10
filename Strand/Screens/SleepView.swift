@@ -525,6 +525,8 @@ struct SleepView: View {
 
     @ViewBuilder
     private var emptyState: some View {
+        // While the strap is mid-offload, say so — "No nights" reads as final otherwise (#77).
+        if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
         if repo.loaded {
             ComingSoon(what: "No nights here yet. Import your WHOOP export in Data Sources to see every night, your sleep stages and trends straight away. Or open Intelligence to see last night computed from the strap after you wear it to bed.")
         } else {

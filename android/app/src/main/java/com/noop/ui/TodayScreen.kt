@@ -58,6 +58,7 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
     val today by viewModel.today.collectAsStateWithLifecycle()
     val alert by viewModel.healthAlert.collectAsStateWithLifecycle()
     val days by viewModel.recentDays.collectAsStateWithLifecycle()
+    val live by viewModel.live.collectAsStateWithLifecycle()
     var footer by remember { mutableStateOf(TodayFooterState()) }
 
     // 14-day trailing calendar window ending on the phone's actual local day.
@@ -79,10 +80,13 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         val appleDaysCount = viewModel.repo.appleDaily("apple-health", "0000-01-01", "9999-12-31").size
         val hcDaysCount = viewModel.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31").size
         footer = TodayFooterState(
-            recentWorkouts = (viewModel.repo.workouts("my-whoop", recentCutoff, now) +
-                viewModel.repo.workouts("apple-health", recentCutoff, now) +
-                viewModel.repo.workouts("health-connect", recentCutoff, now))
-                .sortedByDescending { it.startTs },
+            // fillWorkoutHrFromStrap: imported sessions carry no HR — derive it from strap samples (#77).
+            recentWorkouts = viewModel.repo.fillWorkoutHrFromStrap(
+                (viewModel.repo.workouts("my-whoop", recentCutoff, now) +
+                    viewModel.repo.workouts("apple-health", recentCutoff, now) +
+                    viewModel.repo.workouts("health-connect", recentCutoff, now))
+                    .sortedByDescending { it.startTs }
+            ),
             whoopDays = days.size,
             whoopWorkouts = whoopWorkouts.size,
             appleDays = appleDaysCount,
@@ -98,6 +102,8 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         // lead with the "live now, history one import away" note so the empty tiles
         // below are explained rather than just dashed out.
         if (today?.recovery == null) {
+            // While the strap is mid-offload, say so — empty tiles read as final otherwise (#77).
+            if (live.backfilling) SyncingHistoryNote(chunks = live.syncChunksThisSession)
             DataPendingNote(
                 title = "Live now. Your scores are building.",
                 body = "Your live heart rate is working from the strap, and recovery, strain " +

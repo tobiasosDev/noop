@@ -58,7 +58,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
  *  - [heartRate]   most-recent plausible BPM (30..220) from the standard 0x2A37 profile OR the
  *                  custom REALTIME_DATA frame
  *  - [rr]          most-recent R-R intervals (ms); the standard profile is the reliable source
- *  - [batteryPct]  battery percent (0x2A19 = whole %, or BATTERY_LEVEL event = u16/10)
+ *  - [batteryPct]  battery percent — 5/MG: 0x2A19 whole %; WHOOP 4: GET_BATTERY_LEVEL response u16/10
+ *                  (the 4.0's 0x2A19 is a stub constant 100 and is ignored, #77)
  *  - [worn]        wrist-wear from WRIST_ON/WRIST_OFF events; defaults true (Swift parity) so
  *                  wear-gated features work before the first event lands
  *  - [lastEvent]   the most-recent strap EVENT string ("WRIST_ON(9)", "DOUBLE_TAP(14)", …)
@@ -66,6 +67,12 @@ import java.util.concurrent.ConcurrentLinkedQueue
 data class LiveState(
     val connected: Boolean = false,
     val bonded: Boolean = false,
+    /** True ONLY when the link reached a GENUINE encrypted bond — the 5/MG CLIENT_HELLO ack, the WHOOP4
+     *  confirmed-write bond, or a strap-reported BLE_BONDED event. NOT set by the live-HR shortcut that
+     *  flips [bonded] true when HR streams over the unbonded standard profile on a 5/MG (#69) — so
+     *  [bonded] can be true while this is false ("Live HR, not fully paired"). WHOOP 4 always reaches a
+     *  genuine bond, so the two track together there. Port of macOS LiveState.encryptedBond. */
+    val encryptedBond: Boolean = false,
     val heartRate: Int? = null,
     val rr: List<Int> = emptyList(),
     val batteryPct: Double? = null,
@@ -82,6 +89,13 @@ data class LiveState(
      *  MG secure handshake that isn't supported yet — so the UI explains that honestly instead of
      *  showing the generic "charge it and put it on" checklist. */
     val whoop5Detected: Boolean = false,
+    /** True while a historical offload session is running, so screens can say "Syncing strap
+     *  history…" instead of presenting half-loaded data as final (#77). */
+    val backfilling: Boolean = false,
+    /** Chunks acked during the current offload session — an honest progress signal (total pending is
+     *  unknowable from the protocol, so no percent). Republished every ~10 chunks: the foreground
+     *  service re-posts its notification on EVERY LiveState emission, so per-chunk would spam it. */
+    val syncChunksThisSession: Int = 0,
 )
 
 /**
@@ -200,6 +214,11 @@ class WhoopBleClient(
         /** Deferral before the first connect-time offload, so SET_CLOCK/GET_DATA_RANGE round-trip first. */
         private const val INITIAL_BACKFILL_DELAY_MS = 1_500L
 
+        /** Live-gesture freshness window (seconds). A DOUBLE_TAP / WRIST_* event only updates live state
+         *  if its event_timestamp is within this of wall-now, so a *replayed historical* gesture during a
+         *  backfill offload is ignored. Port of Swift FrameRouter.liveGestureWindowSeconds (#69). */
+        private const val LIVE_GESTURE_WINDOW_SECONDS = 45L
+
         // MARK: Live-stream keep-alive (port of BLEManager.keepAlive*). The WHOOP firmware lets the
         // realtime HR stream lapse if it isn't re-armed, so a stuck-on-stale HR that only a manual
         // disconnect/reconnect fixes is really a missing keep-alive. We re-arm + poll battery every
@@ -215,6 +234,20 @@ class WhoopBleClient(
         private const val CCCD_RETRY_DELAY_MS = 60L
         private const val MAX_CCCD_RETRIES = 8
 
+        /** A command write can transiently return BUSY on a stricter stack (notably Android 13+, and
+         *  worst on Android 16) when the previous write hasn't physically completed. Retry the SAME
+         *  frame a few times (short backoff) instead of dropping it — a dropped TOGGLE_REALTIME_HR /
+         *  SET_CLOCK / offload-ack silently breaks live HR, the clock, or the backfill (issue #77). */
+        // Base backoff; the per-frame delay ESCALATES (× attempt) so a sustained-BUSY stack — a Pixel 7
+        // on Android 16 logged ~56 busy retries + a few hard drops in 10 min (#77) — gets progressively
+        // more time to clear instead of burning the whole budget in ~70ms.
+        private const val WRITE_RETRY_DELAY_MS = 12L
+        private const val MAX_WRITE_RETRIES = 12
+        /** Pacing gap before freeing the slot after a WITHOUT-response write. A bare post fires the next
+         *  write on the same looper tick — before Android's GATT has accepted the previous one, which it
+         *  then rejects. A small gap lets the stack settle and largely eliminates the rejections (#77). */
+        private const val WITHOUT_RESPONSE_PACE_MS = 8L
+
         /**
          * True when a frame is part of the historical offload (HISTORICAL_DATA=47, EVENT=48,
          * METADATA=49, CONSOLE_LOGS=50) rather than the live stream (REALTIME_DATA=40,
@@ -222,10 +255,16 @@ class WhoopBleClient(
          * this firmware, so the backfill idle-watchdog must NOT be re-armed by it — only by genuine
          * offload progress. Port of Swift `BLEManager.isOffloadFrame`.
          */
-        fun isOffloadFrame(frame: ByteArray): Boolean {
-            if (frame.size <= 4) return false
-            return when (frame[4].toInt() and 0xFF) {
-                47, 48, 49, 50 -> true // HISTORICAL_DATA / EVENT / METADATA / CONSOLE_LOGS
+        fun isOffloadFrame(frame: ByteArray, family: DeviceFamily): Boolean {
+            // WHOOP 5/MG's inner record starts at byte 8 (+4 envelope), and its HISTORY_END/COMPLETE
+            // is PUFFIN_METADATA=56, NOT 49. Reading frame[4] with {47,48,49,50} (the old WHOOP4-only
+            // form) drops every 5/MG offload-closing frame as live-flood, so the strap never trims and
+            // offload never completes. Matches the hardware-proven Swift isOffloadFrame
+            // (BLEManager.swift:500, "case 47,48,49,50,56"). (#78)
+            val typeIndex = if (family == DeviceFamily.WHOOP5) 8 else 4
+            if (frame.size <= typeIndex) return false
+            return when (frame[typeIndex].toInt() and 0xFF) {
+                47, 48, 49, 50, 56 -> true // HISTORICAL_DATA / EVENT / METADATA / CONSOLE_LOGS / PUFFIN_METADATA
                 else -> false // 40 REALTIME_DATA, 43 REALTIME_RAW_DATA (live flood)
             }
         }
@@ -360,6 +399,9 @@ class WhoopBleClient(
     /** True while a historical offload is in progress (offload frames route to the Backfiller). */
     @Volatile
     private var backfilling = false
+    /** Chunks acked this offload session — feeds LiveState.syncChunksThisSession (throttled). Only
+     *  touched on the serial backfill drain coroutine + the begin/exit lifecycle. */
+    private var ackedChunksThisSession = 0
 
     /** Guards the once-per-connect initial offload kick (Swift `backfillStarted`). */
     private var backfillStarted = false
@@ -405,6 +447,10 @@ class WhoopBleClient(
     @Volatile private var wantsRealtime = false
     /** Wall-clock of the last inbound notification — drives the keep-alive liveness watchdog. */
     @Volatile private var lastDataAtMs = 0L
+    /** True once we've re-subscribed during the CURRENT quiet episode, so the keep-alive re-subscribes
+     *  at most once between data arrivals instead of flooding descriptor writes every 30s tick (#77).
+     *  Reset to false in [onInbound] when fresh data lands. */
+    @Volatile private var resubscribedSinceData = false
 
     /**
      * Pending outbound writes. Android's GATT stack allows ONE in-flight write at a time:
@@ -415,6 +461,11 @@ class WhoopBleClient(
     private data class PendingWrite(val frame: ByteArray, val withResponse: Boolean)
     private val writeQueue = ConcurrentLinkedQueue<PendingWrite>()
     private var writeInFlight = false
+    /** A frame being retried after a transient BUSY rejection. Held here rather than re-added to the
+     *  queue so it keeps its place AHEAD of later commands — command order matters (e.g. SET_CLOCK
+     *  before GET_CLOCK). Only ever touched on the main looper inside [drainWriteQueue]. */
+    private var pendingRetry: PendingWrite? = null
+    private var writeRetries = 0
 
     /** Descriptor-write queue: enabling notifications is also a one-at-a-time GATT operation. */
     private val cccdQueue = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
@@ -521,7 +572,7 @@ class WhoopBleClient(
     fun prepareForModelSwitch() {
         disconnect()
         lastDevice = null   // don't auto-reconnect to the old strap; the next connect scans for the new model
-        _state.value = _state.value.copy(connected = false, bonded = false)
+        _state.value = _state.value.copy(connected = false, bonded = false, encryptedBond = false)
     }
 
     /**
@@ -568,7 +619,11 @@ class WhoopBleClient(
         // experimental: the strap may or may not honor that specific command, but it's no longer a blind
         // guess. Everything else stays dropped (offload commands need the held work). WHOOP 4.0 unaffected.
         if (connectedFamily == DeviceFamily.WHOOP5) {
-            if (cmd != CommandNumber.TOGGLE_REALTIME_HR && cmd != CommandNumber.RUN_HAPTICS_PATTERN) {
+            // 5/MG allow-list: live HR, buzz, and the historical-offload pair (trigger + ack). The
+            // offload commands ride the SAME proven puffin COMMAND frame as the Swift path
+            // (whoop5HistoricalAckFrame = puffinCommandFrame(23, [0x01]+endData)). (#78)
+            if (cmd != CommandNumber.TOGGLE_REALTIME_HR && cmd != CommandNumber.RUN_HAPTICS_PATTERN &&
+                cmd != CommandNumber.SEND_HISTORICAL_DATA && cmd != CommandNumber.HISTORICAL_DATA_RESULT) {
                 log("send(${cmd.name}) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -608,16 +663,22 @@ class WhoopBleClient(
     }
 
     /**
-     * Read the standard Battery Level characteristic (0x2A19) on demand for "Refresh battery".
-     * WHOOP 5/MG exposes live battery here, and its proprietary GET_BATTERY_LEVEL command is dropped by
-     * send() (only HR-toggle + buzz are framed for 5/MG) — so without this the manual refresh was a no-op
-     * on 5/MG. WHOOP 4 also answers the legacy command path, so it gets both. Mirrors macOS
-     * BLEManager.refreshBattery(). The read result arrives in onCharacteristicRead → onInbound → setBattery.
+     * Refresh the battery reading on demand ("Refresh battery", screen entry).
+     *
+     * Source is FAMILY-SPECIFIC (#77): on a WHOOP 4.0 the standard 0x2A19 characteristic is a STUB that
+     * reports a constant 100, while the real charge only comes from the proprietary GET_BATTERY_LEVEL
+     * command (COMMAND_RESPONSE, u16/10) — reading both flashed 100% before the true value corrected it.
+     * So WHOOP 4 uses ONLY the command; WHOOP 5/MG uses ONLY 0x2A19 (its proprietary command isn't framed
+     * — see send()). Mirrors macOS BLEManager.refreshBattery().
      */
     fun refreshBattery() {
         val g = gatt
         if (g == null) {
             log("refreshBattery ignored — not connected")
+            return
+        }
+        if (connectedFamily == DeviceFamily.WHOOP4) {
+            send(CommandNumber.GET_BATTERY_LEVEL)
             return
         }
         val batt = g.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_CHAR)
@@ -627,7 +688,6 @@ class WhoopBleClient(
         } else {
             log("Battery Level read unavailable; relying on notifications")
         }
-        if (connectedFamily == DeviceFamily.WHOOP4) send(CommandNumber.GET_BATTERY_LEVEL)
     }
 
     /**
@@ -744,7 +804,7 @@ class WhoopBleClient(
                 BluetoothProfile.STATE_CONNECTED -> {
                     // Port of didConnect: mark connected, then discover services.
                     handler.removeCallbacks(scanTimeoutRunnable)
-                    _state.value = _state.value.copy(connected = true, scanning = false, statusNote = null)
+                    _state.value = _state.value.copy(connected = true, scanning = false, statusNote = null, encryptedBond = false)
                     log("Connected — discovering services")
                     g.discoverServices()
                 }
@@ -823,16 +883,26 @@ class WhoopBleClient(
                 // these as REALTIME_DATA — the strap rejected them on the unauthenticated link), then arm
                 // realtime HR with puffin framing. Mirrors the macOS post-bond flow.
                 didBond = true
-                _state.value = _state.value.copy(bonded = true)
+                _state.value = _state.value.copy(bonded = true, encryptedBond = true)   // genuine bond (#69)
                 log("WHOOP 5/MG: CLIENT_HELLO acked — link established; subscribing notify chars (experimental).")
                 g.getService(WHOOP5_SERVICE)?.let { svc ->
                     for (u in WHOOP5_NOTIFY_CHARS) svc.getCharacteristic(u)?.let { cccdQueue.add(it) }
                 }
                 drainCccdQueue(g)
                 if (wantsRealtime) send(CommandNumber.TOGGLE_REALTIME_HR, byteArrayOf(1))
+                // 5/MG: the CLIENT_HELLO ack IS the handshake. Mark it done — it GATES beginBackfill
+                // and is never set for 5/MG otherwise, so without this the offload could never start —
+                // then kick the historical offload, mirroring the proven Swift post-bond flow
+                // (BLEManager.swift:1082-1089) and the WHOOP4 handshake tail. (#78 / 5/MG offload)
+                connectHandshakeDone = true
+                if (!backfillStarted) {
+                    backfillStarted = true
+                    handler.postDelayed({ requestSync() }, INITIAL_BACKFILL_DELAY_MS)
+                    startBackfillTimer()
+                }
             } else if (!didBond && connectedFamily == DeviceFamily.WHOOP4) {
                 didBond = true
-                _state.value = _state.value.copy(bonded = true)
+                _state.value = _state.value.copy(bonded = true, encryptedBond = true)   // WHOOP4 bond is genuine (#69)
                 log("BONDED (confirmed write acknowledged) — custom channels should now flow")
             }
 
@@ -915,11 +985,15 @@ class WhoopBleClient(
 
     private fun onInbound(uuid: UUID, bytes: ByteArray) {
         lastDataAtMs = System.currentTimeMillis()   // feeds the keep-alive liveness watchdog
+        resubscribedSinceData = false               // data is flowing again — re-arm the one-shot resubscribe
         when {
             uuid == HEART_RATE_CHAR -> parseStandardHr(bytes)       // 0x2A37
-            uuid == BATTERY_CHAR -> bytes.firstOrNull()?.let {      // 0x2A19 = percent
-                setBattery((it.toInt() and 0xFF).toDouble())
-            }
+            // 0x2A19 = percent — 5/MG ONLY. On a WHOOP 4.0 this characteristic is a stub constant 100
+            // (the real value is the GET_BATTERY_LEVEL COMMAND_RESPONSE, u16/10), and it's also
+            // SUBSCRIBED, so an unsolicited stub notification could flip the display back to 100 (#77).
+            uuid == BATTERY_CHAR -> if (connectedFamily != DeviceFamily.WHOOP4) {
+                bytes.firstOrNull()?.let { setBattery((it.toInt() and 0xFF).toDouble()) }
+            } else Unit
             // WHOOP4 custom notify chars, OR the WHOOP 5/MG puffin notify chars (fd4b0003/4/5/7) once
             // bonded — both carry framed records (REALTIME_DATA etc.) through the family-aware reassembler.
             uuid == CMD_NOTIFY_CHAR || uuid == EVENT_NOTIFY_CHAR || uuid == DATA_NOTIFY_CHAR ||
@@ -941,7 +1015,7 @@ class WhoopBleClient(
                         // the serial drain (preserves chunk order) + re-arm the idle watchdog on them.
                         // The live type-40/43 flood is dropped here (extractHistoricalStreams ignores
                         // it; feeding it only delays each chunk's insert->trim-ack and stalls the strap).
-                        if (isOffloadFrame(frame)) {
+                        if (isOffloadFrame(frame, connectedFamily)) {
                             armBackfillTimeout()
                             routeBackfillFrame(frame)
                         }
@@ -985,25 +1059,44 @@ class WhoopBleClient(
             "EVENT" -> {
                 (parsed.parsed["event"] as? String)?.let { ev ->
                     // Event strings are "NAME(rawValue)", e.g. "WRIST_ON(9)" (see Schema.enumName).
-                    _state.value = _state.value.copy(lastEvent = ev)
+                    val isGesture = ev.startsWith("DOUBLE_TAP") ||
+                        ev.startsWith("WRIST_ON") || ev.startsWith("WRIST_OFF")
 
-                    // A BLE_BONDED event confirms the link is bonded (belt-and-suspenders; the
+                    // A BLE_BONDED event confirms a GENUINE encrypted bond (belt-and-suspenders; the
                     // confirmed-write ACK also sets this).
                     if (ev.startsWith("BLE_BONDED")) {
-                        _state.value = _state.value.copy(bonded = true)
+                        _state.value = _state.value.copy(bonded = true, encryptedBond = true)
                     }
 
-                    // Physical inputs the strap exposes — LIVE ONLY (this path never sees historical
-                    // replay; that goes through the backfill path in the full app).
-                    when {
-                        ev.startsWith("DOUBLE_TAP") -> {
-                            // Surfaced via lastEvent; the ViewModel maps it to the user's chosen action.
-                        }
-                        ev.startsWith("WRIST_ON") -> {
-                            if (!_state.value.worn) _state.value = _state.value.copy(worn = true)
-                        }
-                        ev.startsWith("WRIST_OFF") -> {
-                            if (_state.value.worn) _state.value = _state.value.copy(worn = false)
+                    if (!isGesture) {
+                        // Non-gesture events (BLE_BONDED, BATTERY_LEVEL, …) surface unconditionally.
+                        _state.value = _state.value.copy(lastEvent = ev)
+                    } else {
+                        // Physical inputs — LIVE ONLY. handleFrame runs for EVERY frame (live AND during a
+                        // backfill offload), so gate ONLY while backfilling: a replayed *historical* gesture
+                        // (old ts) is ignored during a sync, but a real-time gesture on the live path fires
+                        // ungated (#69). The live path MUST stay ungated — a grossly-stale strap RTC (fix
+                        // #72) makes a real gesture's event_timestamp look "old", and gating the live path
+                        // would silently drop every double-tap / wrist event. (macOS gates only on its
+                        // backfill-skip path; Android has no GET_CLOCK correlation to gate in the strap's
+                        // clock domain, so backfill uses wall-now — a historical replay is still old.)
+                        val ts = (parsed.parsed["event_timestamp"] as? Int)?.toLong()
+                        val nowSec = System.currentTimeMillis() / 1000L
+                        val fresh = !backfilling || (ts != null && ts > 0 &&
+                            kotlin.math.abs(nowSec - ts) <= LIVE_GESTURE_WINDOW_SECONDS)
+                        if (fresh) {
+                            _state.value = _state.value.copy(lastEvent = ev)
+                            when {
+                                ev.startsWith("DOUBLE_TAP") -> {
+                                    // Surfaced via lastEvent; the ViewModel maps it to the user's chosen action.
+                                }
+                                ev.startsWith("WRIST_ON") -> {
+                                    if (!_state.value.worn) _state.value = _state.value.copy(worn = true)
+                                }
+                                ev.startsWith("WRIST_OFF") -> {
+                                    if (_state.value.worn) _state.value = _state.value.copy(worn = false)
+                                }
+                            }
                         }
                     }
                 }
@@ -1155,8 +1248,14 @@ class WhoopBleClient(
                 intentionalDisconnect = false    // make sure the auto-reconnect fires
                 gatt?.disconnect()               // → handleDisconnect → reset() (cancels this) → reconnect
             } else {
-                // Recover a silently-dropped subscription once the stream has gone quiet (any family).
-                if (silentMs > KEEPALIVE_QUIET_MS) enableLiveNotifications()
+                // Recover a silently-dropped subscription once the stream has gone quiet (any family) —
+                // but only ONCE per quiet episode. Re-subscribing all notify chars every 30s tick floods
+                // descriptor writes that collide with the command queue on a slow stack (#77); a single
+                // re-subscribe recovers a dropped CCCD, repeating it just adds congestion. Re-armed on data.
+                if (silentMs > KEEPALIVE_QUIET_MS && !resubscribedSinceData) {
+                    resubscribedSinceData = true
+                    enableLiveNotifications()
+                }
                 // WHOOP 4.0 only: re-arm realtime HR so the firmware can't let it lapse (while the Live
                 // screen wants it), and poll battery (~60s) — which also keeps the link warm. A 5/MG
                 // strap rejects WHOOP4-framed commands, so we skip them and rely on re-subscribe + bounce.
@@ -1250,7 +1349,9 @@ class WhoopBleClient(
         if (writeInFlight) return
         val g = gatt ?: return
         val ch = cmdCharacteristic ?: return
-        val item = writeQueue.poll() ?: return
+        // A frame rejected BUSY last tick takes priority so it keeps its place in the command sequence.
+        val item = pendingRetry ?: writeQueue.poll() ?: return
+        pendingRetry = null
         writeInFlight = true
 
         val writeType = if (item.withResponse) {
@@ -1271,21 +1372,36 @@ class WhoopBleClient(
         }
 
         if (!ok) {
-            // The stack rejected the write outright (no callback will come) — release the slot and
-            // keep draining so one bad write doesn't wedge the queue.
+            // Transient BUSY — the stack hasn't freed the previous write yet (common on Android 13+/16,
+            // worst when the slot was freed too eagerly). Re-hold THIS frame and retry shortly instead
+            // of dropping it: a dropped TOGGLE_REALTIME_HR / SET_CLOCK / offload-ack silently breaks
+            // live HR, the clock, or the backfill (issue #77 — a Pixel 7 on Android 16 saw exactly this).
             writeInFlight = false
-            log("writeCharacteristic rejected by stack; dropping one frame")
-            drainWriteQueue()
-            return
-        }
-
-        // WITHOUT-response writes get NO onCharacteristicWrite callback, so free the slot promptly
-        // on the main looper to let the next frame go (a short hop avoids back-to-back stack stalls).
-        if (!item.withResponse) {
-            handler.post {
-                writeInFlight = false
+            if (writeRetries < MAX_WRITE_RETRIES) {
+                writeRetries++
+                log("writeCharacteristic busy; retry $writeRetries/$MAX_WRITE_RETRIES")
+                pendingRetry = item
+                // Escalating backoff (12, 24, … capped ~96ms) — ride out a congestion spike instead of
+                // exhausting the budget in a few tens of ms while the stack is still busy (#77).
+                handler.postDelayed({ drainWriteQueue() }, WRITE_RETRY_DELAY_MS * minOf(writeRetries, 8))
+            } else {
+                // Genuinely stuck after several tries — drop this one frame so it can't wedge the queue.
+                log("writeCharacteristic rejected by stack; dropping one frame (after $MAX_WRITE_RETRIES retries)")
+                writeRetries = 0
                 drainWriteQueue()
             }
+            return
+        }
+        writeRetries = 0   // this frame went out — reset the per-frame retry budget
+
+        // WITHOUT-response writes get NO onCharacteristicWrite callback, so free the slot ourselves —
+        // but after a short PACING gap. A bare post fired the next write on the same looper tick, before
+        // the stack had accepted this one, so Android 16 rejected it (issue #77). postDelayed, not post.
+        if (!item.withResponse) {
+            handler.postDelayed({
+                writeInFlight = false
+                drainWriteQueue()
+            }, WITHOUT_RESPONSE_PACE_MS)
         }
     }
 
@@ -1523,8 +1639,10 @@ class WhoopBleClient(
             return
         }
         if (backfilling) return
-        backfiller.begin()
+        backfiller.begin(connectedFamily)   // family drives the +4 puffin offset for 5/MG (#78)
         backfilling = true
+        ackedChunksThisSession = 0
+        _state.value = _state.value.copy(backfilling = true, syncChunksThisSession = 0)
         send(CommandNumber.SEND_HISTORICAL_DATA, byteArrayOf(0), withResponse = true)
         armBackfillTimeout()
         log("Backfill: session started — historical offload requested")
@@ -1597,6 +1715,10 @@ class WhoopBleClient(
     private fun exitBackfilling(reason: String) {
         if (!backfilling) return
         backfilling = false
+        _state.value = _state.value.copy(
+            backfilling = false,
+            syncChunksThisSession = ackedChunksThisSession, // publish the final count
+        )
         handler.removeCallbacks(backfillTimeoutRunnable)
         backfillFrameQueue.clear()
         log("Backfill: session ended — reason=$reason")
@@ -1615,6 +1737,13 @@ class WhoopBleClient(
         payload[0] = 0x01
         System.arraycopy(endData, 0, payload, 1, endData.size)
         send(CommandNumber.HISTORICAL_DATA_RESULT, payload, withResponse = true)
+        // Progress signal for the "Syncing strap history…" UI (#77). Republish every 10th chunk only —
+        // the FGS notification re-posts on every LiveState emission. Runs on the single serial drain
+        // coroutine, so the counter is race-free.
+        ackedChunksThisSession += 1
+        if (ackedChunksThisSession % 10 == 0) {
+            _state.value = _state.value.copy(syncChunksThisSession = ackedChunksThisSession)
+        }
         log("Backfill: acked chunk trim=$trim")
     }
 
@@ -1628,8 +1757,12 @@ class WhoopBleClient(
         // flushStandardHR() calls in didDisconnectPeripheral). Runs on the IO scope.
         ioScope.launch { flushLive(); flushStandardHr() }
 
-        // Reset all per-connection state and clear UI flags.
-        _state.value = _state.value.copy(connected = false, bonded = false)
+        // Reset all per-connection state and clear UI flags (incl. the syncing pill — a dropped link
+        // mid-offload must not leave "Syncing strap history…" stuck on, #77).
+        _state.value = _state.value.copy(
+            connected = false, bonded = false, encryptedBond = false,
+            backfilling = false, syncChunksThisSession = 0,
+        )
         reset()
 
         gatt?.close()
@@ -1666,6 +1799,9 @@ class WhoopBleClient(
         writeQueue.clear()
         cccdQueue.clear()
         writeInFlight = false
+        pendingRetry = null
+        writeRetries = 0
+        resubscribedSinceData = false
         cccdInFlight = false
         cccdRetries = 0
         sessionStarted = false

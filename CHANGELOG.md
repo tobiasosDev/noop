@@ -17,6 +17,282 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.61 — Android: the widget now actually updates (#82, second find)
+
+- **Fixed: widget starvation under live HR.** The reporter's follow-up symptoms (live HR fine in-app,
+  widget frozen at "♥ —"/"⚡ —" with "Connected" underneath, surviving re-adds and reboots, on a Pixel)
+  pinned a textbook coroutine bug: the service collected the notification/widget stream with
+  **`collectLatest`, whose body is cancelled on every new emission** — and `WidgetSnapshotStore.push()`
+  suspends in Glance machinery (`getGlanceIds` + `updateAll`) longer than the ~1 s live-HR emission
+  interval. Once streaming started, **every push was cancelled mid-flight, forever**; only the sparse
+  post-connect pushes (connected=true, HR/battery not yet present) ever completed — exactly what the
+  widget showed. Compounding it, the throttle marked `lastPushAtMs` BEFORE the write, so each doomed
+  attempt also burned the 60 s refresh window. The notification was immune (synchronous post).
+- **Fix:** `conflate()` + `collect` (process the latest value, never cancel in-flight) + throttle
+  decision extracted to a pure `PushGate` (mark **after** save; save **before** the placed-widget
+  check so a widget added later renders fresh data; **HR-presence joins the key** so the first sample
+  pushes immediately instead of waiting out the window). Regression-pinned by `PushGateTests` (7 tests).
+- macOS: **version bump only.**
+
+## 1.60 — Android: notification recovery fix + widget armour (#82)
+
+- **Fixed: the v1.56 notification Recovery %** — `buildNotification` accepted the value but the
+  display line was never added, so it computed and silently dropped it. Now rendered ("Recovery NN%"
+  between status and battery).
+- **#82 ("app keeps stopping" after first widget add, v1.57) — investigated to the metal, NOT
+  reproducible:** 10-agent adversarial workflow decompiled Glance 1.1.0's full exception flow
+  (receiver `goAsync` catches Throwable→log; SessionWorker exceptions → WorkManager FAILED;
+  composition errors → built-in error layout, default `errorUiLayout` is non-zero so the rumored
+  rethrow path is unreachable) — **the Glance pipeline cannot kill the process**. Stood up a headless
+  Pixel-6/Android-14 emulator and ran 12 scenarios on v1.59 **plus the exact repro on a fresh v1.57
+  install** (real launcher drag-and-drop first-ever widget add → repeated app returns): zero crashes,
+  stable PID. Verdict: environment-specific to the reporter's device, self-resolved after update;
+  no behavioral change justified (objectivity rule).
+- **Defence-in-depth shipped anyway** (belt-and-braces, honestly labelled): `.catch{}` on the
+  service's notification combine (a Room error in `daysMergedFlow` WOULD have propagated uncaught out
+  of `scope.launch` — real latent risk, just not #82), `onCompositionError` override rendering our own
+  fallback layout (friendlier than Glance's generic one), `runCatching` around the widget's pref load.
+- **Dependency currency:** `glance-appwidget` 1.1.0→**1.1.1**; explicit
+  `androidx.work:work-runtime-ktx:2.9.0` pin (Glance's POM drags in 2.7.1 from Oct 2021 — pre-Android-14;
+  2.9.x is the compileSdk-34 ceiling).
+- macOS: **version bump only.**
+
+## 1.59 — Android: share back to Health Connect (opt-in)
+
+- **New (Android): Health Connect writeback** — new `HealthConnectWriter` pushes NOOP's **computed**
+  nightly metrics (resting HR, HRV RMSSD, SpO₂, respiratory rate; last 60 days) into Health Connect.
+  Two deliberate scope limits: **computed days only** (`repo.days(computedDeviceId)` — imported
+  WHOOP-export/HC rows are never echoed back, which would duplicate another app's data or loop our own
+  import), and **idempotent by `clientRecordId`** (`noop-<metric>-<day>` + write-time
+  `clientRecordVersion`, because HC does NOT auto-dedupe re-inserts the way HealthKit does — the
+  latest computation always wins, no stacking). Four `WRITE_*` permissions added to the manifest,
+  requested only when the user opts in; denial flips the toggle back off. **Default OFF** — "Share
+  back to Health Connect" toggle in Data Sources; while on, every 15-min recompute re-writes
+  (runCatching-guarded so an HC hiccup never breaks the analysis loop).
+- macOS: **version bump only.**
+
+## 1.58 — Android: bottom tab bar
+
+- **New (Android): bottom `NavigationBar`** — Today / Trends / Live / Sleep as permanent tabs, plus a
+  **More** tab opening a `ModalBottomSheet` that renders the *same* `drawerGroups` the hamburger drawer
+  shows (verbatim — one source of truth, both routes reach every screen). The drawer is kept untouched
+  for reversibility; the bar is purely additive. The More tab lights up whenever the current screen
+  isn't one of the four tabs, so the bar never shows "nowhere". All navigation through the existing
+  `navigateTopLevel` (single-top + state save/restore — back behaves the same).
+- macOS: **version bump only.**
+
+## 1.57 — Android home-screen widget
+
+- **New (Android): home-screen widget** — today's recovery (band-coloured 67/34), live HR and strap
+  battery, tap-to-open. New `com.noop.widget` package on Glance (`glance-appwidget:1.1.0`, the last
+  line compatible with compileSdk 34): `NoopGlanceWidget` renders purely from a SharedPreferences
+  snapshot (no BLE/DB at compose time, survives process death), `WidgetSnapshotStore.push()` throttles
+  (meaningful-change immediate, HR at most 1/min — Glance re-inflation is far heavier than a notify())
+  and no-ops when no widget is placed. Two producers: `WhoopConnectionService`'s v1.56 combine (the
+  heartbeat while the UI is closed) and `AppViewModel.recentDays` (foreground with the service off).
+  `updatePeriodMillis=0` — push-only, the OS never polls. Receiver `exported="true"` as the launcher
+  requires.
+- macOS: **version bump only.**
+
+## 1.56 — Shortcuts on Mac, recovery in the Android notification
+
+- **New (macOS): App Intents / Shortcuts actions — "Buzz Strap" and "Mark a Moment."** New
+  `Strand/System/NOOPAppIntents.swift` exposes both as `AppIntent`s with an `AppShortcutsProvider`, so
+  they're available from Shortcuts.app, Spotlight, and menu-bar/keyboard triggers without opening the
+  window. They reach the live bonded strap via a new `static weak var AppModel.shared` (published in
+  `AppModel.init`) — constructing a fresh `AppModel` from an intent would spin up a second BLEManager +
+  analysis loop and could never buzz. Guarded: a fired intent with NOOP closed throws "open NOOP first";
+  with the strap unbonded, "connect your strap." macOS 13+, **no new entitlement or Info.plist key**.
+  The inbound counterpart to the existing outbound double-tap→Shortcut path (#42 idea-mining).
+- **New (Android): today's recovery % in the foreground-service notification.**
+  `WhoopConnectionService` now `combine`s `ble.state` with `repo.daysMergedFlow("my-whoop")` and appends
+  "Recovery NN%" to the ongoing notification's detail line (alongside live HR + strap battery). It
+  re-posts when the 15-min `IntelligenceEngine` recompute lands, and stays absent until enough nights
+  are scored. `runCatching`-guarded; near-zero blast radius (notification copy only).
+
+## 1.55 — Mac: recovery builds from your strap alone (#78)
+
+- **New (macOS): BLE-only recovery cold-start — parity with Android v1.53.** `IntelligenceEngine.swift`
+  now runs **two passes** (harvest each offloaded night's baseline-independent avgHrv/restingHr, seed
+  the baseline from the union of imported + on-device nightly values, re-score recovery). So a
+  Bluetooth-only Mac user crosses `Baselines.minNightsSeed` (4 nights) and recovery lights up without a
+  WHOOP import; honest-null until then; imported values still win per day (only-if-absent fill).
+- **macOS: WHOOP5 `step_motion_counter` now persists** (`StepSample` in WhoopProtocol Streams + routed in
+  `extractHistoricalStreams` + WhoopStore **v10 migration** — additive, no destructive fallback). Decoded
+  but previously dropped on Mac. Surfaced later; still APPROXIMATE. `StepSampleTests` pins the round-trip.
+- **Deferred (objectively): the skin-temp `/100` vs `/128` scale.** Both platforms store the **raw**
+  register and both real frames sit in the *overlap* of the two gate bands, so it's a **latent**
+  divergence, not a bug — and the obvious unification (`/128`, 20–45) would reject the off-wrist frame
+  and break the wrist-contact parity test. Left as-is pending a real calibration decision.
+- Android: **version bump only** — it already had recovery seeding and step persistence (v1.53).
+
+## 1.54 — French WHOOP exports now import (#79)
+
+- **Fixed: a French WHOOP export imported 0 items.** Third localisation after German (#3) and Spanish
+  (#76). A French export translates **both** the column headers (`Score de récupération %`,
+  `Variabilité de la fréquence cardiaque (ms)`, `Durée du sommeil paradoxal (min)`, …) **and** the
+  sleep/workout filenames (`sommeil.csv`, `entrainements.csv`) — so nothing matched.
+- NOOP now maps the **full** French column set, including the complete **workouts** file (HR zones,
+  activity name/strain) — the reporter supplied all three header rows, so French is more complete than
+  Spanish out of the gate. Two French quirks handled by the normaliser (both fold to `_`): the
+  apostrophe in `Niveau d'oxygène` / `Temps d'éveil` (straight `'` **and** curly `’`), and the
+  **non-breaking space** before `%` in the `Zone FC 1 %` workout headers. `physiological_cycles.csv`
+  keeps its English filename but French columns; both handled. Mac + Android. Real-header parse +
+  normalisation tests pin it (incl. the apostrophe + NBSP cases); verified with `swift test`.
+
+## 1.53 — Recovery builds from your strap alone, Android (#78)
+
+- **New (Android): BLE-only recovery cold-start.** The recovery baseline only ever seeded from
+  *imported* nightly history, so a Bluetooth-only user (no WHOOP CSV) never crossed
+  `Baselines.minNightsSeed` (4 valid nights) and recovery stayed blank forever — even with offloaded
+  nights sitting in the store. `IntelligenceEngine` now runs **two passes**: pass 1 computes each
+  offloaded night's baseline-*independent* aggregates (avgHrv / restingHr via SleepStager+AnalyticsEngine),
+  pass 2 seeds the baseline from the **union of imported + on-device nightly values** and re-scores only
+  the cheap recovery composite. So recovery lights up from the strap's own nights after ~4 nights; it
+  stays honestly null until then; a real import still wins per day. The natural payoff of v1.52's offload.
+- **Under the hood (landed dark — computed/stored, not yet surfaced, pending hardware validation):**
+  - `stepSample` table + `dailyMetric.steps` / `activeKcalEst` columns via a **real additive Room
+    migration** (`MIGRATION_2_3`). **The `.fallbackToDestructiveMigration()` is removed** — with
+    `exportSchema=false` a hand-written-SQL mismatch would otherwise *silently wipe* already-acked,
+    non-resendable strap history; now Room throws loudly instead. The migration SQL was **verified
+    byte-for-byte against Room's generated schema** before shipping.
+  - The WHOOP5 `step_motion_counter@57` (decoded but previously dropped) now persists; `AnalyticsEngine`
+    derives a daily step total + an APPROXIMATE whole-day HR→energy estimate; detected workouts persist
+    under the `-noop` id (deduped against imported workouts). All clearly APPROXIMATE; **the steps tile
+    stays dark** until @57's semantics are validated against the official app.
+  - **Fixed a respiratory-rate band mismatch:** `SleepStager.respRateFromRR` could emit 6–8 bpm, but every
+    consumer (`ReadinessEngine` illness/readiness) only acts on 8–25 — so a sub-8 estimate was
+    persisted-then-silently-ignored. The band is now a single canonical source (`respPlausibleRangeBpm`,
+    owned by the producer, referenced by the consumer); RSA NaNs anything outside it before persisting.
+  - Conservative resp gates (size ≥ 10, raised z-thresholds, 2+ flags to fire) so the noisier on-device
+    RSA can't trip false illness/readiness flags.
+- Reimplemented onto current main from community PR #78 (credited), with the migration-safety + RSA-band
+  fixes applied. v1.48–1.52 work untouched.
+- macOS: **version bump only** — it has the same single-pass-baseline gap; recovery-seeding parity is a
+  tracked follow-up.
+
+## 1.52 — WHOOP 5.0/MG history offload, Android (#78)
+
+- **New (Android, experimental): WHOOP 5.0/MG historical offload** — Android reaches parity with the
+  Mac, which already had this. A 5/MG can now download its stored history (not just stream live HR),
+  which is what feeds recovery / strain / sleep.
+- **The fix that made it actually work.** The 5/MG "puffin" envelope shifts the inner record **+4** vs
+  4.0, and its HISTORY_END/COMPLETE marker is **`PUFFIN_METADATA` (type 56)**, not 49. Android's
+  offload-frame check read `frame[4]` with `{47,48,49,50}` — so on a real strap **every** history-closing
+  frame was dropped as live-flood, no chunk ever committed, the strap never trimmed, and the offload
+  idle-watchdog timed out: zero history. NOOP now reads the type at `frame[8]` for 5/MG and accepts
+  `{47,48,49,50,56}` — matching the hardware-proven Swift path (`BLEManager.isOffloadFrame`,
+  `BLEManager.swift:500`). Ported pieces: family-aware `isOffloadFrame`, `decodeMetadataWhoop5`
+  (meta_type@10 / unix@11 / trim_cursor@21), `Backfiller.begin(family)` + `endData` (+4 → `frame[21:29]`),
+  the 5/MG `send()` allow-list (`SEND_HISTORICAL_DATA` + `HISTORICAL_DATA_RESULT`, framed as puffin
+  commands), and the 5/MG post-bond offload kick (the CLIENT_HELLO ack now marks the handshake done,
+  which gates the offload). A new `Whoop5OffloadTest` pins the type-56 case the original PR's tests missed.
+- **Experimental — please verify on a real strap.** The offsets are cross-confirmed (Swift + Linux tool +
+  the hardware-anchored +4), but no captured 5/MG HISTORY_END frame exists in-repo, so 5.0/MG owners:
+  please report whether your history actually populates end-to-end. Reimplemented from a community
+  contribution (#78), credited; the v1.48–1.51 reliability work (write queue, resubscribe, sync pill,
+  family-gated battery) is untouched.
+- macOS: **version bump only** — its 5/MG offload path was already complete and hardware-verified.
+
+## 1.51 — True battery %, a sync indicator, and HR on imported workouts (#77)
+
+- **Fixed: battery flashing 100% then correcting (or reverting to 100%).** The WHOOP 4.0 exposes the
+  standard Battery Level characteristic (0x2A19) but it's a **stub that always reports 100** — the real
+  charge only comes from the proprietary `GET_BATTERY_LEVEL` response (u16/10). NOOP read **both** into
+  the same display with no priority, so 0x2A19 landed first (100%) and the real value corrected it a
+  beat later — and since 0x2A19 is also *subscribed*, a stray stub notification could revert a true 94%
+  back to 100%. Battery now comes **only from the real source per family**: WHOOP 4 = the proprietary
+  command; 5.0/MG = 0x2A19 (unchanged — its proprietary command isn't framed). On macOS this also stops
+  the stub 100 polluting the low-battery alert hook. Mac + Android.
+- **New: "Syncing strap history…" indicator** (Mac + Android). While a historical offload runs, Today /
+  Sleep / Intelligence's empty states show a pulsing pill with a live **chunks-pulled count** (a count,
+  never a percent — total pending is unknowable from the protocol), so "No nights here yet" mid-sync
+  reads as in-progress rather than final. The Live pill shows **"Bonded · syncing"**. `LiveState` now
+  publishes `backfilling` + `syncChunksThisSession` (Android republishes every 10th chunk so the
+  foreground-service notification isn't re-posted at chunk rate); cleared on session end AND on
+  disconnect so the pill can't stick on.
+- **Fixed (Android): imported workouts showed no HR.** Health Connect `ExerciseSessionRecord`s carry no
+  summary HR, so the importer stored `avgHr/maxHr = null` and the Workouts list rendered "–" forever.
+  Two-part fix: (a) the **importer** now intersects each session's window with its `HeartRateRecord`
+  samples (targeted per-session reads, one bad session can't fail the import) and stores real avg/max;
+  (b) **display fallback** — Workouts/Today fill a null-HR imported session from the strap's own ~1 Hz
+  samples over the workout window (new indexed `hrWindowStats` aggregate; ≥60 samples required so strays
+  can't fabricate an average; display-only so a re-import can't be clobbered; capped per load). Demo
+  flavor unaffected (its seeded workouts always carry HR).
+
+- **Fixed (Android): sustained command-write congestion on slow GATT stacks.** A Pixel 7 on Android 16
+  logged ~56 `writeCharacteristic busy` retries **and 6 hard `dropped after 6 retries`** in ten minutes
+  (v1.48). Two changes:
+  - **Bigger, escalating write-retry budget** — `MAX_WRITE_RETRIES` 6 → 12, and the backoff now grows
+    per attempt (12, 24, … capped ~96ms) so a stack that's busy for a while gets time to clear instead
+    of exhausting the budget in ~70ms. Nothing hard-drops.
+  - **Re-subscribe at most once per quiet episode.** The keep-alive re-subscribed all notify chars on
+    every 30s tick while the stream was quiet, flooding descriptor writes that collide with the command
+    queue (Android serves **one** GATT op at a time across reads/writes/descriptors). It now re-subscribes
+    once per quiet spell and re-arms when data next arrives — a dropped CCCD is still recovered, the churn
+    is gone.
+- Context (from #77): the "no overnight scores" reports are usually an **empty strap buffer** — the
+  official WHOOP app, bonded overnight, trims the strap's history as it syncs, so NOOP finds little to
+  offload. The reliable history path is the WHOOP CSV import. This release fixes the *separate* congestion
+  bug those logs surfaced.
+- macOS: **version bump only** (CoreBluetooth queues GATT ops internally).
+
+- **Fixed: a Spanish WHOOP export imported 0 items.** WHOOP's Spanish export translates **both** the
+  column headers (`Puntuación de recuperación (%)`, `Variabilidad de la frecuencia cardíaca (ms)`, …)
+  **and** some filenames (`sueño.csv`, `entrenamientos.csv`) — so the filename match missed the sleep/
+  workout files and the column match missed every translated header, giving "Imported 0 items."
+- NOOP now maps the full set of Spanish column headers (supplied from a real export, #76) onto the
+  canonical fields, and recognises the Spanish filenames — so recovery, RHR, HRV, skin temp, blood
+  oxygen, day strain, every sleep stage, nap, etc. all import. `physiological_cycles.csv` keeps its
+  English filename in the Spanish export but its columns are Spanish; both cases are handled. The
+  content-sniffer also classifies the Spanish sleep file by its (now-aliased) columns.
+- Same approach that added German (#3). Workout column names are inferred from WHOOP's consistent
+  Spanish pattern; an unmatched alias simply never fires, so it's safe. Mac + Android. A real-header
+  parse test pins the values. Verified with `swift test`.
+
+- **Fixed (Android): dropped Bluetooth commands on stricter stacks (Android 13+, worst on Android 16).**
+  When the phone's GATT stack was momentarily busy it would reject a command write, and NOOP **dropped**
+  it instead of retrying. The dropped frame was often the one that **starts live HR**, **sets the strap
+  clock**, or **acks a history chunk** — so live HR sometimes never started and overnight data never
+  landed, even with a healthy strap and pairing. NOOP now **retries a rejected write** (bounded backoff,
+  preserving command order) and **paces** without-response writes so the stack keeps up.
+- Diagnosed from a detailed strap log: a Pixel 7 on Android 16 whose offload completed cleanly but whose
+  `TOGGLE_REALTIME_HR` / `SET_CLOCK` writes were being rejected and dropped.
+- macOS: **version bump only** — it relies on CoreBluetooth's own write queue and was never affected.
+
+## 1.47 — Auto-sync Health Connect (Android)
+
+- **Opt-in Health Connect auto-sync (Android).** Turn it on under Data Sources → Health Connect and NOOP
+  re-pulls new Health Connect data (e.g. a Samsung Galaxy Watch → Samsung Health → Health Connect) each
+  time you open the app, if the last sync is older than your chosen **6 / 12 / 24h** interval. Read-only,
+  idempotent, **never overwrites richer strap data**, **default OFF**. Adopted from a community PR.
+- Deliberately **on-open only** (no background worker): the contributed version also added a WorkManager
+  background job, but that's best-effort on Android 14+ and needs a sensitive background-health
+  permission — so we took the reliable foreground catch-up and skipped the worker + the permission.
+- macOS: **version bump only** (HealthKit doesn't exist on macOS; the Mac path stays the export import).
+
+## 1.46 — Revived-strap history dates, gestures during sync, clearer pairing state
+
+- **Stale-strap clock correction (#72).** A strap that sat unused has a drifted RTC, so its offloaded
+  history landed months in the past — live HR worked, but recovery/strain/sleep never showed as "today."
+  `extractHistoricalStreams` now corrects type-47 + EVENT timestamps by the strap-vs-real clock offset
+  **only when the strap clock is clearly stale (>1 day off)**, snapped to a 5-min grid so the correction
+  is deterministic across re-syncs (rows dedupe by timestamp). No-op for a normal strap. Both platforms.
+- **Live gestures during a history sync (#69).** `isOffloadFrame` classed EVENT(48) as bulk-sync
+  traffic, so during a backfill a real-time double-tap / wrist event was routed to the sync handler and
+  never fired — for minutes at a time on a 5.0/MG. NOOP now fires live gestures even mid-sync, gated on
+  the event being recent **in the strap's own clock domain** (macOS) so a *replayed historical* gesture
+  from the offload doesn't fire; Android fires live gestures ungated and gates only during a backfill.
+- **"Encrypted bond" vs "live HR" indicator (#69).** On a 5.0/MG, live HR streams over the open
+  Bluetooth profile without a real encrypted bond, so the app used to say "Bonded" when it wasn't. The
+  Live pill now shows **"Bonded"** only for a genuine encrypted bond, else **"Live HR (not fully
+  paired)"** — the encrypted bond is what unlocks buzz, alarms, double-tap and history sync. The in-app
+  pairing tip now mentions tapping the band to enter 5.0/MG pairing mode. Both platforms.
+- _Known, tracked limitations:_ a strap that's both clock-stale and mid-offload may miss a double-tap
+  during that sync window on Android (no GET_CLOCK correlation to gate in the strap's clock domain); and
+  a record re-offloaded across a successful SET_CLOCK could store twice (proper fix = persist the
+  per-device offset). Both narrow.
+
 ## 1.45 — Clearer pairing guidance for WHOOP 5.0/MG (Mac, #69)
 
 - **A 5.0/MG streams live heart rate before it's fully (encrypted-)paired** — and buzz, alarms,

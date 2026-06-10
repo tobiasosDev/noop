@@ -13,6 +13,14 @@ public final class LiveState: ObservableObject {
     // got the real encrypted bond (issue #69). The genuine bond path clears the hint itself (the
     // CLIENT_HELLO ack), and a fresh connect attempt resets it.
     @Published public var bonded: Bool = false
+    /// True ONLY when the link reached a GENUINE encrypted bond — the WHOOP 5/MG CLIENT_HELLO ack, the
+    /// WHOOP 4 confirmed-write bond, or a restored already-bonded link. Deliberately NOT set by the
+    /// live-HR shortcut that flips `bonded` true when HR streams over the *unbonded* standard profile on
+    /// a 5/MG (issue #69) — so `bonded` can be true while `encryptedBond` is false ("Live HR, not fully
+    /// paired"). WHOOP 4 always reaches a genuine bond, so the two track together there. Reset on
+    /// connect/disconnect. Drives the Live pill's two-state distinction; the encrypted channel (buzz,
+    /// alarm, double-tap, history offload) only works when this is true.
+    @Published public var encryptedBond: Bool = false
     @Published public var heartRate: Int? = nil
     @Published public var rr: [Int] = []
     @Published public var batteryPct: Double? = nil
@@ -37,6 +45,13 @@ public final class LiveState: ObservableObject {
     /// Wall time (unix seconds) of the last successfully-completed offload (a sync, even if nothing new
     /// came — i.e. caught up). Drives the sync tile + the staleness nudge.
     @Published public var lastSyncedAt: TimeInterval?
+
+    /// True while a historical offload session is running, so screens can say "Syncing strap
+    /// history…" instead of presenting half-loaded data as final (#77).
+    @Published public var backfilling = false
+    /// Chunks acked during the current offload session — an honest progress signal (total pending is
+    /// unknowable from the protocol, so a count, never a percent).
+    @Published public var syncChunksThisSession: Int = 0
 
     /// Optional hook invoked on every battery update (wired by LiveViewModel to the alert monitor).
     /// Kept as a closure so LiveState stays a plain observable snapshot with no alert dependency.

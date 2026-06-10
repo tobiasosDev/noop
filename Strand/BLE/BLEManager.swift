@@ -147,6 +147,16 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Captured (device↔wall) correlation from GET_CLOCK; nil until the response lands.
     private(set) var clockRef: ClockRef?
 
+    /// The strap's OWN clock extrapolated to right now (its RTC at the last GET_CLOCK + elapsed since).
+    /// Used to judge live-gesture freshness in the strap's clock domain rather than wall time — so a
+    /// real-time gesture is "now" and a replayed historical one is "old" REGARDLESS of how stale the
+    /// strap RTC is (fix #72's straps). Falls back to wall-now when GET_CLOCK hasn't landed.
+    private var strapClockNow: Int {
+        let wallNow = Int(Date().timeIntervalSince1970)
+        guard let ref = clockRef else { return wallNow }
+        return ref.device + (wallNow - ref.wall)
+    }
+
     public init(state: LiveState, deviceId: String = "my-whoop") {
         self.state = state
         self.deviceId = deviceId
@@ -274,6 +284,7 @@ public final class BLEManager: NSObject, ObservableObject {
         disconnect()
         state.connected = false
         state.bonded = false
+        state.encryptedBond = false
     }
 
     /// Apply the raw-outbox retention policy (24h synced window / 50MB unsynced cap).
@@ -374,12 +385,19 @@ public final class BLEManager: NSObject, ObservableObject {
         log("→ \(command.label) payload=\(hex(payload))")
     }
 
-    /// Ask CoreBluetooth for the current Battery Level value when the standard profile is present.
-    /// WHOOP 5/MG exposes live battery through 0x2A19, while WHOOP 4 can also answer the legacy
-    /// proprietary command path.
+    /// Refresh the battery reading on demand. Source is FAMILY-SPECIFIC (#77): on a WHOOP 4.0 the
+    /// standard 0x2A19 characteristic is a STUB that reports a constant 100 — the real charge only
+    /// comes from the proprietary GET_BATTERY_LEVEL command (COMMAND_RESPONSE, u16/10). Reading both
+    /// flashed 100% before the true value corrected it (and a stub notification could revert a real
+    /// 94% back to 100%). So WHOOP 4 uses ONLY the command; WHOOP 5/MG uses ONLY 0x2A19.
     public func refreshBattery() {
         guard state.connected, let p = peripheral, p.state == .connected else {
             log("refreshBattery ignored — not connected")
+            return
+        }
+
+        if selectedModel.deviceFamily == .whoop4 {
+            send(.getBatteryLevel, payload: [0x00])
             return
         }
 
@@ -393,10 +411,6 @@ public final class BLEManager: NSObject, ObservableObject {
         } else {
             log("Battery Level characteristic unavailable")
         }
-
-        if selectedModel.deviceFamily == .whoop4 {
-            send(.getBatteryLevel, payload: [0x00])
-        }
     }
 
     /// Ack one HISTORY_END chunk so the strap may trim it. Confirmed write — the strap forgets
@@ -409,6 +423,10 @@ public final class BLEManager: NSObject, ObservableObject {
     /// the Backfiller; it is passed here only for logging.
     func ackHistoricalChunk(trim: UInt32, endData: [UInt8]) {
         send(.historicalDataResult, payload: [0x01] + endData, writeType: .withResponse)
+        // Progress signal for the "Syncing strap history…" UI (#77). Same main-queue delegate path as
+        // the other state mutations (e.g. lastSyncedAt in exitBackfilling). NOT historicalAckLogCounter
+        // — that's a puffin-write log throttle that never increments on WHOOP 4.
+        state.syncChunksThisSession += 1
     }
 
     // MARK: Backfill helpers
@@ -433,6 +451,8 @@ public final class BLEManager: NSObject, ObservableObject {
         // backfill starts, whereas bootstrapStore() can build the Backfiller before the family is known.
         backfiller.begin(family: selectedModel.deviceFamily)
         backfilling = true
+        state.backfilling = true
+        state.syncChunksThisSession = 0
         historicalAckLogCounter = 0
         // Payload MUST be [0x00], NOT empty: verified on-device that this strap serves type-47 only with
         // [0x00] (empty → 0 frames on a clean stable link with ~2k records pending); the Mac ground-truth
@@ -525,6 +545,7 @@ public final class BLEManager: NSObject, ObservableObject {
     private func exitBackfilling(reason: String) {
         guard backfilling else { return }
         backfilling = false
+        state.backfilling = false
         backfillTimeout?.cancel()
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
@@ -830,6 +851,7 @@ extension BLEManager: CBCentralManagerDelegate {
         restoredPeripheral = nil
         preparePeripheral(peripheral)
         state.connected = true
+        state.encryptedBond = false   // re-proved per connection at the genuine-bond site (#69)
         lastDataAt = Date()
         log("Connected — discovering services")
         discoverPrimaryServices(on: peripheral)
@@ -840,14 +862,18 @@ extension BLEManager: CBCentralManagerDelegate {
                                error: Error?) {
         Task { @MainActor in await collector?.flush() }
         state.connected = false
+        state.encryptedBond = false   // cleared with didBond; next session must re-prove the bond (#69)
         didBond = false
         whoop5RealtimeArmed = false
         whoop5SessionStarted = false
         clockRequested = false
         connectHandshakeDone = false
-        // Reset backfill state so the next connect starts a fresh offload.
+        // Reset backfill state so the next connect starts a fresh offload (incl. the syncing pill —
+        // a dropped link mid-offload must not leave "Syncing strap history…" stuck on, #77).
         backfillStarted = false
         backfilling = false
+        state.backfilling = false
+        state.syncChunksThisSession = 0
         backfillTimeout?.cancel()
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
@@ -896,6 +922,7 @@ extension BLEManager: CBCentralManagerDelegate {
         // Collection only runs post-bond, so a restored link was already bonded;
         // seed those flags now. `didWriteValueFor` won't re-fire on its own.
         state.bonded = true
+        state.encryptedBond = true   // a restored link was genuinely encrypted-bonded before (#69)
         didBond = true
         // clockRef is nil in the fresh process after restore, so we must re-request it.
         // Reset the flag so the post-restore didWriteValueFor issues exactly one getClock.
@@ -1028,7 +1055,7 @@ extension BLEManager: CBPeripheralDelegate {
             if selectedModel.deviceFamily == .whoop5, !didBond {
                 let d = error.localizedDescription.lowercased()
                 if d.contains("encryption") || d.contains("authentication") {
-                    state.pairingHint = "Close the official WHOOP app (or turn its phone's Bluetooth off), put the strap in pairing mode — blue LEDs flashing — then reconnect."
+                    state.pairingHint = "Close the official WHOOP app (or turn its phone's Bluetooth off), put the strap in pairing mode (on a 5.0/MG, tap the band repeatedly until the LEDs flash blue), then reconnect."
                     log("WHOOP 5/MG: bond refused — the strap is likely still paired to the WHOOP app. Put it in pairing mode (blue LEDs) with the WHOOP app closed, then reconnect.")
                 }
             }
@@ -1045,6 +1072,7 @@ extension BLEManager: CBPeripheralDelegate {
             if !didBond {
                 didBond = true
                 state.bonded = true
+                state.encryptedBond = true   // genuine encrypted bond (not the live-HR shortcut) — #69
                 state.pairingHint = nil
                 log("WHOOP 5/MG: CLIENT_HELLO acked — link established; subscribing notify chars (experimental).")
             }
@@ -1084,6 +1112,7 @@ extension BLEManager: CBPeripheralDelegate {
         if !didBond {
             didBond = true
             state.bonded = true
+            state.encryptedBond = true   // WHOOP 4 confirmed-write bond is always genuine — #69
             log("BONDED (confirmed write acknowledged) — custom channels should now flow")
         }
         // Run the connect handshake EXACTLY ONCE per connection. didWriteValueFor re-fires on EVERY
@@ -1171,7 +1200,12 @@ extension BLEManager: CBPeripheralDelegate {
                 log("WHOOP 5/MG: live HR streaming — marking the link established (experimental).")
             }
         case BLEManager.batteryChar:
-            if let pct = bytes.first { state.setBattery(Double(pct)) } // 0x2A19 = percent
+            // 0x2A19 = percent — 5/MG ONLY. The WHOOP 4.0's 0x2A19 is a stub constant 100 (real value =
+            // GET_BATTERY_LEVEL response, u16/10) and it's subscribed, so an unsolicited stub
+            // notification was reverting the true reading back to 100% (#77).
+            if selectedModel.deviceFamily != .whoop4, let pct = bytes.first {
+                state.setBattery(Double(pct))
+            }
         case BLEManager.dataNotifyChar,
              BLEManager.cmdNotifyChar,
              BLEManager.eventNotifyChar:
@@ -1183,6 +1217,9 @@ extension BLEManager: CBPeripheralDelegate {
                     // no user-visible benefit and can make the app feel hung during long offloads.
                     armBackfillTimeout()
                     routeBackfillFrame(frame)
+                    // …but a REAL-TIME physical gesture (double-tap / wrist) must still fire even mid-
+                    // offload (#69). Gated on ts≈now so replayed historical EVENTs (old ts) are ignored.
+                    router.dispatchLiveGestureIfFresh(frame: frame, now: strapClockNow)
                     continue
                 }
                 router.handle(frame: frame)                       // live/UI path
@@ -1227,6 +1264,9 @@ extension BLEManager: CBPeripheralDelegate {
                         // preserve/order/process them in the sliced drain.
                         armBackfillTimeout()
                         routeBackfillFrame(frame)
+                        // A real-time double-tap / wrist gesture still fires during a 5/MG offload (which
+                        // runs for minutes, #69); the ts≈now gate rejects replayed historical EVENTs.
+                        router.dispatchLiveGestureIfFresh(frame: frame, now: strapClockNow)
                         continue
                     }
                     router.handle(frame: frame)
