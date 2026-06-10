@@ -114,7 +114,14 @@ public enum WhoopCommand: UInt8, CaseIterable {
     /// - `crc8` is over the 2 length bytes only
     /// - `crc32` (zlib) is over the inner `[type][seq][cmd][payload]`
     public func frame(seq: UInt8, payload: [UInt8] = [0x00]) -> [UInt8] {
-        let inner: [UInt8] = [Self.commandType, seq, rawValue] + payload
+        Self.rawFrame(cmd: rawValue, seq: seq, payload: payload)
+    }
+
+    /// Same framing for a raw command number NOT exposed in `WhoopCommand`. DIAGNOSTIC ONLY:
+    /// lets the one-shot, user-consented REBOOT_STRAP env hook send cmd 29 without promoting a
+    /// destructive command number into the enum (docs/PROTOCOL.md "Destructive commands").
+    public static func rawFrame(cmd: UInt8, seq: UInt8, payload: [UInt8] = [0x00]) -> [UInt8] {
+        let inner: [UInt8] = [commandType, seq, cmd] + payload
         let length = UInt16(inner.count + 4)
         let lenBytes: [UInt8] = [UInt8(length & 0xFF), UInt8(length >> 8)]
         let headerCRC = crc8(lenBytes)

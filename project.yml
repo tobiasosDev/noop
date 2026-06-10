@@ -11,7 +11,7 @@ options:
   developmentLanguage: en
 settings:
   base:
-    MARKETING_VERSION: "1.68"
+    MARKETING_VERSION: "1.70"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     # Emit localizable strings so Xcode auto-extracts every LocalizedStringKey into the
@@ -145,7 +145,7 @@ targets:
         CFBundleName: NOOP
         CFBundleDisplayName: NOOP
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "31"
+        CFBundleVersion: "32"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
@@ -168,6 +168,10 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        # Lets the wake-alarm local notification use .timeSensitive interruption level so it
+        # breaks through a sleep / Do-Not-Disturb Focus (WakeAlarmNotifier). Standard, auto-
+        # provisioned entitlement — NOT Critical Alerts (which needs Apple approval).
+        com.apple.developer.usernotifications.time-sensitive: true
         com.apple.security.application-groups:
           - group.com.tecminds.noop
     settings:

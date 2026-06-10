@@ -75,6 +75,23 @@ public final class BLEManager: NSObject, ObservableObject {
     private var lastDataAt = Date()
     /// True while the Live screen wants the (heavy) realtime stream; keep-alive re-arms it.
     private var wantsRealtime = false
+
+    // MARK: Live-fire alarm (Layer 2 — opportunistic wrist buzz over the kept-alive link)
+    /// Next absolute wake instant to buzz the wrist at, or nil when no alarm is set. Written by
+    /// `AppModel.applySmartAlarm`; evaluated by `WakeAlarmScheduler` on every keep-alive tick and
+    /// every inbound notification (the only background wake source — NOOP has no push).
+    var wakeTarget: Date?
+    /// True inside the pre-wake keep-alive window: re-arm realtime even when the Live tab is closed,
+    /// so frames keep waking the app to fire on time — without clobbering the Live-tab `wantsRealtime`.
+    private var wakeWindowActive = false
+    /// Opt-in (behavior.reliableWristAlarm): hold the link hot from ARM time through wake, not just the
+    /// 2 h auto-window. Set eagerly while the app is foreground so the realtime stream is already
+    /// flowing when the phone locks — iOS keeps waking a `bluetooth-central` app per inbound frame, so
+    /// the live RUN_ALARM can fire while locked. Released after fire / on disarm. (A backgrounded app
+    /// can't open the auto-window itself: no frame → no wake-up → chicken-and-egg.)
+    private var holdLinkForWake = false
+    /// Persisted epoch of the wake we last fired — idempotent across relaunch / BLE state restoration.
+    static let lastFiredWakeKey = "wakeAlarmLastFired"
     /// Last-offload-attempt time (unix seconds), persisted so the rate limiter survives relaunch
     /// (matches WHOOP's DATA_SYNC_WORKER_LAST_WORK_TIME watermark).
     static let backfillLastAtKey = "backfillLastAt"
@@ -642,6 +659,9 @@ public final class BLEManager: NSObject, ObservableObject {
 
     private func keepAliveFire() {
         guard state.connected, didBond else { return }
+        // Alarm is top priority — evaluate BEFORE the watchdog/backfill early-returns below so a
+        // due wake fires (and the pre-wake window opens) regardless of link/offload state.
+        evaluateWakeFire()
         enableLiveNotifications(reason: "keepalive")
         // Liveness watchdog: if NOTHING has arrived for a while, the stream/link stalled.
         // Bounce the connection — the auto-rescan on disconnect re-bonds and resumes streaming.
@@ -655,7 +675,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // skip them for 5/MG (it keeps the experimental strap log clean — re-subscribe + the 120s
         // bounce above are what keep a 5/MG link healthy).
         guard selectedModel.deviceFamily == .whoop4 else { return }
-        if wantsRealtime {
+        if wantsRealtime || wakeWindowActive || holdLinkForWake {   // keep hot through window / eager hold
             send(.sendR10R11Realtime, payload: [0x01])
             send(.toggleRealtimeHR, payload: [0x01])
         }   // re-arm so it can't lapse
@@ -775,7 +795,7 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Android rev-4 frame has been ACKed by a real 5/MG when arming, but a strap-driven wake fire
     /// has NOT been captured on our side (no STRAP_DRIVEN_ALARM_EXECUTED event observed yet) — do
     /// not present the 5/MG alarm as guaranteed until one is.
-    func armStrapAlarm(at date: Date) {
+    func armStrapAlarm(at date: Date, testForm: String? = nil) {
         // Honesty gate: if the command channel is down, the sends below would be silently
         // dropped and the "armed" log would lie (the restore-path #59 regression). Say so instead;
         // `onCommandChannelReady` re-arms once the link is provably up.
@@ -799,15 +819,76 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         // Clamp rather than trap: an out-of-range alarm date (pre-1970 / post-2106) must not crash.
         let epochSec = UInt32(clamping: Int64(date.timeIntervalSince1970))
-        send(.setClock, payload: BLEManager.setClockPayload())
-        send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: epochSec))
-        log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec))")
-        // Verify what the strap actually stored (alarm diagnosis): the read-backs land in the
-        // exported log via the cmd-response hooks. 1s delay lets the two writes settle first.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.send(.getClock, payload: [])        // strap expects EMPTY payload here
-            self?.send(.getAlarmTime, payload: [0x01])
+        let epochLE: [UInt8] = [UInt8(epochSec & 0xFF), UInt8((epochSec >> 8) & 0xFF),
+                                UInt8((epochSec >> 16) & 0xFF), UInt8((epochSec >> 24) & 0xFF)]
+        // Alarm diagnosis: alternate SET_ALARM_TIME body layouts, selectable via the
+        // NOOP_ALARM_FORM env hook — the rev1 form is acked but not stored on this strap
+        // (read-back zeros, no fire), so we A/B the other decompiled-client revisions.
+        let payload: [UInt8]
+        switch testForm {
+        case "rev1id": payload = [0x01, 0x01] + epochLE + [0x00, 0x00]      // rev1 + alarmId
+        case "rev2":   payload = [0x02, 0x01] + epochLE + [0x00, 0x00]      // rev2 + alarmId
+        case "rev4":   payload = AlarmPayload.setAlarmRev4(
+                           wakeEpochMs: Int64((date.timeIntervalSince1970 * 1000).rounded()))
+        // whoof (madhursatija/whoof client.js setAlarm): W4 payload is the BARE u32 LE epoch —
+        // no leading sub-command byte, no subsecond tail. If the firmware reads the epoch at
+        // offset 0, our rev1 form decodes as epoch 0x29xxxx01 ≈ year 1992 → silently rejected
+        // as past time, which matches every observed symptom.
+        case "rev0":    payload = epochLE
+        // whoopsie (official-app HCI capture): inner frame zero-padded to a 4-byte boundary.
+        // Appending pad zeros to the payload is byte-identical to padding the inner frame.
+        case "rev0pad": payload = epochLE + [0x00]                          // inner 7 → 8
+        case "rev1pad": payload = [0x01] + epochLE + [0x00, 0x00, 0x00, 0x00] // inner 10 → 12
+        default:       payload = WhoopCommand.setAlarmPayload(epochSec: epochSec)
         }
+        // "rev1ack" diagnosis variant: identical rev1 bytes, but ACKED writes (.withResponse —
+        // errors surface in didWriteValueFor) and delayed 3 s past the connect burst. Discriminates
+        // the silent-drop hypothesis: plain .withoutResponse writeValue calls during the connect
+        // burst can be discarded by CoreBluetooth without trace (no canSendWriteWithoutResponse
+        // backpressure anywhere in this class), which would explain acked-elsewhere-ignored-here.
+        let acked = (testForm == "rev1ack" || testForm == "rev1clear")
+        let writeType: CBCharacteristicWriteType = acked ? .withResponse : .withoutResponse
+        let sendDelay: Double = acked ? 3.0 : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + sendDelay) { [weak self] in
+            guard let self else { return }
+            if testForm == "rev1clear" {
+                // Clear possibly-corrupt alarm state first (deep-discharge artifact theory):
+                // the GET_ALARM_TIME response tail is a constant 04 00 20 — if that encodes
+                // stuffed/garbage alarm slots, a SET may be refused until they're cleared.
+                self.send(.disableAlarm, payload: [0x01], writeType: writeType)
+            }
+            self.send(.setClock, payload: BLEManager.setClockPayload(), writeType: writeType)
+            self.send(.setAlarmTime, payload: payload, writeType: writeType)
+            self.log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec), form \(testForm ?? "rev1"))")
+            // Verify what the strap actually stored (alarm diagnosis): the read-backs land in the
+            // exported log via the cmd-response hooks. 1s delay lets the two writes settle first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                // [0x00] like every other Harvard GET — the empty-payload form gets no reply at all
+                // (observed: zero GET_CLOCK responses across whole sessions while [0x00] GETs answer).
+                self?.send(.getClock, payload: [0x00])
+                self?.send(.getAlarmTime, payload: [0x01])
+                self?.send(.reportVersionInfo, payload: [0x00])   // firmware build — alarm-handler suspect
+            }
+        }
+    }
+
+    /// One-shot, USER-CONSENTED diagnostic: REBOOT_STRAP (cmd 29). Deliberately not in
+    /// WhoopCommand (destructive class) — only reachable via the NOOP_REBOOT_STRAP env hook.
+    /// Purpose: un-wedge the alarm-storage engine after the deep-discharge state (all four
+    /// SET_ALARM_TIME layouts acked-but-ignored while RUN_ALARM fires fine).
+    func sendRebootStrap() {
+        guard state.connected, let p = peripheral, p.state == .connected, let ch = cmdCharacteristic else {
+            log("Reboot: strap unreachable — not sent")
+            return
+        }
+        guard selectedModel.deviceFamily == .whoop4 else {
+            log("Reboot: only attempted on WHOOP 4.0 — not sent")
+            return
+        }
+        seq = seq &+ 1
+        let frame = WhoopCommand.rawFrame(cmd: 29, seq: seq, payload: [0x00])
+        p.writeValue(Data(frame), for: ch, type: .withResponse)
+        log("→ REBOOT_STRAP sent (diagnostic, user-consented) — expect ~30s offline")
     }
 
     /// Disarm the currently-armed firmware alarm.
@@ -820,6 +901,90 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         send(.disableAlarm, payload: [0x01])
         log("Alarm: disarmed")
+    }
+
+    // MARK: Live-fire orchestration (Layer 2)
+
+    /// Evaluate the wake target against the clock and act. Called from the keep-alive tick AND every
+    /// inbound notification (`didUpdateValueFor`) — in the background, an inbound frame is the only
+    /// thing that wakes a suspended app, so the first fire lands within roughly the notify gap.
+    /// Cheap and idempotent; safe to call on the hot notification path.
+    func evaluateWakeFire() {
+        guard let target = wakeTarget else {
+            if wakeWindowActive { closeWakeWindow() }
+            return
+        }
+        let last = (UserDefaults.standard.object(forKey: Self.lastFiredWakeKey) as? Double)
+            .map { Date(timeIntervalSince1970: $0) }
+        switch WakeAlarmScheduler.decide(wakeTarget: target, now: Date(), lastFiredWake: last) {
+        case .idle:
+            if wakeWindowActive { closeWakeWindow() }
+        case .openKeepAliveWindow:
+            // The opt-in eager hold already keeps the link hot; only the auto-window needs opening.
+            if !wakeWindowActive, !holdLinkForWake { openWakeKeepAliveWindow() }
+        case .fire:
+            fireWakeAlarm()
+            // Persist BEFORE anything else so a crash/disconnect right after can't double-fire.
+            UserDefaults.standard.set(target.timeIntervalSince1970, forKey: Self.lastFiredWakeKey)
+            if wakeWindowActive { closeWakeWindow() }
+            if holdLinkForWake { setWakeKeepAlive(false) }   // release the held link once fired
+        }
+    }
+
+    /// Opt-in eager keep-alive: hold (on=true) or release (on=false) the link from arm time through
+    /// wake. Called by `AppModel.applySmartAlarm` with `behavior.reliableWristAlarm`. Starting the
+    /// realtime stream while the app is foreground is what lets it survive the phone locking — the
+    /// stream then keeps waking the app per frame so the live RUN_ALARM can fire while locked.
+    func setWakeKeepAlive(_ on: Bool) {
+        holdLinkForWake = on
+        guard selectedModel.deviceFamily == .whoop4 else { return }
+        if on {
+            log("Wake alarm: holding link hot from now through wake (reliable wrist buzz — more battery)")
+            guard state.connected, didBond else { return }   // re-armed by onCommandChannelReady on connect
+            enableLiveNotifications(reason: "wake hold")
+            send(.sendR10R11Realtime, payload: [0x01])
+            send(.toggleRealtimeHR, payload: [0x01])
+        } else {
+            log("Wake alarm: releasing held link")
+            guard !wantsRealtime, !wakeWindowActive else { return }   // don't stop a stream still in use
+            send(.toggleRealtimeHR, payload: [0x00])
+            send(.sendR10R11Realtime, payload: [0x00])
+        }
+    }
+
+    /// Enter the pre-wake window: keep the link hot so inbound frames keep waking the app near wake.
+    /// Turns realtime on independently of the Live tab; `closeWakeWindow` reverts it.
+    private func openWakeKeepAliveWindow() {
+        wakeWindowActive = true
+        log("Wake alarm: pre-wake keep-alive window open — keeping link hot to fire on time")
+        guard state.connected, didBond, selectedModel.deviceFamily == .whoop4 else { return }
+        enableLiveNotifications(reason: "wake window")
+        send(.sendR10R11Realtime, payload: [0x01])
+        send(.toggleRealtimeHR, payload: [0x01])
+    }
+
+    /// Leave the pre-wake window. Stop realtime only if the Live tab isn't using it (don't kill a
+    /// user's live HR view).
+    private func closeWakeWindow() {
+        wakeWindowActive = false
+        log("Wake alarm: keep-alive window closed")
+        guard selectedModel.deviceFamily == .whoop4, !wantsRealtime else { return }
+        send(.toggleRealtimeHR, payload: [0x00])
+        send(.sendR10R11Realtime, payload: [0x00])
+    }
+
+    /// Fire the wake haptic LIVE over the active link: RUN_ALARM (cmd 68) + a graduated haptic
+    /// pattern. This is the verdict's recommended path — RUN_ALARM is proven to buzz this strap even
+    /// though its stored firmware alarm (cmd 66) is wedged. A no-op if the link is down (send() is
+    /// bond-gated); Layer 1's phone notification covers that case.
+    private func fireWakeAlarm() {
+        log("Wake alarm: FIRING live RUN_ALARM over BLE (\(selectedModel.deviceFamily))")
+        send(.runHapticsPattern, payload: [2, 5, 0, 0, 0])   // patternId=2, 5 loops — the alarm buzz
+        if selectedModel.deviceFamily == .whoop5 {
+            send(.runAlarm, payload: AlarmPayload.runAlarmRev2())   // REVISION_2 [0x02, alarmId]
+            return
+        }
+        send(.runAlarm, payload: [0x01])
     }
 
     /// Request the currently-armed alarm time from the strap (response arrives on cmd-notify char).
@@ -1262,6 +1427,9 @@ extension BLEManager: CBPeripheralDelegate {
         guard let data = characteristic.value else { return }
         let bytes = [UInt8](data)
         lastDataAt = Date()   // feed the liveness watchdog on every notification
+        // An inbound frame is the only thing that wakes a suspended (backgrounded) app — NOOP has no
+        // push — so check the wake target here too: the live buzz lands within ~one notify gap.
+        if wakeTarget != nil { evaluateWakeFire() }
 
         switch characteristic.uuid {
         case BLEManager.heartRateChar:
@@ -1303,24 +1471,44 @@ extension BLEManager: CBPeripheralDelegate {
                 }
                 // Alarm diagnosis: surface the strap's clock / alarm answers in the exported
                 // log — without these read-backs an armed-but-never-firing alarm is invisible.
-                if frame.count > 6, frame[6] == WhoopCommand.getClock.rawValue {
-                    let parsed = parseFrame(frame)
-                    if let clock = parsed.parsed["clock"]?.intValue {
-                        let delta = clock - Int(Date().timeIntervalSince1970)
-                        log("Clock readback: strap epoch=\(clock) (Δ\(delta)s vs phone)")
-                    } else {
-                        log("Clock readback (unparsed) raw=\(hex(Array(frame.dropFirst(7)))) ")
+                // Readback instrumentation: gate on the COMMAND/COMMAND_RESPONSE packet types
+                // (frame[4] == 35/36) — a bare frame[6] check also matches history/metadata
+                // frames whose payload bytes collide with the cmd number (observed: backfill
+                // frames misattributed as clock/alarm readbacks).
+                if frame.count > 6, frame[4] == 35 || frame[4] == 36 {
+                    // Result codes for the alarm/clock command family: a SET that is REJECTED
+                    // (non-zero result, like the 5/MG haptics result=0x03) reads very differently
+                    // from one that is accepted-then-dropped. pay[1] is the observed status byte.
+                    let alarmFamily: [UInt8] = [WhoopCommand.setClock.rawValue, WhoopCommand.setAlarmTime.rawValue,
+                                                WhoopCommand.runAlarm.rawValue, WhoopCommand.disableAlarm.rawValue,
+                                                WhoopCommand.reportVersionInfo.rawValue]
+                    if alarmFamily.contains(frame[6]) {
+                        log("Cmd \(frame[6]) response frame: \(hex(frame))")
                     }
-                }
-                if frame.count > 6, frame[6] == WhoopCommand.getAlarmTime.rawValue {
-                    let parsed = parseFrame(frame)
-                    if let armed = parsed.parsed["alarm_epoch"]?.intValue, armed > 0 {
-                        let inS = armed - Int(Date().timeIntervalSince1970)
-                        log("Alarm readback: armed epoch=\(armed) (fires in \(inS)s)")
-                    } else {
-                        log("Alarm readback: nothing armed or unknown layout")
+                    if frame[6] == WhoopCommand.reportVersionInfo.rawValue {
+                        let parsed = parseFrame(frame)
+                        let fields = parsed.parsed.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " ")
+                        log("Version info: \(fields)")
                     }
-                    log("Alarm readback raw: \(hex(Array(frame.dropFirst(7))))")
+                    if frame[6] == WhoopCommand.getClock.rawValue {
+                        let parsed = parseFrame(frame)
+                        if let clock = parsed.parsed["clock"]?.intValue {
+                            let delta = clock - Int(Date().timeIntervalSince1970)
+                            log("Clock readback: strap epoch=\(clock) (Δ\(delta)s vs phone)")
+                        } else {
+                            log("Clock readback (unparsed) frame=\(hex(frame))")
+                        }
+                    }
+                    if frame[6] == WhoopCommand.getAlarmTime.rawValue {
+                        let parsed = parseFrame(frame)
+                        if let armed = parsed.parsed["alarm_epoch"]?.intValue, armed > 0 {
+                            let inS = armed - Int(Date().timeIntervalSince1970)
+                            log("Alarm readback: armed epoch=\(armed) (fires in \(inS)s)")
+                        } else {
+                            log("Alarm readback: nothing armed or unknown layout")
+                        }
+                        log("Alarm readback frame: \(hex(frame))")
+                    }
                 }
                 // Clock correlation runs in both live and backfill modes. Once established it
                 // unblocks both the Collector (live path) and the Backfiller (chunk decoding).
