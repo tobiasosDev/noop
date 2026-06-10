@@ -73,20 +73,20 @@ struct TodayView: View {
                 goalsSection
                 myDaySection
             }
-        }
-        .task(id: repo.refreshSeq) { await loadAll() }
-        .toolbar {
-            ToolbarItem { batteryPill }
-            ToolbarItem { journalButton }
-            ToolbarItem {
+        } trailing: {
+            HStack(spacing: 14) {
+                batteryPill
+                journalButton
                 Button { showingSupport = true } label: {
                     Image(systemName: "heart.fill")
                         .foregroundStyle(StrandPalette.metricRose)
                 }
+                .buttonStyle(.plain)
                 .help("Support NOOP — donate or get in touch")
                 .accessibilityLabel("Support NOOP — donate or get in touch")
             }
         }
+        .task(id: repo.refreshSeq) { await loadAll() }
         .overlay {
             if showingSupport {
                 SupportModalOverlay(isPresented: $showingSupport)
@@ -126,6 +126,7 @@ struct TodayView: View {
                     .attentionWiggle(period: 4)
             }
         }
+        .buttonStyle(.plain)
         .help("Log yesterday's journal")
         .accessibilityLabel("Log yesterday's journal")
     }
@@ -152,7 +153,8 @@ struct TodayView: View {
                         value: sleepPerformance.map { "\(Int($0.rounded()))%" } ?? "—",
                         progress: sleepPerformance.map { $0 / 100 },
                         gradient: Gradient(colors: [StrandPalette.metricPurple.opacity(0.55),
-                                                    StrandPalette.metricPurple])
+                                                    StrandPalette.metricPurple]),
+                        diameter: 86
                     )
                 }
                 ringButton(.insights) {
@@ -165,7 +167,8 @@ struct TodayView: View {
                             (recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.accent).opacity(0.55),
                             recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.accent,
                         ]),
-                        caption: recovery == nil && recoveryCalibration != nil ? "calibrating" : nil
+                        caption: recovery == nil && recoveryCalibration != nil ? "calibrating" : nil,
+                        diameter: 86
                     )
                 }
                 ringButton(.workouts) {
@@ -174,7 +177,8 @@ struct TodayView: View {
                         value: strain.map { String(format: "%.1f", $0) } ?? "—",
                         progress: strain.map { $0 / 21 },
                         gradient: StrandPalette.strainGradient,
-                        caption: "of 21"
+                        caption: "of 21",
+                        diameter: 86
                     )
                 }
             }
@@ -404,12 +408,13 @@ struct TodayView: View {
             .frame(minWidth: 132)
     }
 
-    /// LocalizedStringKey (not String(format:)) so these lines land in the String Catalog.
-    private func strainCoachStateLine(_ s: StrainTarget.State, current: Double) -> LocalizedStringKey {
+    /// Pre-formatted so the catalog key carries a stable %@ for the one-decimal strain value.
+    private func strainCoachStateLine(_ s: StrainTarget.State, current: Double) -> String {
+        let v = String(format: "%.1f", current)
         switch s {
-        case .building:     return "\(current, specifier: "%.1f") now — room to push today."
-        case .onTarget:     return "\(current, specifier: "%.1f") now — right in your target band."
-        case .overreaching: return "\(current, specifier: "%.1f") now — beyond today's recommendation."
+        case .building:     return String(localized: "\(v) now — room to push today.")
+        case .onTarget:     return String(localized: "\(v) now — right in your target band.")
+        case .overreaching: return String(localized: "\(v) now — beyond today's recommendation.")
         }
     }
 
@@ -516,7 +521,7 @@ struct TodayView: View {
                     badge: sleepDurationLabel(s),
                     badgeTint: StrandPalette.metricPurple,
                     icon: "moon.fill",
-                    name: "Sleep",
+                    name: Text("Sleep"),
                     start: s.startTs, end: s.endTs
                 )
             }
@@ -527,7 +532,7 @@ struct TodayView: View {
                     badge: w.strain.map { String(format: "%.1f", $0) } ?? workoutDuration(w),
                     badgeTint: StrandPalette.strainColor(w.strain ?? 0),
                     icon: "bolt.fill",
-                    name: LocalizedStringKey(w.sport.capitalized),
+                    name: Text(verbatim: w.sport.capitalized),
                     start: w.startTs, end: w.endTs
                 )
             }
@@ -535,8 +540,10 @@ struct TodayView: View {
         }
     }
 
+    /// `name` is a prebuilt Text: localized UI copy for sleep ("Sleep"), verbatim for
+    /// workout sport names — those are data-model strings, never localization keys.
     private func activityRowBody(badge: String, badgeTint: Color, icon: String,
-                                 name: LocalizedStringKey, start: Int, end: Int) -> some View {
+                                 name: Text, start: Int, end: Int) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
                 Image(systemName: icon).font(.system(size: 10, weight: .semibold))
@@ -545,7 +552,7 @@ struct TodayView: View {
             .padding(.horizontal, 8).padding(.vertical, 5)
             .background(badgeTint.opacity(0.16), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .foregroundStyle(badgeTint)
-            Text(name)
+            name
                 .font(StrandFont.subhead)
                 .foregroundStyle(StrandPalette.textPrimary)
             Spacer()
@@ -561,10 +568,11 @@ struct TodayView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// "7:12" — hours:minutes asleep for the sleep badge.
+    /// "7h 12m" — duration asleep for the sleep badge (matches workoutDuration's format).
     private func sleepDurationLabel(_ s: CachedSleepSession) -> String {
         let mins = max(0, s.endTs - s.startTs) / 60
-        return "\(mins / 60):" + String(format: "%02d", mins % 60)
+        if mins >= 60 { return "\(mins / 60)h \(mins % 60)m" }
+        return "\(mins)m"
     }
 
     // MARK: - Loading
@@ -629,11 +637,11 @@ struct TodayView: View {
         return f
     }()
 
-    /// Local wall-clock "HH:mm" for activity start/end labels.
+    /// Locale-aware wall-clock time for activity start/end labels (respects 12/24h).
     static let clockFmt: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale.current
-        f.dateFormat = "HH:mm"
+        f.timeStyle = .short
+        f.dateStyle = .none
         return f
     }()
 }
