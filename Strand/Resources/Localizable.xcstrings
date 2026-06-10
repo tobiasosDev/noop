@@ -220,6 +220,57 @@
         }
       }
     },
+    "%@ now — beyond today's recommendation.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ jetzt — über der heutigen Empfehlung."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ now — beyond today's recommendation."
+          }
+        }
+      }
+    },
+    "%@ now — right in your target band.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ jetzt — genau in deinem Zielbereich."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ now — right in your target band."
+          }
+        }
+      }
+    },
+    "%@ now — room to push today.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ jetzt — heute ist noch Luft nach oben."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ now — room to push today."
+          }
+        }
+      }
+    },
     "%@ per night": {
       "extractionState": "manual",
       "localizations": {
@@ -3914,6 +3965,23 @@
         }
       }
     },
+    "Goals — Today": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ziele — Heute"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Goals — Today"
+          }
+        }
+      }
+    },
     "Good afternoon": {
       "extractionState": "manual",
       "localizations": {
@@ -5232,6 +5300,23 @@
         }
       }
     },
+    "Log yesterday's journal": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Journal von gestern eintragen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Log yesterday's journal"
+          }
+        }
+      }
+    },
     "Low": {
       "localizations": {
         "de": {
@@ -5747,6 +5832,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Movement"
+          }
+        }
+      }
+    },
+    "My Day": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mein Tag"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "My Day"
           }
         }
       }
@@ -6417,6 +6519,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "An diesem Tag nichts erfasst"
+          }
+        }
+      }
+    },
+    "Nothing logged yet today.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heute noch nichts erfasst."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing logged yet today."
           }
         }
       }
@@ -8938,6 +9057,23 @@
         }
       }
     },
+    "Strap battery %lld percent": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strap-Akku %lld Prozent"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strap battery %lld percent"
+          }
+        }
+      }
+    },
     "Strap bonded": {
       "localizations": {
         "de": {
@@ -9547,6 +9683,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Today"
+          }
+        }
+      }
+    },
+    "Today · last synced": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heute · zuletzt synchronisiert"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today · last synced"
+          }
+        }
+      }
+    },
+    "Today · live": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heute · live"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today · live"
+          }
+        }
+      }
+    },
+    "Today's activities": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Heutige Aktivitäten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today's activities"
           }
         }
       }
@@ -10654,6 +10841,23 @@
         }
       }
     },
+    "calibrating": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kalibrierung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "calibrating"
+          }
+        }
+      }
+    },
     "high": {
       "localizations": {
         "de": {
@@ -10730,6 +10934,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "n.s."
+          }
+        }
+      }
+    },
+    "of 21": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "von 21"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "of 21"
           }
         }
       }
