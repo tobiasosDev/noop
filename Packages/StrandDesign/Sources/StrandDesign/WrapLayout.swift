@@ -10,14 +10,15 @@ public struct WrapLayout: Layout {
 
     public func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxX: CGFloat = 0
         for v in subviews {
             let s = v.sizeThatFits(.unspecified)
-            if x > 0, x + s.width > width { x = 0; y += rowH + spacing; rowH = 0 }
+            if x > 0, x + s.width > width { maxX = Swift.max(maxX, x - spacing); x = 0; y += rowH + spacing; rowH = 0 }
             x += s.width + spacing
             rowH = Swift.max(rowH, s.height)
         }
-        return CGSize(width: width == .infinity ? x : width, height: y + rowH)
+        maxX = Swift.max(maxX, x - spacing)
+        return CGSize(width: width == .infinity ? maxX : width, height: y + rowH)
     }
 
     public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -31,3 +32,20 @@ public struct WrapLayout: Layout {
         }
     }
 }
+
+#if DEBUG
+#Preview("WrapLayout — wrapping chips") {
+    WrapLayout(spacing: 8) {
+        ForEach(["Sleep", "Recovery", "Strain", "Steps", "HRV", "Resting HR", "Calories"], id: \.self) { label in
+            Text(label)
+                .font(StrandFont.caption)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(StrandPalette.surfaceInset, in: Capsule())
+        }
+    }
+    .padding(24)
+    .frame(width: 320)
+    .background(StrandPalette.surfaceBase)
+    .preferredColorScheme(.dark)
+}
+#endif
