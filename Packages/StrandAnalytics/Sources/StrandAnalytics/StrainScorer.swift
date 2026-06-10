@@ -116,7 +116,9 @@ public enum StrainScorer {
 
     /// Infer per-sample duration (minutes) from the first two timestamps. Falls
     /// back to 1 s when fewer than two samples or coincident timestamps.
-    static func sampleDurationMinutes(_ hr: [HRSample]) -> Double {
+    /// Public so the histogram strain path (which never loads the full series) can
+    /// derive the cadence from a cheap 2-row fetch and stay bit-identical to the array path.
+    public static func sampleDurationMinutes(_ hr: [HRSample]) -> Double {
         guard hr.count >= 2 else { return fallbackSampleMin }
         let deltaS = abs(Double(hr[1].ts - hr[0].ts))
         return deltaS > 0 ? deltaS / 60.0 : fallbackSampleMin
@@ -207,6 +209,47 @@ public enum StrainScorer {
         case .edwards:
             trimp = edwardsTRIMP(hr, restingHR: restingHR, hrReserve: hrReserve,
                                  sampleDurationMin: sampleDur)
+        }
+        return trimpToStrain(trimp, denominator: denominator)
+    }
+
+    /// Cardiovascular strain (0–21) from a bpm → sample-count histogram. Mathematically
+    /// identical to the array overload: both TRIMP methods are order-independent per-sample
+    /// sums weighted only by the bpm value, so (bpm, count) bins lose nothing. Lets callers
+    /// aggregate a full day in SQL (~200 bins) instead of loading ~86k raw 1 Hz rows.
+    ///
+    /// - Parameters:
+    ///   - histogram: (bpm, count) bins; order irrelevant.
+    ///   - sampleDurationMin: per-sample duration in minutes (from `sampleDurationMinutes`
+    ///     over a cheap 2-row fetch, so cadence inference matches the array path).
+    public static func strain(histogram: [(bpm: Int, count: Int)],
+                              sampleDurationMin: Double,
+                              maxHR: Double? = nil,
+                              restingHR: Double = defaultRestingHR,
+                              method: Method = .edwards,
+                              sex: String = "male",
+                              denominator: Double = strainDenominator) -> Double? {
+        let effMax = maxHR ?? Double(defaultMaxHR())
+        let total = histogram.reduce(0) { $0 + $1.count }
+        if total < minReadings || effMax <= restingHR { return nil }
+
+        let hrReserve = effMax - restingHR
+        let trimp: Double
+        switch method {
+        case .banister:
+            let b = sex.lowercased().hasPrefix("f") ? banisterBWomen : banisterBMen
+            var acc = 0.0
+            for bin in histogram {
+                let x = pctHRR(Double(bin.bpm), restingHR: restingHR, hrReserve: hrReserve) / 100.0
+                if x > 0 { acc += Double(bin.count) * sampleDurationMin * x * banisterScale * exp(b * x) }
+            }
+            trimp = acc
+        case .edwards:
+            var weighted = 0
+            for bin in histogram {
+                weighted += zoneWeight(Double(bin.bpm), restingHR: restingHR, hrReserve: hrReserve) * bin.count
+            }
+            trimp = Double(weighted) * sampleDurationMin
         }
         return trimpToStrain(trimp, denominator: denominator)
     }

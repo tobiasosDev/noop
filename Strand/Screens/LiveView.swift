@@ -15,6 +15,10 @@ struct LiveView: View {
     /// Strain Coach strip — intraday strain so far today (nil until ~10 min of HR exists).
     @State private var dayStrain: Double? = nil
 
+    /// Inline preview of the diagnostics report (everything before the raw-JSON dump). Loaded on
+    /// appear and refreshed after each completed sync so the counts stay current without a tap.
+    @State private var diagPreview: String = ""
+
     /// Which strap the user is pairing — persists across launches. Drives which
     /// BLE service we scan for so a WHOOP 4.0 scan never hangs on a WHOOP 5 wrist.
     @AppStorage("selectedWhoopModel") private var selectedModelRaw = WhoopModel.whoop4.rawValue
@@ -41,6 +45,7 @@ struct LiveView: View {
                 if !activeConnection { modelPicker }
                 controls
                 logCard
+                diagnosticsCard
             }
         }
         .onAppear { refreshLiveSession() }
@@ -49,6 +54,7 @@ struct LiveView: View {
                                                 sex: profile.sex,
                                                 restingHr: repo.today?.restingHr)
         }
+        .task(id: live.lastSyncedAt) { diagPreview = await previewText() }
         .onDisappear { model.stopRealtimeHR() }
         .onChange(of: live.bonded) { _ in refreshLiveSession() }
         .onChange(of: live.connected) { _ in refreshLiveSession() }
@@ -312,5 +318,61 @@ struct LiveView: View {
 
     private func saveStrapLog() {
         FileExport.exportText(strapLogText(), suggestedName: "noop-strap-log.txt")
+    }
+
+    // MARK: - Diagnostics export (remote troubleshooting — DB row counts, cursors, strap clock)
+    // A "no strain / recovery / stress" report is almost always one upstream cause (no HR/RR rows,
+    // or a frozen strap RTC). This dumps the on-device row counts + timestamp spans + sync cursors
+    // so it can be diagnosed from a shared file, without physical access to the device.
+
+    private var diagnosticsCard: some View {
+        NoopCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Text("DIAGNOSTICS").font(StrandFont.overline).tracking(StrandFont.overlineTracking)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                    Spacer()
+                    Button("Copy") { exportDiagnostics(save: false) }
+                        .buttonStyle(.plain).font(StrandFont.mono).foregroundStyle(StrandPalette.accent)
+                        .padding(.vertical, 8).padding(.horizontal, 4).contentShape(Rectangle())
+                    Button("Save…") { exportDiagnostics(save: true) }
+                        .buttonStyle(.plain).font(StrandFont.mono).foregroundStyle(StrandPalette.accent)
+                        .padding(.vertical, 8).padding(.horizontal, 4).contentShape(Rectangle())
+                }
+                Text("On-device DB row counts, sync cursors and strap clock offset — share this if strain / recovery / stress look empty.")
+                    .font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !diagPreview.isEmpty {
+                    ScrollView {
+                        Text(diagPreview).font(StrandFont.mono)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(height: 180)
+                }
+            }
+        }
+    }
+
+    /// The report up to (but not including) the raw-JSON dump — the readable part, for inline display.
+    private func previewText() async -> String {
+        let full = await repo.diagnosticsText()
+        if let r = full.range(of: "--- raw JSON ---") {
+            return String(full[full.startIndex..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return full
+    }
+
+    /// Recompute the full report on tap (cheap, read-only) so the export reflects current state.
+    private func exportDiagnostics(save: Bool) {
+        Task { @MainActor in
+            let text = await repo.diagnosticsText()
+            if save {
+                FileExport.exportText(text, suggestedName: "noop-diagnostics.txt")
+            } else {
+                PlatformPasteboard.copy(text)
+            }
+        }
     }
 }
