@@ -160,13 +160,19 @@ struct ReportView: View {
                          value: s.totalStrain.map { String(format: "%.1f", $0) } ?? "—",
                          caption: nil)
                 StatTile(label: "Over target",
-                         value: String(localized: "\(s.overreachDays) days"),
+                         value: dayCount(s.overreachDays),
                          caption: String(localized: "above the recovery-set band"))
                 StatTile(label: "Under target",
-                         value: String(localized: "\(s.underreachDays) days"),
+                         value: dayCount(s.underreachDays),
                          caption: String(localized: "room left on the table"))
             }
         }
+    }
+
+    /// Pluralized day count — separate singular/plural catalog keys so German
+    /// (and any future language) can translate both forms.
+    private func dayCount(_ n: Int) -> String {
+        n == 1 ? String(localized: "1 day") : String(localized: "\(n) days")
     }
 
     private func hoursText(_ minutes: Double) -> String {
