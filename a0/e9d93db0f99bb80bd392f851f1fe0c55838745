@@ -1,0 +1,21 @@
+StrandiOS/Resources/Info.plist
+  s_8dfefa1df8db42::t_e06537854a9d40 22
+project.yml
+  s_8dfefa1df8db42::t_fa3aad5481f482 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a0e9d93db0f99bb80bd392f851f1fe0c55838745",
+  "prompts": {},
+  "sessions": {
+    "s_8dfefa1df8db42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a241603-438b-4ceb-93a7-5b8630d4c079",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
