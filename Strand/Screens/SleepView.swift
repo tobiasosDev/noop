@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import StrandAnalytics
 import StrandDesign
 import WhoopStore
 
@@ -485,15 +486,14 @@ struct SleepView: View {
         let need = sleepNeedMin
         let series = repo.days.compactMap { d -> Double? in
             guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
-            return Swift.max(0, need - asleep)
+            return SleepNeed.debtMin(needMin: need, asleepMin: asleep)
         }
         return (series.last, mean(series), series)
     }
 
-    /// The personal sleep need (minutes): mean asleep, but never below a 7.5h floor so
-    /// debt/performance read sensibly even for a chronically short sleeper.
+    /// The personal sleep need (minutes) — shared math with the Sleep Planner (SleepNeed).
     private var sleepNeedMin: Double {
-        Swift.max(450, typicalTotalMin ?? 450)   // 450 min = 7.5h
+        SleepNeed.needMin(totalSleepMinsByNight: repo.days.compactMap { $0.totalSleepMin })
     }
 
     // MARK: - Trend points
