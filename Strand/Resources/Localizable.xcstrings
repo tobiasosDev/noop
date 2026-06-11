@@ -187,6 +187,57 @@
         }
       }
     },
+    "%@ asleep · %@ needed": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ geschlafen · %2$@ benötigt"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ asleep · %@ needed"
+          }
+        }
+      }
+    },
+    "%@ efficiency": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Effizienz"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ efficiency"
+          }
+        }
+      }
+    },
+    "%@ in bed": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ im Bett"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ in bed"
+          }
+        }
+      }
+    },
     "%@ is free and always will be. If it's useful to you, you can chip in to help with development and testing costs. Totally optional.": {
       "localizations": {
         "de": {
@@ -430,6 +481,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@%@"
+          }
+        }
+      }
+    },
+    "%@%@%@ vs typical": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@%3$@ vs. typisch"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@%@%@ vs typical"
           }
         }
       }
@@ -1788,6 +1856,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Behaviour Effects"
+          }
+        }
+      }
+    },
+    "Below need": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unter Bedarf"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Below need"
           }
         }
       }
@@ -6650,6 +6735,23 @@
         }
       }
     },
+    "On target": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Ziel"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On target"
+          }
+        }
+      }
+    },
     "On track": {
       "extractionState": "manual",
       "localizations": {
@@ -6877,6 +6979,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "PEAK"
+          }
+        }
+      }
+    },
+    "PERFORMANCE": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LEISTUNG"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PERFORMANCE"
           }
         }
       }
@@ -11050,6 +11169,23 @@
         }
       }
     },
+    "performance %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leistung %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "performance %@"
+          }
+        }
+      }
+    },
     "r = %@": {
       "localizations": {
         "de": {
@@ -11083,6 +11219,23 @@
         }
       }
     },
+    "stages approximate (on-device)": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phasen approximiert (auf dem Gerät)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "stages approximate (on-device)"
+          }
+        }
+      }
+    },
     "to": {
       "localizations": {
         "de": {
@@ -11111,6 +11264,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "v%@"
+          }
+        }
+      }
+    },
+    "vs need": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs. Bedarf"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs need"
+          }
+        }
+      }
+    },
+    "vs typical —": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs. typisch —"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs typical —"
           }
         }
       }

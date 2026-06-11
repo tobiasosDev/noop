@@ -92,7 +92,7 @@ struct SleepView: View {
         let night = model.night
         // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
         // SleepNeed.needMin floors at ~7.5h, so the need is always present.
-        let supporting = "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed"
+        let supporting = String(localized: "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed")
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Last night", overline: "Sleep",
                           trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
@@ -136,12 +136,12 @@ struct SleepView: View {
 
     /// "8h 01m in bed · 90% efficiency[ · performance +3% vs typical][ · stages approximate (on-device)]"
     private func heroSubline(_ model: SleepModel) -> String {
-        var parts = ["\(durationText(model.night.timeInBed)) in bed",
-                     "\(efficiencyText(model.night)) efficiency"]
+        var parts = [String(localized: "\(durationText(model.night.timeInBed)) in bed"),
+                     String(localized: "\(efficiencyText(model.night)) efficiency")]
         // The dropped Sleep Performance tile carried a "vs typical" caption — zero
         // information loss: it lives here now.
         if let perf = model.performance.latest, let typical = model.performance.typical, typical != 0 {
-            parts.append("performance \(vsTypical(perf, typical, suffix: "%"))")
+            parts.append(String(localized: "performance \(vsTypical(perf, typical, suffix: "%"))"))
         }
         if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
         return parts.joined(separator: " · ")
@@ -578,17 +578,17 @@ struct SleepView: View {
 
     /// "+12% vs typical" / "−0.4 rpm vs typical" — the latest-vs-mean caption every tile carries.
     private func vsTypical(_ latest: Double?, _ typical: Double?, suffix: String, decimals: Int = 0) -> String {
-        guard let latest, let typical, typical != 0 else { return "vs typical —" }
+        guard let latest, let typical, typical != 0 else { return String(localized: "vs typical —") }
         let diff = latest - typical
         let sign = diff >= 0 ? "+" : "−"
         let mag = abs(diff)
         let num = decimals == 0 ? "\(Int(mag.rounded()))" : String(format: "%.\(decimals)f", mag)
-        return "\(sign)\(num)\(suffix) vs typical"
+        return String(localized: "\(sign)\(num)\(suffix) vs typical")
     }
 
     private func debtCaption(_ debt: Double?) -> String {
-        guard let debt else { return "vs need" }
-        return debt < 15 ? "On target" : "Below need"
+        guard let debt else { return String(localized: "vs need") }
+        return debt < 15 ? String(localized: "On target") : String(localized: "Below need")
     }
 
     private func debtColor(_ debt: Double?) -> Color {
