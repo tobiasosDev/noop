@@ -422,4 +422,108 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertTrue(rate.isNaN)
         XCTAssertTrue(rrv.isNaN)
     }
+
+    // MARK: - Stage 2/3 deep & REM (regression guards for the 0%-deep bug)
+
+    /// Build one EpochFeatures with sensible defaults; override only what a test needs.
+    private func feat(clock: Double, hr: Double = 55, hrVar: Double = 1,
+                      rmssd: Double = 40, rrv: Double = .nan, moveFrac: Double = 0,
+                      index: Int = 0) -> SleepStager.EpochFeatures {
+        SleepStager.EpochFeatures(index: index, midTs: 0, count: 0, moveFrac: moveFrac,
+                                  ckSleep: true, hr: hr, hrVar: hrVar, rmssd: rmssd,
+                                  sdnn: 40, respRate: .nan, rrv: rrv, clock: clock)
+    }
+
+    /// THE regression guard: deep must survive past the first wall-clock third.
+    /// The old `deep && clock > 1/3 → light` rule zeroed this user's back-half SWS.
+    func testDeepSurvivesLateInNight() {
+        // 200 epochs (×30 s = 100 min). Deep block at epochs 70–110 (clock ~0.35–0.55),
+        // i.e. past both the first wall-clock third AND the absolute first-N3 latency.
+        let n = 200
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        var labels = [String](repeating: "light", count: n)
+        for i in 70...110 { labels[i] = "deep" }
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[90], "deep", "back-half deep wiped — the 0%-deep regression")
+        XCTAssertEqual(out[110], "deep")  // clock ~0.55, well past the old 1/3 cut
+        XCTAssertTrue(out.contains("deep"))
+    }
+
+    /// Finding 2 guard: the first-N3 latency is ABSOLUTE minutes, so onset-adjacent epochs are
+    /// not called deep even on a short nap (where a span-relative guard would shrink to ~1 min).
+    func testDeepOnsetLatencyIsAbsolute() {
+        let n = 150  // 75-min session
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        var labels = [String](repeating: "light", count: n)
+        labels[6] = "deep"    // 3 min post-onset — inside the 10-min latency → demote
+        labels[30] = "deep"   // 15 min post-onset — past latency → keep
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[6], "light", "deep within first-N3 latency must be demoted")
+        XCTAssertEqual(out[30], "deep", "deep past first-N3 latency must survive")
+    }
+
+    /// Finding 1 guard: a session-relative gate with no wall-clock cap can over-mint deep on a
+    /// single-arm (NaN-RRV) night. The soft ceiling demotes the LATEST deep first (front-loaded),
+    /// bounding total N3 while preserving the early consolidated block.
+    func testDeepPlausibilityCeiling() {
+        let n = 200
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        // Gate over-called: 120/200 asleep epochs deep (60%), all past the latency window.
+        var labels = [String](repeating: "light", count: n)
+        for i in 30..<150 { labels[i] = "deep" }
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        let deepCount = out.filter { $0 == "deep" }.count
+        let maxDeep = Int(Double(n) * SleepStager.deepPlausibleMaxFraction)  // asleep == n here
+        XCTAssertLessThanOrEqual(deepCount, maxDeep, "deep ceiling not enforced")
+        XCTAssertGreaterThan(deepCount, 0, "ceiling must not zero deep")
+        // Front-loading preserved: the EARLIEST deep (epoch 30) survives, a LATE one is demoted.
+        XCTAssertEqual(out[30], "deep", "earliest deep should be kept")
+        XCTAssertEqual(out[149], "light", "latest deep should be demoted first")
+    }
+
+    /// Deep fires via EITHER parasympathetic arm (high RMSSD OR measured-regular respiration),
+    /// requires low HR, and never collides with REM (REM sits in the wake-like HR band).
+    func testDeepDisjunctionAndExclusivity() {
+        // thresholds: hrLo 55, hrHi 65, rmssdHi 60, hrvarHi 5, rrvHi 6, rrvLo 3, hrMid 58
+        func classify(_ f: SleepStager.EpochFeatures) -> String {
+            SleepStager.classifyOne(f, hrLo: 55, hrHi: 65, rmssdHi: 60, hrvarHi: 5,
+                                    rrvHi: 6, rrvLo: 3, hrMid: 58)
+        }
+        // (a) RMSSD arm: low HR + high RMSSD + unknown (NaN) respiration → deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 80, rrv: .nan)), "deep")
+        // (b) regular-respiration arm: low HR + low RMSSD + measured-regular RRV → deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 30, rrv: 2.0)), "deep")
+        // (c) high HR + irregular respiration → REM, never deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 70, hrVar: 10, rmssd: 30, rrv: 9.0)), "rem")
+        // NaN RRV must NOT vacuously satisfy deep when RMSSD is low (would over-call N3).
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 30, rrv: .nan)), "light")
+    }
+
+    /// REM is suppressed for the first 60 min after onset (physiologic first-REM latency).
+    func testREMLatencyGuard() {
+        let n = 200
+        let features = (0..<n).map { feat(clock: 0.5, index: $0) }  // clock 0.5 → no deep-cut interference
+        let labels = [String](repeating: "rem", count: n)
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[60], "light")  // 30 min post-onset (60 epochs × 30 s) → demoted
+        XCTAssertEqual(out[130], "rem")   // 65 min post-onset → kept
+    }
+
+    /// On NaN-RRV nights the REM fallback fires on the DoG-HR surge, but only in the
+    /// wake-like HR band (≥ median) — below median it must stay light (mutual exclusivity).
+    func testREMFallbackFiresBelowWakeHRBand() {
+        // hrLo 45, hrHi 65, rmssdHi 60, hrvarHi 5, rrvHi 6, rrvLo 3, hrMid 55
+        func classify(_ f: SleepStager.EpochFeatures) -> String {
+            SleepStager.classifyOne(f, hrLo: 45, hrHi: 65, rmssdHi: 60, hrvarHi: 5,
+                                    rrvHi: 6, rrvLo: 3, hrMid: 55)
+        }
+        // HR 60 ∈ [median 55, wake 65), high DoG-HR variability, NaN RRV → REM
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 60, hrVar: 10, rmssd: 30, rrv: .nan)), "rem")
+        // HR 50 < median → not the REM band, and not low enough for deep (hrLo 45) → light
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, hrVar: 10, rmssd: 30, rrv: .nan)), "light")
+    }
 }

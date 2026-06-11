@@ -127,18 +127,28 @@ object SleepStager {
     const val hrDogSigma1S: Double = 120.0
     const val hrDogSigma2S: Double = 600.0
 
-    const val stageHRLowPct: Double = 25.0
-    const val stageHRHighPct: Double = 70.0
-    const val stageHRVHighPct: Double = 70.0
-    const val stageHRVarHighPct: Double = 65.0
-    const val stageRRVHighPct: Double = 65.0
-    const val stageRRVLowPct: Double = 50.0
+    const val stageHRLowPct: Double = 40.0    // deep low-HR band (was 25): narrow-HR nights under-admit true bradycardic N3 at p25
+    const val stageHRHighPct: Double = 60.0   // REM activated-HR band (was 70): REM HR elevation is milder than wake
+    const val stageHRVHighPct: Double = 50.0  // deep parasympathetic (RMSSD) band (was 70): N3 needs above-median vagal tone, not extreme top-tail
+    const val stageHRVarHighPct: Double = 55.0 // REM DoG-HR-variability band (was 65)
+    const val stageRRVHighPct: Double = 55.0   // REM irregular-respiration band (was 65)
+    const val stageRRVLowPct: Double = 50.0    // deep regular-respiration band
     const val stageWakeMoveFrac: Double = 0.15
     const val stageStillMoveFrac: Double = 0.10
 
     const val smoothEpochs: Int = 5
-    const val noREMAfterOnsetMin: Double = 15.0
+    const val noREMAfterOnsetMin: Double = 60.0
+    // Retained for API compatibility but NO LONGER GATES DEEP (see reimposePhysiology):
+    // it encoded a wall-clock time-in-bed cutoff that wrongly proxied NREM-cycle position.
     const val deepFirstFraction: Double = 1.0 / 3.0
+    // Physiologic first-N3 latency: deep does not appear in the first minutes after onset (that
+    // descent is N1/N2). Absolute minutes — does NOT scale with session length, so it protects
+    // short naps as well as full nights (replaces the old span-relative pre-sleep cap).
+    const val deepOnsetLatencyMin: Double = 10.0
+    // Plausibility ceiling on total N3 as a fraction of asleep epochs (soft cap: excess deep is
+    // demoted LATEST-first, since SWS is front-loaded). A ceiling, never a floor — cannot
+    // re-introduce the 0%-deep failure mode.
+    const val deepPlausibleMaxFraction: Double = 0.35
 
     /** te Lindert 30 s Cole–Kripke weights [A₋₄..A₊₂]. SI = 0.001·Σ wᵢ·Aᵢ; sleep iff SI<1. */
     val ckWeights: List<Double> = listOf(106.0, 54.0, 58.0, 76.0, 230.0, 74.0, 67.0)
@@ -1012,20 +1022,24 @@ object SleepStager {
         val hrvarHi = percentile(sleepFeats.map { it.hrVar }, stageHRVarHighPct)
         val rrvHi = percentile(sleepFeats.map { it.rrv }, stageRRVHighPct)
         val rrvLo = percentile(sleepFeats.map { it.rrv }, stageRRVLowPct)
+        val hrMid = percentile(sleepFeats.map { it.hr }, 50.0)
 
         return features.map {
             classifyOne(it, hrLo = hrLo, hrHi = hrHi, rmssdHi = rmssdHi,
-                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo)
+                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo, hrMid = hrMid)
         }
     }
 
     internal fun classifyOne(
         f: EpochFeatures, hrLo: Double?, hrHi: Double?,
         rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+        hrMid: Double? = null,
     ): String {
         val hasHR = f.hr.isFinite()
         val hrLow = hasHR && hrLo != null && f.hr <= hrLo
         val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
+        // REM HR is wake-like (above the calm low/mid band), not the bradycardic deep tail.
+        val hrAboveMid = hasHR && hrMid != null && f.hr >= hrMid
 
         // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only.
         val parasympHigh = f.rmssd.isFinite() && rmssdHi != null && f.rmssd >= rmssdHi
@@ -1034,20 +1048,27 @@ object SleepStager {
         val cardiacActivated = hrHigh || hrvarHigh
 
         val rrvIrregular = f.rrv.isFinite() && rrvHi != null && f.rrv >= rrvHi
-        // Missing respiration (NaN RRV) treated as "regular" (pro-deep bias).
-        val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
+        // Regular respiration as a parasympathetic corroborator for deep. Only counts when RRV is
+        // actually measured — a NaN RRV is "unknown breathing", NOT evidence of regular breathing,
+        // so it must not vacuously satisfy the deep gate (that would collapse deep to still+lowHR
+        // and over-call N3 on RR-only / WHOOP4 nights). On NaN-RRV nights the RMSSD parasympathetic
+        // arm carries the gate instead.
+        val rrvRegular = f.rrv.isFinite() && rrvLo != null && f.rrv <= rrvLo
 
         val still = f.moveFrac <= stageStillMoveFrac
         val moving = f.moveFrac >= stageWakeMoveFrac
 
         // WAKE: sustained motion + activated cardiac (or no HR to vet motion).
         if (moving && (cardiacActivated || !hasHR)) return "wake"
-        // DEEP: still + high parasympathetic tone + low HR + regular respiration.
-        if (still && parasympHigh && hrLow && rrvRegular) return "deep"
+        // DEEP (N3): still + low HR (mandatory bradycardia) + at least one parasympathetic
+        // signature — high RMSSD OR measured-regular respiration. The old conjunction required low
+        // HR AND top-tail RMSSD in the SAME epoch (~4% co-occurrence on narrow-HR nights → ~0% deep).
+        if (still && hrLow && (parasympHigh || rrvRegular)) return "deep"
         // REM: still body + activated cardiac + irregular respiration.
         if (still && cardiacActivated && rrvIrregular) return "rem"
-        // REM fallback when respiration unavailable: require BOTH cardiac signals.
-        if (still && hrHigh && hrvarHigh && !f.rrv.isFinite()) return "rem"
+        // REM fallback when respiration unavailable (all-NaN RRV): carry REM on the DoG-HR surge,
+        // but only in the wake-like HR band (>= median) so it never collides with deep (HR <= p40).
+        if (still && hrvarHigh && hrAboveMid && !f.rrv.isFinite()) return "rem"
         return "light"
     }
 
@@ -1084,10 +1105,31 @@ object SleepStager {
     ): List<String> {
         val out = labels.toMutableList()
         val noREMEpochs = (noREMAfterOnsetMin * 60.0 / epochS).roundToInt()
-        for ((i, f) in features.withIndex()) {
+        val deepLatencyEpochs = (deepOnsetLatencyMin * 60.0 / epochS).roundToInt()
+        for ((i, _) in features.withIndex()) {
             if (i < onsetIdx || i > finalWakeIdx) continue
             if (out[i] == "rem" && (i - onsetIdx) < noREMEpochs) out[i] = "light"
-            if (out[i] == "deep" && f.clock > deepFirstFraction) out[i] = "light"
+            // Deep is NOT confined to the first wall-clock third (the old `clock > 1/3 → light`
+            // rule zeroed back-half SWS). The deep gate is already SWS-specific; only suppress deep
+            // during the physiologic first-N3 latency, as an ABSOLUTE duration (not a fraction of
+            // the window) so short naps are protected too.
+            if (out[i] == "deep" && (i - onsetIdx) < deepLatencyEpochs) out[i] = "light"
+        }
+
+        // Soft plausibility ceiling: a session-relative deep gate with no wall-clock cap can
+        // over-mint N3 on a single-arm (NaN-RRV / RR-only device) night. If total deep exceeds
+        // deepPlausibleMaxFraction of asleep epochs, demote the LATEST deep epochs first (SWS is
+        // front-loaded → late deep is least likely genuine). A ceiling only — cannot re-create the
+        // 0%-deep failure mode.
+        val asleepCount = (onsetIdx..maxOf(onsetIdx, finalWakeIdx)).count { i ->
+            i < out.size && out[i] != "wake"
+        }
+        val maxDeep = (asleepCount * deepPlausibleMaxFraction).toInt()
+        val deepIdx = (onsetIdx..maxOf(onsetIdx, finalWakeIdx))
+            .filter { it < out.size && out[it] == "deep" }
+        if (deepIdx.size > maxDeep) {
+            val demote = deepIdx.sortedByDescending { features[it].clock }.take(deepIdx.size - maxDeep)
+            for (j in demote) out[j] = "light"
         }
         return out
     }
