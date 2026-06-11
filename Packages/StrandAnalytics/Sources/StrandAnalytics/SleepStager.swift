@@ -200,8 +200,14 @@ public enum SleepStager {
 
     /// Local clock hours [start, end) treated as the personal night window. A run whose
     /// midpoint falls inside uses the lenient legacy gate; outside uses the strict gate.
-    public static let nightWindowStartHour: Int = 20
-    public static let nightWindowEndHour: Int = 11
+    /// Narrowed from [20, 11) to [21, 6): the wide band let still quiet-wake stretches at
+    /// the edges (a morning desk session 08:24–11:11, an evening couch 18:48–21:38) reach
+    /// the lenient gate via their midpoints. The core night keeps leniency; edge runs are
+    /// safe to strict-gate because real main sleep ≥ dayMaxNapDurationS routes to the
+    /// legacy gate regardless of hour, and real short morning/evening sleep passes the
+    /// strict gate on genuine HR evidence (floor dip + low variability).
+    public static let nightWindowStartHour: Int = 21
+    public static let nightWindowEndHour: Int = 6
     /// Daytime runs at/above this duration are treated as MAIN sleep (e.g. a night-shift
     /// sleeper) → legacy gate, not the strict nap gate. Below it → strict nap gate.
     public static let dayMaxNapDurationS: Int = 4 * 3_600
