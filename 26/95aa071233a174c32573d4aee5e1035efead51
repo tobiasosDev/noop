@@ -1,0 +1,21 @@
+Strand/BLE/BLEManager.swift
+  s_b098759d92217c::t_acb613b7d6c298 833-838,841-842
+  s_b098759d92217c::t_24118f81b76fe2 1125
+  s_b098759d92217c::t_1ec5cb5480d7fb 1107-1108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "2695aa071233a174c32573d4aee5e1035efead51",
+  "prompts": {},
+  "sessions": {
+    "s_b098759d92217c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68267266-c559-44f8-abe2-c110e063c8dd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
