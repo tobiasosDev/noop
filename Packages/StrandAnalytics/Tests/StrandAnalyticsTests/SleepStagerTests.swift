@@ -239,6 +239,59 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 2)
     }
 
+    // MARK: - Lenient night-window edges (morning/evening desk false positives)
+
+    /// A still MORNING desk stretch (08:30–11:15 local, quiet-wake HR 65, never dipping
+    /// to the asleep floor) must NOT be logged as sleep. Field case 2026-06-11: a real
+    /// 08:24–11:11 desk session passed because its midpoint (09:48) fell inside the old
+    /// lenient night window [20, 11) and was never strict-gated.
+    func testMorningDeskStillAwakeIsRejected() {
+        let start = dayBase + 8 * 3_600 + 30 * 60   // 08:30 local, midpoint ≈ 09:52
+        let dur = 165 * 60                          // 2¾ h < dayMaxNapDurationS
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 65)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty,
+                      "a quiet-wake morning desk stretch must be strict-gated and rejected")
+    }
+
+    /// A still EVENING couch stretch (18:50–21:40 local, HR 66) must NOT be logged: its
+    /// midpoint (20:15) sat just inside the old lenient window start (20). Field case
+    /// 2026-06-10 18:48–21:38.
+    func testEveningCouchStillAwakeIsRejected() {
+        let start = dayBase + 18 * 3_600 + 50 * 60  // 18:50 local, midpoint ≈ 20:15
+        let dur = 170 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 66)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty,
+                      "a quiet-wake evening couch stretch must be strict-gated and rejected")
+    }
+
+    /// A REAL morning re-sleep (06:30, 90 min, HR at the asleep floor) still registers:
+    /// it is strict-gated under the narrowed window but passes on genuine HR evidence.
+    func testMorningRealReSleepIsAccepted() {
+        let start = dayBase + 6 * 3_600 + 30 * 60   // 06:30 local, midpoint ≈ 07:15
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1,
+                       "a real morning re-sleep with a genuine HR dip must still register")
+    }
+
+    /// Core-night leniency is preserved: a 22:30–02:00 still run at HR 64 (above the nap
+    /// floor band) keeps the legacy gate — the narrowed window must not tighten real nights.
+    func testCoreNightLenientGateUnchanged() {
+        let start = dayBase + 22 * 3_600 + 30 * 60  // 22:30 local, midpoint ≈ 00:15
+        let dur = 210 * 60                          // 3½ h < dayMaxNapDurationS
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1,
+                       "a core-night run must keep the lenient legacy gate")
+    }
+
     // MARK: - Daytime false-sleep guard (#90)
 
     /// A 70-min still, LOW-HR daytime window is rejected: even though its HR dips, it is
