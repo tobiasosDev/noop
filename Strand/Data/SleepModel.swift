@@ -151,7 +151,7 @@ struct SleepModel {
     /// export carried one for that day; else the APPROXIMATE fallback (asleep / personal
     /// need, capped 100) so strap-only days after the import horizon stay populated.
     @MainActor
-    static func performanceSeries(_ repo: Repository, needMin: Double? = nil) -> Metric {
+    private static func performanceSeries(_ repo: Repository, needMin: Double? = nil) -> Metric {
         let imported = repo.importedSleep
         let need = needMin ?? sleepNeedMin(repo)
         return metric(repo) { d in

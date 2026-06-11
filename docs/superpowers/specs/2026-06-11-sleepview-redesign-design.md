@@ -38,8 +38,11 @@ screen to see how they slept; the plan matters in the evening, end of scroll.
 - Subline below ring (footnote): time in bed · efficiency % · onset–wake times · date label,
   plus the existing "stages approximate (on-device)" badge when `model.isPersistedHypnogram`.
 - No score (`model.performance.latest == nil`) → render the ring track at zero fill with
-  "—" as the center label and no state word; supporting line falls back to asleep/needed
-  durations if present, otherwise hidden.
+  "—" as the center label; the PERFORMANCE state word stays (implementation choice — the
+  label identifies the gauge even without a score). Supporting line still shows
+  asleep/needed durations.
+- Onset–wake times and date label live in the hero `SectionHeader` trailing (not the
+  subline) — positional deviation, no information lost.
 
 ### 2. Night timeline
 
@@ -56,7 +59,8 @@ screen to see how they slept; the plan matters in the evening, end of scroll.
 
 ### 4. Metric grid
 
-- Existing `StatTile` + `tileColumns` adaptive grid (min 168pt → 2 columns iPhone).
+- Existing `StatTile` + `tileColumns` adaptive grid (min 164pt → 2 columns on ≥396pt
+  iPhones; 168 missed Pro-width two-column fit by 2pt).
 - Six tiles, all with sparkline + vs-typical caption, all sourced from the memoized series:
   Restorative, Sleep Debt, Consistency, Hours vs Needed, Efficiency, Respiratory.
 - Sleep Performance tile removed — value lives in the hero now. Its vs-typical caption

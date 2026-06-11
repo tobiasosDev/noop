@@ -187,6 +187,23 @@
         }
       }
     },
+    "%@: %@, %lld percent": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@, %3$lld Prozent"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@, %3$lld percent"
+          }
+        }
+      }
+    },
     "%@ asleep · %@ needed": {
       "extractionState": "manual",
       "localizations": {
@@ -200,6 +217,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ asleep · %@ needed"
+          }
+        }
+      }
+    },
+    "Per night, trailing 30 days": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pro Nacht, letzte 30 Tage"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per night, trailing 30 days"
           }
         }
       }

@@ -402,7 +402,7 @@ struct SleepView: View {
             SectionHeader("Asleep duration", overline: "Trend", trailing: String(localized: "Last 30 days"))
             ChartCard(
                 title: "Hours asleep",
-                subtitle: "Per night, trailing 30 days",
+                subtitle: String(localized: "Per night, trailing 30 days"),
                 trailing: avg.map { String(format: "%.1f h avg", $0) },
                 height: NoopMetrics.chartHeight,
                 chart: {
