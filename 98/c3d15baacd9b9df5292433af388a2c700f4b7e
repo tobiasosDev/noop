@@ -1,0 +1,26 @@
+project.yml
+  s_b098759d92217c::t_ba2c8cf407c5fa 14
+  s_b098759d92217c::t_d95e08649b7114 150,216
+.gitignore
+  s_b098759d92217c::t_f18965d127a726 81
+StrandiOS/Resources/Info.plist
+  s_b098759d92217c::t_15acba1f70ee90 22
+StrandiOSWidgets/Info.plist
+  s_b098759d92217c::t_15acba1f70ee90 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "98c3d15baacd9b9df5292433af388a2c700f4b7e",
+  "prompts": {},
+  "sessions": {
+    "s_b098759d92217c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "68267266-c559-44f8-abe2-c110e063c8dd",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
