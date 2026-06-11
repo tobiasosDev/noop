@@ -23,6 +23,10 @@ public struct RecoveryRing: View {
     public var showsLabel: Bool
     /// Whether hovering the ring shows a subtle tooltip (score + state word).
     public var showsHover: Bool
+    /// Overrides the big center number (e.g. "87%", "—"). nil → the rounded score.
+    public var centerText: String?
+    /// Overrides the state word under the number (e.g. "PERFORMANCE"). nil → score-derived recovery state word.
+    public var stateText: String?
     /// Formats the score for the hover tooltip's bold line.
     public var valueFormat: (Double) -> String
 
@@ -33,6 +37,8 @@ public struct RecoveryRing: View {
         lineWidth: CGFloat = 16,
         showsLabel: Bool = true,
         showsHover: Bool = true,
+        centerText: String? = nil,
+        stateText: String? = nil,
         valueFormat: @escaping (Double) -> String = { "Recovery \(Int($0.rounded()))" }
     ) {
         self.score = score
@@ -41,6 +47,8 @@ public struct RecoveryRing: View {
         self.lineWidth = lineWidth
         self.showsLabel = showsLabel
         self.showsHover = showsHover
+        self.centerText = centerText
+        self.stateText = stateText
         self.valueFormat = valueFormat
     }
 
@@ -74,7 +82,7 @@ public struct RecoveryRing: View {
                     container: CGSize(width: diameter, height: diameter),
                     tooltip: ChartTooltip(
                         value: valueFormat(score),
-                        label: stateWord,
+                        label: stateText ?? stateWord,
                         accent: tipColor
                     )
                 )
@@ -179,11 +187,11 @@ public struct RecoveryRing: View {
 
     private var centerLabel: some View {
         VStack(spacing: 2) {
-            Text(numberString)
+            Text(centerText ?? numberString)
                 .font(StrandFont.display(diameter * 0.30))
                 .foregroundStyle(StrandPalette.textPrimary)
-                .contentTransition(.numericText())
-            Text(stateWord)
+                .contentTransition(centerText == nil ? .numericText() : .opacity)
+            Text(stateText ?? stateWord)
                 .font(StrandFont.overline)
                 .tracking(StrandFont.overlineTracking)
                 .foregroundStyle(tipColor)
