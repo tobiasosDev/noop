@@ -1,0 +1,22 @@
+.gitignore
+  s_5593293f1faf9c::t_b31a8fa25fb9b5 79-80
+docs/superpowers/specs/2026-06-11-sleepview-redesign-design.md
+  s_5593293f1faf9c::t_c685fea8cda125 1-39,43-119
+  s_5593293f1faf9c::t_7c07455cccfd91 40-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "43ef62f07658b4ccd46ecd2d61566c4bad17b43a",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
