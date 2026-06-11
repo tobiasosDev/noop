@@ -924,6 +924,7 @@ private struct FormRow<Control: View>: View {
         .environmentObject(model.live)
         .environmentObject(model.profile)
         .environmentObject(model.journal)
+        .environmentObject(model.intelligence)
         .frame(width: 720, height: 900)
         .background(StrandPalette.surfaceBase)
         .preferredColorScheme(.dark)
