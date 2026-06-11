@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "1.68"
+    const val CURRENT_VERSION = "1.83"
 
     data class Release(
         val version: String,
@@ -36,6 +36,142 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "1.83",
+            title = "Workout calories — for manual sessions and Health Connect imports",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and Android): a workout you start yourself now estimates its calories from your heart rate — the same model NOOP uses for auto-detected workouts — instead of leaving the field blank. (#117)",
+                "Fixed (Android): workouts imported from Health Connect (e.g. Garmin) now show their calories. NOOP credits each session with the active calories burned inside its time window (a Health Connect exercise record carries no energy of its own, so this stitches them together). (#117)",
+            ),
+        ),
+        Release(
+            version = "1.82",
+            title = "Stop losing strap history we can't yet decode — plus a board of fixes",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and Android): NOOP no longer destroys strap history it can't yet decode. If a history chunk arrived with a bad checksum or a firmware record layout we haven't mapped, NOOP used to tell the strap \"got it\" anyway — and the strap then freed (erased) that data while the screen said \"synced\". NOOP now archives those raw records on-device before acknowledging, and if it can't save them it leaves them on the strap to retry, so an unrecognised firmware can no longer cost you your data. (#77, #91)",
+                "Fixed (Android): a Health Connect sync no longer blanks a strap-only day. With no WHOOP import, a sync could write a sparse day record that hid your on-device recovery/strain and regressed your sleep stages; Health Connect now only fills days your strap didn't already cover. Nothing was deleted — this restores it. (#112)",
+                "Fixed (Android): the Today screen's Steps, Calories and Weight tiles now show real data instead of always reading \"no data\". Weight falls back to your profile figure when there's no measured reading. (#107)",
+                "New (Mac): Google Gemini as a third bring-your-own-key AI Coach provider, alongside OpenAI and Anthropic.",
+                "New (Mac): a clear \"Standard HR mode\" note when the radio falls back to low-bandwidth heart rate (#80); a guard that refuses an Android backup on Mac instead of overwriting your database; and imported Apple Health body-weight now actually shows up.",
+            ),
+        ),
+        Release(
+            version = "1.81",
+            title = "Start a workout from the Workouts screen, and an honest Smart-alarm note",
+            date = "June 2026",
+            items = listOf(
+                "New (Android): start a workout straight from the Workouts screen, not only from Live — the same sport picker and GPS toggle, with a compact running banner and an End button while one's in progress.",
+                "Changed (Android): the Smart alarm now says plainly that it's experimental and that a WHOOP 5/MG only arms it when Experimental mode is on — so the wake time isn't silently saved against a strap that was never armed. Keep a backup alarm.",
+            ),
+        ),
+        Release(
+            version = "1.80",
+            title = "Journal logging + an Imperial/Metric units toggle",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac and Android): log how you're living — a journal card on the Insights screen with quick yes/no chips for behaviours (caffeine, alcohol, a late meal, screen time, and your own custom questions). Your entries stay on-device and are never overwritten by an import.",
+                "New (Mac and Android): an Imperial / Metric units toggle in Settings — distance (km / mi), weight (kg / lb), height (cm / ft-in) and temperature (°C / °F), with a separate temperature override. Everything stays stored the same; this only changes how it's shown.",
+            ),
+        ),
+        Release(
+            version = "1.79",
+            title = "Manual workouts, edit/dismiss auto-detected ones, and CSV export",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac and Android): add a workout by hand, and edit, re-label, or dismiss the ones NOOP auto-detects — so a misread bout or a duplicate no longer sticks around with no way to remove it. Dismissals are remembered, so a re-detected session stays hidden.",
+                "New (Mac and Android): export all your data as a WHOOP-format CSV bundle (cycles, sleeps, workouts, journal) from Settings — yours to keep, and it imports straight back into NOOP.",
+            ),
+        ),
+        Release(
+            version = "1.78",
+            title = "Fewer false daytime sleeps + an Android sync button",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and Android): a long sedentary daytime stretch — at your desk, on the couch, in a long meeting — no longer gets logged as sleep. Daytime periods now need a longer, genuinely low-heart-rate window before they count, while overnight sleep and real naps are unchanged.",
+                "New (Android): a manual “Sync now” button on the Live screen, plus an honest progress indicator while your strap’s history is offloading.",
+            ),
+        ),
+        Release(
+            version = "1.77",
+            title = "First-run terms acknowledgment + an Explore chart fix",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac and Android): a one-time, plain-English terms acknowledgment on first launch — what NOOP is, that it's independent of WHOOP and that using it may breach WHOOP's Terms of Service, that it's not a medical device, and that you use it at your own risk. Standard for an independent, on-device tool — you accept once. The full terms ship in TERMS.md.",
+                "Fixed (Mac): the Explore metric charts no longer flicker to a straight line when the cursor crosses into or out of the graph.",
+            ),
+        ),
+        Release(
+            version = "1.76",
+            title = "Robust Apple Health import, marginal-radio HR mode, live HR graph",
+            date = "June 2026",
+            items = listOf(
+                "Improved (Mac and Android): a very large Apple Health export no longer fails to import because of a single malformed byte. NOOP now skips the bad spans and imports everything else, and tells you how many it skipped — so multi-year exports that errored out before should come in fine now.",
+                "New (Mac): if your Bluetooth radio can't sustain WHOOP 4's full realtime stream (older Macs, OpenCore setups), NOOP now automatically falls back to a low-bandwidth standard heart-rate mode — so live HR keeps working instead of the connection looping on a drop.",
+                "Fixed (Mac): the Health tab's live heart-rate graph now builds a continuous trace over time, instead of getting stuck showing only two points.",
+            ),
+        ),
+        Release(
+            version = "1.75",
+            title = "Personal vital baselines + Mac analytics parity",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac and Android): the Health Monitor now judges each vital — HRV, resting heart rate, respiratory rate, skin temperature — against YOUR own learned baseline (after about 14 nights), not just a one-size-fits-all population range. So a personal normal that happens to sit outside the textbook band — say a naturally lower HRV — stops reading as \"off\" when it's perfectly fine for you. Until your baseline is established it falls back to the typical range.",
+                "New (Mac): macOS now computes steps, respiratory rate, daily calories and nightly skin temperature on-device, matching what Android already did — and nightly respiration now feeds into the recovery score on both platforms. Existing recoveries are unchanged when respiration isn't available.",
+            ),
+        ),
+        Release(
+            version = "1.74",
+            title = "Android reconnect guide + a startup-crash fix",
+            date = "June 2026",
+            items = listOf(
+                "Android now matches the Mac: if your WHOOP 5.0 / MG can't connect after a firmware update (a Bluetooth pairing reset), NOOP detects it and shows the forget-and-re-pair steps right in the app, instead of silently retrying. (Mac got this in 1.73.)",
+                "Fixed (Android): a rare startup crash on some fast devices (e.g. Galaxy S24+) — the app could crash once on launch when a strap was already connected, then open fine on the second try. (Mac was never affected.)",
+            ),
+        ),
+        Release(
+            version = "1.73",
+            title = "Reconnect help for WHOOP 5.0 / MG after a firmware update",
+            date = "June 2026",
+            items = listOf(
+                "If your WHOOP 5.0 / MG stopped connecting after a WHOOP firmware update, that's a Bluetooth pairing reset — not a lockout, and NOOP works fine on the new firmware. To reconnect: quit the official WHOOP app, forget the strap in your Bluetooth settings, put it in pairing mode (tap the band until the LEDs flash blue), then reconnect. On Mac, NOOP now detects this automatically and shows you these exact steps in-app instead of silently retrying. WHOOP 4.0 is unaffected.",
+            ),
+        ),
+        Release(
+            version = "1.72",
+            title = "GPS workout crash fix (Android)",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Android): starting a GPS-tracked workout could crash the app on Android 12 and newer. GPS needs location permission, which NOOP never requested — and it was capped to older Android versions — so route tracking failed the instant it began. NOOP now asks for location permission right before a GPS workout and fails safe if it's unavailable: the workout still records heart rate and strain, just without a route. If you don't use GPS workouts, nothing changes. (Mac: version bump only.)",
+            ),
+        ),
+        Release(
+            version = "1.71",
+            title = "GPS-tracked workouts (Android)",
+            date = "June 2026",
+            items = listOf(
+                "New (Android): when you start a workout you now pick a sport (searchable), and your phone's GPS records the route, distance and pace as you go. Live distance + pace show on the workout card; at the end the route draws right on the Live screen — entirely offline, no maps are fetched. The session can also write to Health Connect (opt-in, under Data Sources). Builds on the manual workout tracking from v1.67. A community request. (Mac: version bump only.)",
+            ),
+        ),
+        Release(
+            version = "1.70",
+            title = "Clearer sync status + a responsive Compare screen",
+            date = "June 2026",
+            items = listOf(
+                "Improved (Android): the Live screen now says \"Syncing your strap history…\" plainly while the strap is offloading, so it's obvious it's working — the brief status-pill change was easy to miss. (Mac already showed this clearly.)",
+                "Fixed (Mac): the Compare screen's time-range controls now stack instead of overflowing when the window is narrow.",
+            ),
+        ),
+        Release(
+            version = "1.69",
+            title = "Cleaner Live status + better sync diagnostics",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and Android): the \"Last Event\" line on the Live screen no longer shows an internal name when live heart rate starts (it used to read \"BLE_REALTIME_HR…\"). It now only shows meaningful strap events — wrist on/off, double-tap, battery, and so on.",
+                "Diagnostics (Mac and Android): when the strap sends history that NOOP can't decode, the strap log now prints a short hex sample of the dropped records — not just the count. If your WHOOP 4 is on a firmware whose record layout we haven't mapped yet (history syncs but no data appears), turning on Debug logging and sharing the strap log now gives us the exact bytes we need to add support. Chasing one of these now (#91).",
+            ),
+        ),
         Release(
             version = "1.68",
             title = "Sleep figures, HR zones, charging & calibration — a big community-driven update",

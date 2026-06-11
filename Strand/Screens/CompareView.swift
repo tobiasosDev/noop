@@ -256,9 +256,10 @@ struct CompareView: View {
             SectionHeader("Metrics", overline: "Overlay 2–4 signals")
             NoopCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    // On the wide canvas the range pills and the Add menu share one row;
-                    // on compact iPhone width that row overflows (the control alone fills
-                    // the content width), so fall back to stacking the Add menu below it.
+                    // Responsive: range pills + the Add menu share one row when there's room;
+                    // on compact iPhone width or a narrow macOS window that row overflows
+                    // (the control alone fills the content width), so fall back to stacking
+                    // the Add menu below it so the pills don't overflow/clip.
                     // The shared SegmentedPillControl scrolls its own pills when needed.
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .center) {

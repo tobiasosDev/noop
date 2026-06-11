@@ -17,6 +17,191 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.83 — Workout calories (manual sessions + Health Connect imports)
+
+- **Fixed (Mac and Android):** a workout you **start yourself** now estimates its calories from your
+  heart rate — the same model NOOP uses for auto-detected workouts — instead of leaving the field
+  blank. (#117)
+- **Fixed (Android):** workouts imported from **Health Connect** (e.g. Garmin) now show their
+  calories. NOOP credits each session with the active calories burned inside its time window (a
+  Health Connect exercise record carries no energy of its own, so this stitches them together). (#117)
+
+---
+
+## 1.82 — Stop losing strap history we can't yet decode + a board of fixes
+
+- **Fixed (Mac and Android):** NOOP no longer **destroys strap history it can't yet decode**. If a
+  history chunk arrived with a bad checksum or a firmware record layout we haven't mapped, NOOP used
+  to acknowledge it anyway — and the strap then **freed (erased)** that data while the screen said
+  "synced". NOOP now archives those raw records **on-device before acknowledging**, and if it can't
+  save them it leaves them on the strap to retry. An unrecognised firmware can no longer cost you
+  your data. (#77, #91)
+- **Fixed (Android):** a **Health Connect sync no longer blanks a strap-only day**. With no WHOOP
+  import, a sync could write a sparse record that hid your on-device recovery/strain and regressed
+  your sleep stages; Health Connect now only fills days your strap didn't already cover. Nothing was
+  deleted — this restores it. (#112)
+- **Fixed (Android):** the Today screen's **Steps, Calories and Weight** tiles now show real data
+  instead of always "no data"; Weight falls back to your profile figure when there's no measured
+  reading. (#107)
+- **New (Mac):** **Google Gemini** as a third bring-your-own-key AI Coach provider (with OpenAI and
+  Anthropic).
+- **New (Mac):** a clear **"Standard HR mode"** note when the radio falls back to low-bandwidth heart
+  rate (#80); a guard that **refuses an Android backup on Mac** instead of overwriting your database;
+  and imported **Apple Health body-weight** now shows up.
+
+---
+
+## 1.81 — Start a workout from the Workouts screen + an honest Smart-alarm note
+
+- **New (Android):** start a workout straight from the **Workouts** screen, not only from Live — the
+  same searchable sport picker and GPS toggle, with a compact running banner and an **End** button
+  while a session is in progress.
+- **Changed (Android):** the **Smart alarm** now says plainly that it's experimental, and that a
+  WHOOP 5/MG only arms it when **Experimental mode** is on — so your wake time is no longer silently
+  saved against a strap that was never armed. Keep a backup alarm until you've confirmed it wakes you.
+
+---
+
+## 1.80 — Journal logging + an Imperial/Metric units toggle
+
+- **New (Mac and Android):** a journal card on Insights — quick yes/no chips for behaviours (caffeine,
+  alcohol, a late meal, screen time, and your own custom questions) so you can see what moves your
+  recovery. Entries stay on-device and are never overwritten by an import.
+- **New (Mac and Android):** an Imperial / Metric units toggle in Settings — distance, weight, height
+  and temperature, with a separate temperature override. Display-only; stored data is unchanged.
+
+---
+
+## 1.79 — Manual workouts, edit/dismiss auto-detected ones, and CSV export
+
+- **New (Mac and Android):** add a workout by hand, and edit, re-label, or **dismiss** the ones NOOP
+  auto-detects — so a misread or duplicate bout no longer sticks around with no way to remove it.
+  Dismissals are remembered, so a re-detected session stays hidden.
+- **New (Mac and Android):** export all your data as a WHOOP-format CSV bundle (cycles, sleeps,
+  workouts, journal) from Settings — yours to keep, and it imports straight back into NOOP.
+
+---
+
+## 1.78 — Fewer false daytime sleeps + an Android sync button
+
+- **Fixed (Mac and Android):** a long sedentary daytime stretch no longer gets logged as sleep —
+  daytime periods now need a longer, genuinely low-heart-rate window, while nights and real naps stay
+  unchanged.
+- **New (Android):** a manual "Sync now" button on the Live screen + an honest progress indicator
+  while strap history offloads.
+- **Repo:** contributor guidelines, issue/PR templates, a security policy, and build-check CI added.
+
+---
+
+## 1.77 — First-run terms acknowledgment + an Explore chart fix
+
+- **New (Mac and Android):** a one-time, plain-English terms acknowledgment on first launch — what
+  NOOP is, that it's independent of WHOOP and that using it may breach WHOOP's Terms of Service, that
+  it's not a medical device, and that you use it at your own risk. You accept once; full terms in
+  `TERMS.md`.
+- **Fixed (Mac):** the Explore metric charts no longer flicker to a straight line when the cursor
+  crosses into or out of the graph.
+
+---
+
+## 1.76 — Robust Apple Health import, marginal-radio HR mode, live HR graph
+
+- **Improved (Mac and Android):** a very large Apple Health export no longer fails to import because
+  of a single malformed byte — NOOP skips the bad spans and imports everything else, reporting how
+  many it skipped. Multi-year exports that errored out before should come in fine now.
+- **New (Mac):** if your Bluetooth radio can't sustain WHOOP 4's full realtime stream (older Macs /
+  OpenCore), NOOP now falls back to a low-bandwidth standard heart-rate mode, so live HR keeps working
+  instead of looping on a dropped connection.
+- **Fixed (Mac):** the Health tab's live heart-rate graph now builds a continuous trace over time
+  instead of getting stuck on two points.
+
+---
+
+## 1.75 — Personal vital baselines + Mac analytics parity
+
+- **New (Mac and Android):** the Health Monitor now judges each vital — HRV, resting heart rate,
+  respiratory rate, skin temperature — against **your own learned baseline** (after ~14 nights),
+  not just a one-size-fits-all population range. A personal normal that sits outside the textbook
+  band (e.g. a naturally lower HRV) stops reading as "off" when it's fine for you. Falls back to the
+  typical range until your baseline is established.
+- **New (Mac):** macOS now computes steps, respiratory rate, daily calories and nightly skin
+  temperature on-device, matching Android — and nightly respiration now feeds the recovery score on
+  both platforms (existing recoveries unchanged when respiration isn't available).
+
+---
+
+## 1.74 — Android reconnect guide + a startup-crash fix
+
+- **Android reconnect guide (parity with Mac 1.73):** if your WHOOP 5.0 / MG can't connect after a
+  firmware update (a Bluetooth pairing reset), NOOP now detects it and shows the forget-and-re-pair
+  steps right in the app, instead of silently retrying.
+- **Fixed (Android):** a rare startup crash on some fast devices (e.g. Galaxy S24+) — the app could
+  crash once on launch when a strap was already connected, then open fine on the second try. Mac was
+  never affected.
+
+---
+
+## 1.73 — Reconnect help for WHOOP 5.0 / MG after a firmware update
+
+- **If your WHOOP 5.0 / MG stopped connecting after a WHOOP firmware update**, that's a Bluetooth
+  pairing reset — not a lockout, and NOOP works fine on the new firmware. To reconnect: quit the
+  official WHOOP app, forget the strap in your Bluetooth settings, put it in pairing mode (tap the
+  band until the LEDs flash blue), then reconnect. On Mac, NOOP now detects this automatically and
+  shows you these exact steps in-app instead of silently retrying. WHOOP 4.0 is unaffected.
+
+---
+
+## 1.72 — GPS workout crash fix (Android)
+
+- **Fixed (Android):** starting a GPS-tracked workout could crash the app on Android 12 and newer.
+  GPS needs location permission, which NOOP never requested — and it was capped to older Android
+  versions — so route tracking failed the instant it began. NOOP now asks for location permission
+  right before a GPS workout and fails safe if it's unavailable: the workout still records heart rate
+  and strain, just without a route. If you don't use GPS workouts, nothing changes. (Mac: version
+  bump only.)
+
+---
+
+## 1.71 — GPS-tracked workouts (Android)
+
+A community-requested feature, built on the v1.67 manual workout tracking.
+
+- **Pick a sport on start.** Tapping "Start workout" opens a searchable picker (the Health Connect
+  exercise-type catalogue, ~21 sports) + a "Track GPS route" toggle that defaults on for distance sports.
+- **GPS route / distance / pace** via the platform `LocationManager` (no Google Play Services dependency).
+  Live distance + pace show on the workout card; accuracy/teleport filtering via a pure `TrackFilter`.
+- **Offline route drawing** — the route is stored as an encoded polyline (`WorkoutRow.routePolyline`,
+  Room migration 3→4) and drawn on a blank Compose `Canvas` (`RouteCanvas`) — **no map tiles fetched.**
+- **Health Connect writeback** — an `ExerciseSession` (+ `DistanceRecord`) on save, opt-in under Data
+  Sources (unions `EXERCISE_PERMISSIONS` into the writeback request; non-fatal if not granted).
+- New: `RouteMath` (Haversine/pace/polyline/normalize), `WorkoutSport`/`ExerciseTypes`, `LocationTracker`,
+  `RouteCanvas`; `WhoopConnectionService` gains the `location` foreground-service type. Mac: version bump only.
+- *Follow-ups:* per-session route on the Workouts screen; screen-off background tracking (dynamic FGS type).
+
+## 1.70 — Clearer sync status + responsive Compare (#91, #93)
+
+- **Android: sync is now visibly in progress.** The Live screen shows a plain "Syncing your strap
+  history…" line while the strap offloads, instead of only a brief "· syncing" pill suffix that was easy
+  to miss (#91, #93). `LiveScreen.kt`. Mac already surfaced this.
+- **macOS: responsive Compare controls.** The time-range pills + Add menu now stack (`ViewThatFits`)
+  instead of overflowing on a narrow window — ported from the iOS port's fix. `CompareView.swift`.
+
+## 1.69 — Cleaner Live status + sync diagnostics (#91, #92)
+
+- **Fixed (Mac + Android): "Last Event" no longer leaks plumbing.** The Live status field was showing
+  the raw internal event `BLE_REALTIME_HR_ON` (truncated to "BLE_REALTIME_…") whenever live HR started
+  — confusing (#92). Both platforms now skip the `BLE_REALTIME_HR_ON/OFF` stream toggle in that field;
+  every meaningful event (wrist on/off, double-tap, battery, bonded…) still shows. Swift `FrameRouter`
+  EVENT case + Android `WhoopBleClient` non-gesture branch.
+- **Diagnostics (Mac + Android): dump rejected-frame hex.** Building on the v1.65 "decoded to 0 rows"
+  WARNING — when a history chunk has frames that all fail to decode (CRC / unmapped firmware layout /
+  out-of-range timestamp), the Backfiller now logs a hex sample of the first 3 rejected frames (≤64 B
+  each). #91 is the first confirmed in-the-wild case (Moto Razr fold, WHOOP 4, layout the v1.66 fallback
+  didn't catch) — the count alone can't be decoded, but the bytes let us map the firmware's layout.
+  `Backfiller.swift` + `Backfiller.kt` at the WARNING site.
+- **Docs:** corrected the stale "macOS AI Coach is sandbox-blocked" claim in README + PRIVACY_SECURITY —
+  the distributed macOS build is unsandboxed, so the opt-in Coach works on both platforms.
+
 ## 1.68 — Sleep figures, HR zones, charging, calibration (thanks iHateSubscriptions, #88)
 
 A large community contribution (#88), reviewed hard and reimplemented as our own commit onto v1.67.

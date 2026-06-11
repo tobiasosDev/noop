@@ -64,6 +64,14 @@ public final class LiveState: ObservableObject {
     /// unknowable from the protocol, so a count, never a percent).
     @Published public var syncChunksThisSession: Int = 0
 
+    /// Undecodable HISTORICAL_DATA record frames seen this offload session whose raw bytes WERE
+    /// preserved to the on-device archive (#77 / #91). Drives the honest "saved on this Mac" sync
+    /// status. Reset at session start.
+    @Published public var rejectedFramesThisSession: Int = 0
+    /// Undecodable record frames the archive could NOT preserve this session (the ~5 MB cap was
+    /// reached). Kept separate so the sync status never claims "saved" for bytes that were not.
+    @Published public var rejectedFramesUnarchived: Int = 0
+
     /// Optional hook invoked on every battery update (wired by LiveViewModel to the alert monitor).
     /// Kept as a closure so LiveState stays a plain observable snapshot with no alert dependency.
     public var onBatteryUpdate: ((Double) -> Void)?
@@ -79,6 +87,19 @@ public final class LiveState: ObservableObject {
     /// is insufficient") — CoreBluetooth won't start a fresh just-works bond against a strap still bonded to
     /// the official WHOOP app. Surfaced as actionable pairing-mode guidance; cleared once the link bonds.
     @Published public var pairingHint: String? = nil
+
+    /// Set when a connect attempt fails because the strap wiped its bond ("Peer removed pairing
+    /// information") — a firmware update, or the official WHOOP app re-bonding it. macOS keeps re-presenting
+    /// the now-stale pairing key, so reconnects loop on the same error with no recovery. Carries an
+    /// actionable forget-and-re-pair guide; cleared on the next successful connect. (5/MG firmware reset, 2026-06)
+    @Published public var reconnectGuide: String? = nil
+
+    /// Set when NOOP detects a marginal Bluetooth radio that can't sustain the WHOOP 4 R10/R11 raw realtime
+    /// stream (#80 — a 2016 Mac / OpenCore drops the link the instant that high-bandwidth burst is armed).
+    /// After repeated arm-then-timeout cycles NOOP stops arming the heavy stream and falls back to the
+    /// low-bandwidth 0x2A37 standard Heart Rate profile, so live HR can still flow on a radio that otherwise
+    /// looped forever. Informational note for the Live screen; cleared on a clean reconnect or Live re-open.
+    @Published public var standardHRMode: String? = nil
 
     public init() {}
 

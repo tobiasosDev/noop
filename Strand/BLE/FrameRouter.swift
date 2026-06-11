@@ -49,7 +49,12 @@ public final class FrameRouter {
 
         case "EVENT":
             if let ev = parsed.parsed["event"]?.stringValue {
-                state.lastEvent = ev
+                // #92: don't surface the live-HR stream toggle (BLE_REALTIME_HR_ON/OFF) in "Last
+                // Event" — it's internal plumbing that fires on every connect and just confuses
+                // users. Every other event (wrist, double-tap, battery, bonded…) still shows.
+                if !ev.hasPrefix("BLE_REALTIME_HR") {
+                    state.lastEvent = ev
+                }
                 // Alarm diagnosis: alarm-lifecycle + RTC events otherwise only hit the Live
                 // tile and vanish — surface them in the exported log (ALARM_SET=56 proves the
                 // strap ACCEPTED an arm; EXECUTED=57 proves it fired; RTC_LOST=13 kills both).

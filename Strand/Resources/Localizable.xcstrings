@@ -355,7 +355,6 @@
       }
     },
     "%@ · %@": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
@@ -3753,7 +3752,6 @@
       }
     },
     "Find it in the sidebar under Data Sources.": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
@@ -4748,7 +4746,6 @@
       }
     },
     "Insights read your journal and outcomes. Import your WHOOP export, which includes your journal, in Data Sources to unlock them.": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
@@ -8306,7 +8303,6 @@
       }
     },
     "Scan": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
@@ -8614,7 +8610,6 @@
       }
     },
     "Skip for now": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {

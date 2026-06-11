@@ -193,6 +193,71 @@ class WhoopRepository(private val dao: WhoopDao) {
     suspend fun deleteComputedWorkouts(deviceId: String, sport: String, from: Long, to: Long) =
         dao.deleteWorkoutsBySport(deviceId, sport, from, to)
 
+    // MARK: - Workout editing (manual add/edit · relabel · dismiss · delete) (#107)
+    //
+    // Mirrors macOS Repository's workout-editing surface. Manual workouts live under the strap source
+    // ([strapDeviceId], source "manual") — the same place live-tracked sessions land. Detected bouts
+    // live under "<strapDeviceId>-noop" with sport "detected" and are wiped + re-derived each engine
+    // run, so a durable dismissal is recorded in the independent `dismissedWorkout` table.
+
+    /** Dismissed detected-bout markers for the computed source of [strapDeviceId]. */
+    suspend fun dismissedDetected(strapDeviceId: String = "my-whoop"): List<DismissedWorkout> =
+        dao.dismissedWorkouts(computedDeviceId(strapDeviceId))
+
+    /**
+     * Persist a retroactive / edited manual workout under the strap source. [replacing] is the row the
+     * edit started from:
+     *  - editing a DETECTED bout replaces it with this manual row — the detected original is dismissed
+     *    durably so the re-detector doesn't bring it back (else both would show);
+     *  - editing a MANUAL row whose natural key (startTs/sport) changed deletes the stale row first
+     *    (the (deviceId, startTs, sport) PK upsert would otherwise orphan it);
+     *  - an IMPORTED row is never passed here as `replacing` (duplicating one is a pure add).
+     */
+    suspend fun saveManualWorkout(row: WorkoutRow, replacing: WorkoutRow? = null) {
+        if (replacing != null && replacing.source.lowercase().endsWith("-noop")) {
+            dismissDetected(replacing)
+        } else if (replacing != null && (replacing.startTs != row.startTs || replacing.sport != row.sport)) {
+            dao.deleteWorkoutByKey(replacing.deviceId, replacing.startTs, replacing.sport)
+        }
+        dao.upsertWorkouts(listOf(row))
+    }
+
+    /**
+     * Re-label a detected bout: copy it to a manual strap row with the chosen [sport], then delete the
+     * detected original. Survives analyzeRecent — the engine re-derives only sport="detected" rows AND
+     * skips any re-derived bout overlapping a real strap workout, which this copy now is — so the same
+     * session is never re-created as a duplicate. (#107)
+     */
+    suspend fun relabelDetected(row: WorkoutRow, sport: String, strapDeviceId: String = "my-whoop") {
+        val trimmed = sport.trim()
+        if (trimmed.isEmpty()) return
+        val manual = row.copy(deviceId = strapDeviceId, sport = trimmed, source = "manual")
+        dao.upsertWorkouts(listOf(manual))
+        dao.deleteWorkoutsBySport(computedDeviceId(strapDeviceId), "detected", row.startTs, row.startTs)
+    }
+
+    /**
+     * Dismiss a DETECTED bout the user says isn't a workout: record a durable marker (so a re-detect
+     * that recreates the same PK stays hidden) AND delete the current row so it disappears now.
+     * No-op when the row isn't a detected bout. (#107)
+     */
+    suspend fun dismissDetected(row: WorkoutRow) {
+        if (!row.source.lowercase().endsWith("-noop")) return
+        // Marker carries the bout's [startTs, endTs] span so a re-detected bout whose boundary drifts
+        // still overlaps it and stays hidden (matches macOS dismissed-span semantics).
+        dao.insertDismissed(listOf(DismissedWorkout(row.deviceId, row.startTs, row.endTs)))
+        dao.deleteWorkoutsBySport(row.deviceId, row.sport, row.startTs, row.startTs)
+    }
+
+    /**
+     * Delete ONE workout. A detected bout is dismissed durably (so it doesn't come back on the next
+     * re-detect); everything else is removed by its exact natural key. (#107)
+     */
+    suspend fun deleteWorkout(row: WorkoutRow) {
+        if (row.source.lowercase().endsWith("-noop")) { dismissDetected(row); return }
+        dao.deleteWorkoutByKey(row.deviceId, row.startTs, row.sport)
+    }
+
     suspend fun respSamples(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.respSamples(deviceId, from, to, limit)
 
@@ -215,6 +280,11 @@ class WhoopRepository(private val dao: WhoopDao) {
     /** Journal entries for the inclusive day range [from, to] (YYYY-MM-DD), oldest first. */
     suspend fun journal(deviceId: String, from: String, to: String): List<JournalEntry> =
         dao.journal(deviceId, from, to)
+
+    /** Delete one native journal answer by natural key (only ever called with the "noop-journal"
+     *  source id — imported rows are never touched). */
+    suspend fun deleteJournalEntry(deviceId: String, day: String, question: String) =
+        dao.deleteJournalEntry(deviceId, day, question)
 
     /** Apple-Health daily aggregates for the inclusive day range [from, to] (YYYY-MM-DD), oldest first. */
     suspend fun appleDaily(deviceId: String, from: String, to: String): List<AppleDaily> =
@@ -321,10 +391,29 @@ class WhoopRepository(private val dao: WhoopDao) {
             // otherwise blank them on days the import also covers. (#78)
             for (d in imported) {
                 val c = byDay[d.day]
+                // Per-FIELD coalesce: the imported row wins for every column it actually has, but any
+                // column it leaves null is gap-filled from the computed row. A real WHOOP import has
+                // its scores/stages set, so "d.x ?: c.x" is a no-op there. A Health Connect import,
+                // though, writes a "my-whoop" row with recovery/strain/sleep-stages NULL — without this
+                // it would BLANK a strap-computed day (and a stale one already written stays blanked).
+                // Coalescing every nullable field both prevents that and HEALS days already shadowed. (#112)
                 byDay[d.day] = if (c == null) d else d.copy(
+                    totalSleepMin = d.totalSleepMin ?: c.totalSleepMin,
+                    efficiency = d.efficiency ?: c.efficiency,
+                    deepMin = d.deepMin ?: c.deepMin,
+                    remMin = d.remMin ?: c.remMin,
+                    lightMin = d.lightMin ?: c.lightMin,
+                    disturbances = d.disturbances ?: c.disturbances,
+                    restingHr = d.restingHr ?: c.restingHr,
+                    avgHrv = d.avgHrv ?: c.avgHrv,
+                    recovery = d.recovery ?: c.recovery,
+                    strain = d.strain ?: c.strain,
+                    exerciseCount = d.exerciseCount ?: c.exerciseCount,
+                    spo2Pct = d.spo2Pct ?: c.spo2Pct,
+                    skinTempDevC = d.skinTempDevC ?: c.skinTempDevC,
+                    respRateBpm = d.respRateBpm ?: c.respRateBpm,
                     steps = d.steps ?: c.steps,
                     activeKcalEst = d.activeKcalEst ?: c.activeKcalEst,
-                    respRateBpm = d.respRateBpm ?: c.respRateBpm,
                 )
             }
             return byDay.values.sortedBy { it.day }

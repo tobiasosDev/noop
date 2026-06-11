@@ -18,9 +18,6 @@ settings:
     # String Catalog on build (the English (US) base entries).
     SWIFT_EMIT_LOC_STRINGS: YES
     SWIFT_STRICT_CONCURRENCY: minimal
-    # Emit localizable strings so Xcode auto-extracts every LocalizedStringKey into the
-    # String Catalog on build (the English (US) base entries).
-    SWIFT_EMIT_LOC_STRINGS: YES
     DEVELOPMENT_TEAM: "48XAPJ6DGL"
     CODE_SIGN_STYLE: Automatic
     # Build for both Apple Silicon and Intel so the release runs on every Mac.

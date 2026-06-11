@@ -34,11 +34,22 @@ struct LiveView: View {
                        subtitle: "Your strap in real time — heart rate and frames as they arrive.") {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 connectionRow
+                // Can't-connect-at-all guidance: the strap wiped its bond (firmware update / WHOOP app
+                // re-bond), so connects loop on "Peer removed pairing information". Show the re-pair steps
+                // right here instead of silently retrying. (5/MG firmware reset, 2026-06)
+                if let guide = live.reconnectGuide { reconnectGuideBanner(guide) }
                 // Bond-refused guidance, shown right here on Live where people actually connect (it
                 // also appears in Settings). A 5/MG strap still bonded to the WHOOP app refuses pairing
                 // with "Encryption is insufficient" — this tells the user to free it and re-pair.
                 if let hint = live.pairingHint { pairingHintBanner(hint) }
                 heartRateCard
+                // Low-bandwidth fallback note (#80): the radio couldn't sustain the WHOOP 4 R10/R11 raw
+                // realtime burst, so live HR is riding the standard BLE Heart-Rate profile instead. Live HR
+                // still works — this is informational, not an error — so it sits right under the readout in
+                // a calm accent treatment rather than the amber warning banners above.
+                if Self.shouldShowStandardHRNote(live.standardHRMode) {
+                    standardHRNote(live.standardHRMode ?? "")
+                }
                 statusGrid
                 workoutSection
                 // Show the strap picker whenever we're not actively streaming, so a user with both a
@@ -231,6 +242,28 @@ struct LiveView: View {
         return String(format: "%d:%02d", s / 60, s % 60)
     }
 
+    private func reconnectGuideBanner(_ guide: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(StrandPalette.statusWarning)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Can't connect — your strap's pairing was reset")
+                    .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
+                Text(guide)
+                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(StrandPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(StrandPalette.statusWarning.opacity(0.5), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Reconnect help: \(guide)")
+    }
+
     private func pairingHintBanner(_ hint: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -251,6 +284,43 @@ struct LiveView: View {
             .strokeBorder(StrandPalette.statusWarning.opacity(0.5), lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Pairing help: \(hint)")
+    }
+
+    /// Whether the low-bandwidth standard-HR fallback note should render. The note explains that live HR
+    /// is coming over the standard BLE Heart-Rate profile because the radio couldn't sustain the full
+    /// stream (#80). Shown only when LiveState carries a non-empty note string; pure so it's unit-testable
+    /// without standing up a SwiftUI view.
+    static func shouldShowStandardHRNote(_ note: String?) -> Bool {
+        guard let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return true
+    }
+
+    /// Calm inline note for the #80 low-bandwidth fallback. Unlike the amber pairing/reconnect banners this
+    /// is NOT a warning — live HR is working — so it uses the accent (health-green) treatment with a signal
+    /// glyph. Mirrors the banner layout (icon + headline + one-line explanation) for visual consistency.
+    private func standardHRNote(_ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .foregroundStyle(StrandPalette.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Standard HR mode (low bandwidth)")
+                    .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
+                Text(detail)
+                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Other metrics (R-R, frames, battery, history) need a full sync.")
+                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(StrandPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(StrandPalette.accent.opacity(0.4), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Standard HR mode, low bandwidth. \(detail)")
     }
 
     // MARK: - Strap picker

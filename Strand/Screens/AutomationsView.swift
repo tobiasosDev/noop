@@ -136,7 +136,7 @@ struct AutomationsView: View {
                               isOn: $behavior.reliableWristAlarm)
                 }
                 if behavior.smartAlarmEnabled {
-                    Text("You always get a phone notification at your wake time. The wrist buzz is delivered live over Bluetooth — turn on “Reliable wrist buzz” to keep it firing while the phone is locked. On WHOOP 5/MG the wrist path is experimental.")
+                    Text("You always get a phone notification at your wake time. The wrist buzz is delivered live over Bluetooth — turn on “Reliable wrist buzz” to keep it firing while the phone is locked. On WHOOP 5/MG the wrist path is experimental — a strap-driven wake-up hasn't been verified yet, so don't rely on it as your only alarm there; WHOOP 4 is the proven path.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)

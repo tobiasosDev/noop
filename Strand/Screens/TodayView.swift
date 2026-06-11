@@ -61,6 +61,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 HealthAlertBanner()
                 if repo.today?.recovery == nil {
+                    // While the strap is mid-offload, say so — empty tiles read as final otherwise (#77).
                     if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
                     DataPendingNote(
                         title: "Live now. Your scores are building.",

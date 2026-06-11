@@ -104,6 +104,14 @@ extension WhoopStore {
         }
     }
 
+    /// Delete one journal answer by natural key (the native logging card's "clear"). Source-scoped
+    /// by deviceId, so clearing a native ("noop-journal") answer never removes an identical imported
+    /// row. Returns rows deleted.
+    @discardableResult
+    public func deleteJournal(deviceId: String, day: String, question: String) async throws -> Int {
+        try await deleteJournal(deviceId: deviceId, day: day, questions: [question])
+    }
+
     /// Upsert workouts. Natural key (deviceId, startTs, sport). Returns rows changed.
     @discardableResult
     public func upsertWorkouts(_ rows: [WorkoutRow], deviceId: String) async throws -> Int {

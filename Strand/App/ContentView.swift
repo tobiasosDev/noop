@@ -7,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("noop.onboarded") private var onboarded = false
     @AppStorage("noop.lastSeenChangelogVersion") private var lastSeenChangelog = ""
+    @AppStorage("noop.acceptedTermsVersion") private var acceptedTerms = ""
     @State private var showWhatsNew = false
 
     var body: some View {
@@ -37,8 +38,16 @@ struct ContentView: View {
                 .transition(.opacity)
                 .zIndex(1)
             }
+            // Terms acknowledgment gate — over EVERYTHING (before onboarding/pairing/Bluetooth) until
+            // the current terms version is accepted; re-appears if the terms materially change.
+            if acceptedTerms != Terms.currentVersion {
+                TermsGateView(onAccept: { acceptedTerms = Terms.currentVersion })
+                    .transition(.opacity)
+                    .zIndex(2)
+            }
         }
         .animation(.easeInOut(duration: 0.35), value: onboarded)
+        .animation(.easeInOut(duration: 0.35), value: acceptedTerms)
         .sheet(isPresented: $showWhatsNew) {
             WhatsNewView(onClose: {
                 lastSeenChangelog = AppChangelog.currentVersion

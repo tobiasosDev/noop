@@ -15,6 +15,16 @@ final class IntelligenceEngine: ObservableObject {
     private let profile: ProfileStore
     private let deviceId: String
 
+    // In-process memo of each night's wear-gated skin-temp MEAN (baseline-independent, like
+    // avgHrv), keyed by day. The raw mean has no DailyMetric column, so without this the
+    // incremental frontier gate would starve the skin-temp baseline: cached nights could
+    // contribute nothing and steady-state runs only re-analyse 1–2 fresh nights — never enough
+    // to seed the fold. Seeded by the first (full, frontier-ignoring) pass of each launch;
+    // bounded growth (one entry per scored day).
+    private var skinMeanMemo: [String: Double?] = [:]
+    /// False until one full (frontier-ignoring) pass has completed this launch.
+    private var seededSkinMemo = false
+
     @Published var results: [Computed] = []      // newest first
     @Published var computing = false
     @Published var note: String?
@@ -40,7 +50,9 @@ final class IntelligenceEngine: ObservableObject {
         guard !computing else { return }
         guard let store = await repo.storeHandle() else { note = "No on-device store yet."; return }
         guard let hrvCfg = Baselines.metricCfg["hrv"],
-              let rhrCfg = Baselines.metricCfg["resting_hr"] else { return }
+              let rhrCfg = Baselines.metricCfg["resting_hr"],
+              let respCfg = Baselines.metricCfg["resp"],
+              let skinCfg = Baselines.metricCfg["skin_temp"] else { return }
 
         computing = true
         defer { computing = false }
@@ -60,7 +72,12 @@ final class IntelligenceEngine: ObservableObject {
         // cheaply from the stored avgHrv/restingHr as the baseline grows). Without this, all 21
         // nights re-fetched 4 raw streams (limit 200k each) every 15 minutes. A night with no
         // cached row is always analysed, so late backfill of a previously-empty night still lands.
-        let frontier = (try? await store.cursor("intel_hr_frontier")) ?? 0
+        //
+        // Composition with the skin-temp baseline: a night's wear-gated skin-temp MEAN is needed
+        // for the fold but is not persisted, so the FIRST run of each launch ignores the stored
+        // frontier (one full pass — the same cost as a cold start) to seed `skinMeanMemo`;
+        // subsequent incremental runs feed cached nights' means from the memo.
+        let frontier = seededSkinMemo ? ((try? await store.cursor("intel_hr_frontier")) ?? 0) : 0
         let latestHrTs = (try? await store.latestHRSampleTs(deviceId: deviceId)) ?? 0
         let cachedByDay: [String: DailyMetric] = Dictionary(
             ((try? await store.dailyMetrics(
@@ -83,10 +100,14 @@ final class IntelligenceEngine: ObservableObject {
         // except recovery is baseline-independent, so pass 2 only re-scores the cheap recovery
         // composite. The hr/rr/resp/gravity arrays go out of scope each iteration (memory stays bounded).
         var scoredNights: [(daily: DailyMetric, strain: Double?, cachedSleep: [CachedSleepSession],
-                            workouts: [ExerciseSession])] = []
+                            workouts: [ExerciseSession], nightlySkin: Double?)] = []
         // Nightly values harvested in pass 1, keyed by day, to seed the pass-2 baseline.
         var nightlyHrvByDay: [String: Double?] = [:]
         var nightlyRhrByDay: [String: Double?] = [:]
+        // On-device RSA respiration + wear-gated skin-temp means (baseline-independent), harvested to
+        // seed resp/skin-temp baselines the same way avgHrv seeds the HRV baseline.
+        var nightlyRespByDay: [String: Double?] = [:]
+        var nightlySkinByDay: [String: Double?] = [:]
 
         for offset in 0..<maxDays {
             let dayStart = now - offset * 86_400
@@ -97,11 +118,17 @@ final class IntelligenceEngine: ObservableObject {
 
             // Closed night already scored → reuse the persisted daily; skip the 4 raw-stream reads.
             // Its sleep sessions and detected workouts are already upserted, so they aren't
-            // re-collected (empty here).
+            // re-collected (empty here). respRateBpm IS persisted, so cached nights keep feeding
+            // the resp baseline; the raw skin mean is not, so it comes from the in-memory memo
+            // seeded by this launch's first full pass.
             if to <= frontier, let cached = cachedByDay[day] {
                 nightlyHrvByDay[day] = cached.avgHrv
                 nightlyRhrByDay[day] = cached.restingHr.map(Double.init)
-                scoredNights.append((daily: cached, strain: cached.strain, cachedSleep: [], workouts: []))
+                nightlyRespByDay[day] = cached.respRateBpm
+                let skinMean = skinMeanMemo[day] ?? nil
+                nightlySkinByDay[day] = skinMean
+                scoredNights.append((daily: cached, strain: cached.strain, cachedSleep: [],
+                                     workouts: [], nightlySkin: skinMean))
                 continue
             }
 
@@ -110,19 +137,38 @@ final class IntelligenceEngine: ObservableObject {
             let rr = (try? await store.rrIntervals(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
             let resp = (try? await store.respSamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
             let grav = (try? await store.gravitySamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
+            let steps = (try? await store.stepSamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
+            let skin = (try? await store.skinTempSamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
+
+            // Calendar-day window for the ADDITIVE daily totals (steps + calories). The night window
+            // above is anchored to the current UTC time-of-day and ends at dayStart+12h, so for a PAST
+            // day whose late hours sit after that bound those hours are never read and the totals
+            // undercount. Read exactly [midnightUtc(day), midnightUtc(day)+86400) and hand it to
+            // analyzeDay's dayHr/daySteps, which use it ONLY for those totals. (floorMod so the
+            // midnight floor is correct for any sign; the store range is inclusive, so end at -1 s.)
+            let dayMid = dayStart - ((dayStart % 86_400) + 86_400) % 86_400
+            let dayEnd = dayMid + 86_400 - 1
+            let dayHr = (try? await store.hrSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
+            let daySteps = (try? await store.stepSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
 
             let res = await Task.detached(priority: .utility) {
                 AnalyticsEngine.analyzeDay(day: day, hr: hr, rr: rr, resp: resp, gravity: grav,
+                                           steps: steps, dayHr: dayHr, daySteps: daySteps,
+                                           skinTemp: skin,
                                            profile: up, baselines: baselines1, maxHROverride: maxHR,
-                                           // Date-aware offset: each historical day uses ITS OWN UTC
-                                           // offset so DST transitions don't shift night/day routing.
+                                           // Date-aware offset for the daytime false-sleep guard
+                                           // (#90): each historical day uses ITS OWN UTC offset so
+                                           // DST transitions don't shift night/day routing.
                                            tzOffsetS: TimeZone.current.secondsFromGMT(
                                                for: Date(timeIntervalSince1970: TimeInterval(dayStart))))
             }.value
             nightlyHrvByDay[res.daily.day] = res.daily.avgHrv
             nightlyRhrByDay[res.daily.day] = res.daily.restingHr.map(Double.init)
+            nightlyRespByDay[res.daily.day] = res.daily.respRateBpm
+            nightlySkinByDay[res.daily.day] = res.nightlySkinTempC
+            skinMeanMemo[res.daily.day] = res.nightlySkinTempC
             scoredNights.append((daily: res.daily, strain: res.strain, cachedSleep: res.cachedSleep,
-                                 workouts: res.workouts))
+                                 workouts: res.workouts, nightlySkin: res.nightlySkinTempC))
             await Task.yield()
         }
 
@@ -134,23 +180,44 @@ final class IntelligenceEngine: ObservableObject {
         // imported with a nil avgHrv stays imported, not overwritten by the computed value).
         var histHrvByDay: [String: Double?] = [:]
         var histRhrByDay: [String: Double?] = [:]
-        for d in hist { histHrvByDay[d.day] = d.avgHrv; histRhrByDay[d.day] = d.restingHr.map(Double.init) }
+        var histRespByDay: [String: Double?] = [:]
+        for d in hist {
+            histHrvByDay[d.day] = d.avgHrv
+            histRhrByDay[d.day] = d.restingHr.map(Double.init)
+            histRespByDay[d.day] = d.respRateBpm
+        }
         for (day, v) in nightlyHrvByDay where histHrvByDay[day] == nil { histHrvByDay[day] = v }
         for (day, v) in nightlyRhrByDay where histRhrByDay[day] == nil { histRhrByDay[day] = v }
+        for (day, v) in nightlyRespByDay where histRespByDay[day] == nil { histRespByDay[day] = v }
         let hrvSeq = histHrvByDay.keys.sorted().map { histHrvByDay[$0]! }   // chronological [Double?]
         let rhrSeq = histRhrByDay.keys.sorted().map { histRhrByDay[$0]! }
+        let respSeq = histRespByDay.keys.sorted().map { histRespByDay[$0]! }
+        // Skin-temp baseline is on-device-only (imported rows carry skinTempDevC, not the raw mean),
+        // so fold purely over the pass-1 nightly means in chronological order.
+        let skinSeq = nightlySkinByDay.keys.sorted().map { nightlySkinByDay[$0]! }
+        // Resp baseline gated on `usable`: RecoveryScorer includes the resp term whenever a
+        // baseline object is present — a CALIBRATING (<4-night) baseline would let one noisy
+        // RSA night move recovery (mirrors the skin-temp use-site gate; honest cold-start).
+        let respFold = Baselines.foldHistory(respSeq, cfg: respCfg)
         let baselines2 = AnalyticsEngine.ProfileBaselines(
             hrv: Baselines.foldHistory(hrvSeq, cfg: hrvCfg),
-            restingHR: Baselines.foldHistory(rhrSeq, cfg: rhrCfg))
+            restingHR: Baselines.foldHistory(rhrSeq, cfg: rhrCfg),
+            resp: respFold.usable ? respFold : nil,
+            skinTemp: Baselines.foldHistory(skinSeq, cfg: skinCfg))
 
-        // Imported workouts in the scored window, used to de-duplicate detected bouts so a user who
-        // BOTH imports real WHOOP workouts AND wears the strap doesn't see the same session twice
-        // (the per-day merge precedence does not cover the workout table). Port of the Android block
-        // in IntelligenceEngine.kt analyzeRecent. (`computedId` is declared at the top of this
-        // method — the incremental gate needs it before pass 1.)
+        // Real (non-detected) workouts in the scored window, used to de-duplicate detected bouts so a
+        // user who BOTH has real sessions AND wears the strap doesn't see the same session twice (the
+        // per-day merge precedence does not cover the workout table). This covers BOTH directions of
+        // the cross-source duplicate (#107): the strap source carries imported WHOOP rows AND manual /
+        // re-labelled rows (both written under `deviceId`), and apple-health carries Health imports —
+        // a detected bout overlapping ANY of them is skipped below. Port of the Android dedup block.
+        // (`computedId` is declared at the top of this method — the incremental gate needs it
+        // before pass 1.)
         let windowStart = now - maxDays * 86_400 - 30 * 3_600
-        let importedWorkouts = (try? await store.workouts(deviceId: deviceId, from: windowStart,
-                                                          to: now, limit: 100_000)) ?? []
+        var realWorkouts = (try? await store.workouts(deviceId: deviceId, from: windowStart,
+                                                       to: now, limit: 100_000)) ?? []
+        realWorkouts += (try? await store.workouts(deviceId: "apple-health", from: windowStart,
+                                                    to: now, limit: 100_000)) ?? []
 
         // ── Pass 2: re-score ONLY recovery against the now-seeded baseline (cheap, baseline-dependent);
         // every other field was computed once in pass 1. Recovery stays nil until the HRV baseline is
@@ -161,16 +228,22 @@ final class IntelligenceEngine: ObservableObject {
         var workoutRows: [WorkoutRow] = []
         for night in scoredNights {
             let recovery = recomputeRecovery(night.daily, baselines2)
+            // Defensive fallback for cached nights whose skin MEAN is unavailable (can't normally
+            // happen after the per-launch full pass): keep the previously persisted deviation
+            // rather than wiping it. For fresh nights pass 1 left skinTempDevC nil, so the
+            // fallback is a no-op there.
+            let skinDev = recomputeSkinTempDev(night.nightlySkin, baselines2.skinTemp)
+                ?? night.daily.skinTempDevC
             out.append(Computed(day: night.daily.day, recovery: recovery, strain: night.strain,
                                 sleepMin: night.daily.totalSleepMin, hrv: night.daily.avgHrv,
                                 rhr: night.daily.restingHr))
-            dailies.append(night.daily.withRecovery(recovery))
+            dailies.append(night.daily.with(recovery: recovery, skinTempDevC: skinDev))
             cachedSleep.append(contentsOf: night.cachedSleep)
             // Persist the detected workouts the pipeline already computes (previously discarded).
             // Skip any bout overlapping a real imported workout so import+wear users don't
             // double-count. sport = "detected"; energyKcal is the APPROXIMATE Keytel/BMR total.
             for s in night.workouts {
-                if importedWorkouts.contains(where: { s.start < $0.endTs && $0.startTs < s.end }) { continue }
+                if realWorkouts.contains(where: { s.start < $0.endTs && $0.startTs < s.end }) { continue }
                 workoutRows.append(WorkoutRow(startTs: s.start, endTs: s.end,
                                               sport: "detected", source: computedId,
                                               durationS: s.durationS, energyKcal: s.caloriesKcal,
@@ -194,8 +267,9 @@ final class IntelligenceEngine: ObservableObject {
         if !workoutRows.isEmpty { _ = try? await store.upsertWorkouts(workoutRows, deviceId: computedId) }
 
         // Advance the incremental frontier only after a fully-successful pass, so a thrown/partial
-        // run never marks unseen data as analysed.
+        // run never marks unseen data as analysed. The skin-mean memo is seeded by the same pass.
         try? await store.setCursor("intel_hr_frontier", latestHrTs)
+        seededSkinMemo = true
 
         results = out
         note = out.isEmpty
@@ -213,18 +287,29 @@ final class IntelligenceEngine: ObservableObject {
     /// recovery call + Android IntelligenceEngine.recomputeRecovery. (#78)
     private func recomputeRecovery(_ daily: DailyMetric, _ baselines: AnalyticsEngine.ProfileBaselines) -> Double? {
         guard let hrvVal = daily.avgHrv, let rhrVal = daily.restingHr, let hrvBase = baselines.hrv else { return nil }
-        return RecoveryScorer.recovery(hrv: hrvVal, rhr: Double(rhrVal), resp: nil,
+        return RecoveryScorer.recovery(hrv: hrvVal, rhr: Double(rhrVal), resp: daily.respRateBpm,
                                        hrvBaseline: hrvBase, rhrBaseline: baselines.restingHR,
                                        respBaseline: baselines.resp, sleepPerf: daily.efficiency)
+    }
+
+    /// Re-derive the skin-temperature deviation (°C) for a night against the freshly-seeded personal
+    /// baseline, mirroring the avgHrv→recovery re-score. Nil when the night had no wear-gated mean or
+    /// the skin-temp baseline isn't usable yet (< minNightsSeed) — honest cold-start. Rounded to 2 dp
+    /// to match the imported/demo precision. APPROXIMATE.
+    private func recomputeSkinTempDev(_ nightly: Double?, _ base: BaselineState?) -> Double? {
+        guard let v = nightly, let b = base, b.usable else { return nil }
+        return (Baselines.deviation(v, state: b).delta * 100.0).rounded() / 100.0
     }
 }
 
 private extension DailyMetric {
-    /// Rebuild the immutable DailyMetric with a substituted recovery (the struct has no `copy()`). (#78)
-    func withRecovery(_ r: Double?) -> DailyMetric {
+    /// Rebuild the immutable DailyMetric with a substituted recovery + skin-temp deviation
+    /// (the struct has no `copy()`). (#78)
+    func with(recovery r: Double?, skinTempDevC sd: Double?) -> DailyMetric {
         DailyMetric(day: day, totalSleepMin: totalSleepMin, efficiency: efficiency, deepMin: deepMin,
                     remMin: remMin, lightMin: lightMin, disturbances: disturbances, restingHr: restingHr,
                     avgHrv: avgHrv, recovery: r, strain: strain, exerciseCount: exerciseCount,
-                    spo2Pct: spo2Pct, skinTempDevC: skinTempDevC, respRateBpm: respRateBpm)
+                    spo2Pct: spo2Pct, skinTempDevC: sd, respRateBpm: respRateBpm,
+                    steps: steps, activeKcalEst: activeKcalEst)
     }
 }

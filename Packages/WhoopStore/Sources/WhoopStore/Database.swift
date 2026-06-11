@@ -239,6 +239,18 @@ extension WhoopStore {
                 t.column("archivedAt", .integer)        // NULL = active
             }
         }
+
+        // v12 (shipped upstream as v11): on-device daily step total + whole-day calorie estimate
+        // on dailyMetric (macOS parity with Android's MIGRATION_2_3). Registered as v12 here
+        // because this fork already shipped v11 as the goal table above and GRDB tracks applied
+        // migrations by identifier. Additive only; both nullable, so existing rows are untouched
+        // and an old reader that doesn't SELECT them keeps working.
+        migrator.registerMigration("v12") { db in
+            try db.alter(table: "dailyMetric") { t in
+                t.add(column: "steps", .integer)
+                t.add(column: "activeKcalEst", .double)
+            }
+        }
         return migrator
     }
 }

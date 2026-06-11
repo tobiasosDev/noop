@@ -118,6 +118,11 @@ data class LiveState(
     /** Set when an offload ended abnormally (strap went quiet mid-sync / idle-watchdog fired), so a
      *  stalled history download isn't silent. Cleared on the next successful HISTORY_COMPLETE. (PR #85) */
     val lastSyncError: String? = null,
+    /** Set when a connect attempt fails because the strap wiped its Bluetooth bond — a firmware reset,
+     *  or the official WHOOP app re-bonding it. The OS still holds a now-stale bond, so retrying the
+     *  direct connect just re-fails. Carries an actionable forget+re-pair guide; cleared on the next
+     *  successful connect. Parity with macOS LiveState.reconnectGuide (5/MG firmware reset, 2026-06). */
+    val reconnectGuide: String? = null,
 )
 
 /**
@@ -319,6 +324,16 @@ class WhoopBleClient(
         }
 
         /**
+         * The gate every offload kick passes through: a sync may start ONLY when the link is up
+         * ([connected]), the command channel is usable ([bonded]), and no offload is already running
+         * ([backfilling]). Extracted as a pure predicate so the auto-kick, the 900s periodic timer,
+         * and the manual "Sync now" button (#93) can't drift apart, and so the no-op behaviour is
+         * unit-testable without a live GATT stack. Mirrors the `requestSync` guard in BLEManager.swift.
+         */
+        fun canRequestSync(connected: Boolean, bonded: Boolean, backfilling: Boolean): Boolean =
+            connected && bonded && !backfilling
+
+        /**
          * Newest plausible-unix marker in a GET_DATA_RANGE response = the strap's newest stored
          * record. Mirrors Swift `BLEManager.dataRangeNewestUnix`: scan u32 LE words in the response
          * body (starts at frame[7], after [type,seq,cmd]), keep those in the unix range, return max.
@@ -437,6 +452,13 @@ class WhoopBleClient(
      */
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * Durable archive for undecodable history record frames (#77/#91). Written BEFORE the strap is
+     * acked, so an unrecognised firmware layout can't cost the user their only copy: the ack frees
+     * the strap's records, and this archive is the only remaining copy until the layout is mapped.
+     */
+    private val rawHistoryArchive = RawHistoryArchive(context)
+
     /** The offload state machine. Ack callback writes HISTORICAL_DATA_RESULT (with response). */
     private val backfiller = Backfiller(
         repository = repository,
@@ -444,6 +466,21 @@ class WhoopBleClient(
         cursorStore = cursorStore,
         ackTrim = { trim, endData -> ackHistoricalChunk(trim, endData) },
         onChunkCommitted = { batch -> onBackfillChunkCommitted(batch) },
+        // #77/#91: archive undecodable frames before the ack. append() returns ok=true (written, or
+        // archive-full → still safe to ack) and THROWS only on a genuine write failure → return false
+        // so finishChunk holds the cursor/ack and the strap re-sends. The throw is mapped to the
+        // boolean contract HERE so nothing can escape into the offload drain loop.
+        rejectedSink = { frames, trim ->
+            try {
+                val r = rawHistoryArchive.append(frames, trim, connectedFamily)
+                if (r.written) log("Backfill: ${frames.size} undecodable frame(s) archived before ack")
+                else log("Backfill: ${frames.size} undecodable frame(s) NOT archived (archive full) — acking anyway")
+                r.ok
+            } catch (t: Throwable) {
+                log("Backfill: reject-archive write FAILED (${t.message}) — holding ack so the strap re-sends")
+                false
+            }
+        },
         log = { s -> log(s) },
     )
 
@@ -912,6 +949,12 @@ class WhoopBleClient(
      *  deliberately NOT in reset() (it must survive into handleDisconnect's stale-bond fallback). */
     private var bondedDirectAttempt = false
 
+    /** Consecutive OS-bonded direct-connect attempts that died before reaching a real bond. Two in a
+     *  row = the strap genuinely wiped its pairing (firmware reset / official WHOOP app re-bond), not a
+     *  one-off transient drop — gates the in-app reconnect guide so a single flaky disconnect doesn't
+     *  nag the user. Reset to 0 on any genuine bond. (5/MG firmware reset parity, 2026-06) */
+    private var staleDirectFailures = 0
+
     /** Guards the once-per-connect service-discovery kick. Discovery is deferred behind an MTU request
      *  (and a fallback timeout), so this ensures it fires EXACTLY once whichever path wins. AtomicBoolean
      *  (not @Volatile): on API 26/27 the GATT callbacks land on binder-pool threads, so onMtuChanged and
@@ -977,7 +1020,7 @@ class WhoopBleClient(
                 BluetoothProfile.STATE_CONNECTED -> {
                     // Port of didConnect: mark connected, negotiate a larger ATT MTU, THEN discover.
                     handler.removeCallbacks(scanTimeoutRunnable)
-                    _state.value = _state.value.copy(connected = true, scanning = false, statusNote = null, encryptedBond = false)
+                    _state.value = _state.value.copy(connected = true, scanning = false, statusNote = null, encryptedBond = false, reconnectGuide = null)
                     serviceDiscoveryKicked.set(false)
                     // Request the larger MTU BEFORE discovery/subscribe so the offload isn't capped at
                     // 20-byte notifications (the official app does this in its GATT init). Discovery is
@@ -1073,6 +1116,7 @@ class WhoopBleClient(
                 // realtime HR with puffin framing. Mirrors the macOS post-bond flow.
                 didBond = true
                 bondedDirectAttempt = false   // fast-path connect reached a real session (#78 fork)
+                staleDirectFailures = 0       // genuine bond — clear the wiped-bond counter (#84 parity)
                 _state.value = _state.value.copy(bonded = true, encryptedBond = true)   // genuine bond (#69)
                 log("WHOOP 5/MG: CLIENT_HELLO acked — link established; subscribing notify chars (experimental).")
                 g.getService(WHOOP5_SERVICE)?.let { svc ->
@@ -1297,8 +1341,12 @@ class WhoopBleClient(
                     }
 
                     if (!isGesture) {
-                        // Non-gesture events (BLE_BONDED, BATTERY_LEVEL, …) surface unconditionally.
-                        _state.value = _state.value.copy(lastEvent = ev)
+                        // Non-gesture events (BLE_BONDED, BATTERY_LEVEL, …) surface in "Last Event" —
+                        // except the live-HR stream toggle (BLE_REALTIME_HR_ON/OFF), which is internal
+                        // plumbing that fires on every connect and just confuses users (#92).
+                        if (!ev.startsWith("BLE_REALTIME_HR")) {
+                            _state.value = _state.value.copy(lastEvent = ev)
+                        }
                         // Charging flag — wire observation: BATTERY_LEVEL u8 bit0 (4.0 @26 / 5.0 @30).
                         // handleFrame also sees replayed HISTORICAL events during a backfill (old ts),
                         // so gate exactly like the gestures below: live ungated, backfill only if fresh —
@@ -1944,8 +1992,22 @@ class WhoopBleClient(
      * once-per-connect kick and the 900s periodic timer, which is itself the coarse rate limit).
      */
     private fun requestSync() {
-        if (!_state.value.connected || !_state.value.bonded || backfilling) return
+        val s = _state.value
+        if (!canRequestSync(s.connected, s.bonded, backfilling)) return
         beginBackfill()
+    }
+
+    /**
+     * Public "Sync now" entry point for a user-initiated manual offload (Live screen button, #93).
+     *
+     * Deliberately just forwards to the SAME gated [requestSync] the auto-kick and the 900s periodic
+     * timer use, so a manual sync can never bypass the connected+bonded+not-already-backfilling guard.
+     * It's therefore a safe no-op when the strap isn't ready or a session is already running. Posted to
+     * the main looper because [beginBackfill] arms handler-scoped timers — the UI may call from any
+     * thread, and every other timer/GATT path is pinned to this handler (see connectGatt(..., handler)).
+     */
+    fun syncNow() {
+        handler.post { requestSync() }
     }
 
     /** Periodic-timer callback: re-runs the type-47 offload (the primary metric sync). */
@@ -1974,15 +2036,25 @@ class WhoopBleClient(
         if (backfillDraining) return
         backfillDraining = true
         ioScope.launch {
-            while (true) {
-                val f = backfillFrameQueue.poll() ?: break
-                backfiller.ingest(f)
-                // If the Backfiller consumed all historical data, exit the session cleanly.
-                if (backfilling && !backfiller.isBackfilling) {
-                    handler.post { exitBackfilling("HISTORY_COMPLETE") }
+            // A throw from ingest() must NEVER leave backfillDraining stuck true (that would wedge the
+            // offload — every later frame returns early and the queue never drains). finally guarantees
+            // the flag is cleared even if a chunk handler throws. (#77/#91 hardening.)
+            try {
+                while (true) {
+                    val f = backfillFrameQueue.poll() ?: break
+                    try {
+                        backfiller.ingest(f)
+                    } catch (t: Throwable) {
+                        log("Backfill: drain error (${t.message}) — skipping frame, offload continues")
+                    }
+                    // If the Backfiller consumed all historical data, exit the session cleanly.
+                    if (backfilling && !backfiller.isBackfilling) {
+                        handler.post { exitBackfilling("HISTORY_COMPLETE") }
+                    }
                 }
+            } finally {
+                backfillDraining = false
             }
-            backfillDraining = false
         }
     }
 
@@ -2102,8 +2174,25 @@ class WhoopBleClient(
 
         if (!intentionalDisconnect) {
             if (staleDirectBond) {
-                log("Disconnected (status=$status) before the bonded fast-path reached a session — falling back to a scan")
+                staleDirectFailures++
+                log("Disconnected (status=$status) before the bonded fast-path reached a session — stale OS bond (attempt $staleDirectFailures); falling back to a scan")
                 lastDevice = null
+                // Two consecutive wiped-bond failures = the strap really reset its pairing (firmware
+                // update / official WHOOP app re-bond), not a one-off transient drop. Surface the same
+                // forget+re-pair guide the Mac shows (v1.73). We KEEP scanning so a fresh re-pair is
+                // picked up automatically and the guide clears on the next successful connect.
+                if (staleDirectFailures >= 2) {
+                    _state.value = _state.value.copy(
+                        reconnectGuide = """
+                        Your strap's Bluetooth pairing was reset — usually by a WHOOP firmware update, or the official WHOOP app reconnecting. NOOP works fine on the new firmware; you just need to re-pair:
+
+                        1. Quit the official WHOOP app (or turn off Bluetooth on that phone).
+                        2. Open Settings → Bluetooth, find your WHOOP, and Forget / Unpair it.
+                        3. Tap the band repeatedly until its LEDs flash blue (pairing mode).
+                        4. Come back here and tap Connect.
+                        """.trimIndent()
+                    )
+                }
                 handler.postDelayed({
                     if (!intentionalDisconnect) connect(selectedModel)
                 }, RECONNECT_DELAY_MS)
