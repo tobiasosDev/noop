@@ -45,6 +45,16 @@ import kotlin.math.sqrt
  *
  * All `ts` / `start` / `end` are wall-clock unix SECONDS (Long); the Swift source
  * uses Int seconds. Math is done in Double throughout, matching the Swift port.
+ *
+ * TODO (staging-accuracy roadmap): see the canonical list in the Swift twin
+ * (StrandAnalytics/SleepStager.swift header). In value/effort order:
+ *   1. HMM/Viterbi smoothing over a 4×4 transition matrix (Stage 3) — highest value,
+ *      no training data; replaces isolated-epoch classify + majority vote.
+ *   2. Poincaré SD1/SD2 (+ pNN50) per-epoch features — cheap RR math, directly
+ *      sharpens the deep/REM HRV-regularity seam.
+ *   3. Tune percentile-band constants against the user's own ~204 WHOOP-labelled nights.
+ *   4. Gradient-boosted-trees classifier — defer (needs labelled-PSG pipeline + model blob).
+ * Keep this file in lockstep with the Swift twin on any of these.
  */
 object SleepStager {
 

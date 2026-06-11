@@ -26,6 +26,44 @@ import WhoopProtocol
 // (the Python source explicitly derives these "robustly ourselves" too, so this
 // path is a faithful port rather than an approximation). The classifier seam,
 // percentile bands, smoothing, and physiology rules are reproduced exactly.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// TODO (staging-accuracy roadmap — after the 1.72 deep/REM fix). The 0%-deep bug
+// is closed; these are the next genuine accuracy gains, in value/effort order.
+// All on-device, no GPU, no model blob unless noted. The EEG-free ceiling is
+// ~65–73% epoch agreement (Walch 2019), so tune to approach it, don't chase past.
+//
+//   1. HMM / Viterbi smoothing (Stage 3) — HIGHEST VALUE, no training data.
+//      Today: each epoch is classified in isolation (classifyOne) then majority-
+//      smoothed (smoothLabels) + hard physiology rules (reimposePhysiology).
+//      Replace/augment with a Viterbi pass over a 4×4 stage transition matrix so
+//      implausible jumps (e.g. wake→deep direct) are forbidden and noise is
+//      denoised by sequence likelihood, not a 5-epoch vote. Emission probs can be
+//      derived from the same percentile bands. Pure CPU, deterministic.
+//
+//   2. Poincaré SD1/SD2 (+ pNN50) as per-epoch features — CHEAP, on-target.
+//      SD1/SD2 is the geometric form of the "HRV regularity" that separates deep
+//      (low SD1/SD2, tight) from REM (scattered) — exactly the deep/REM seam this
+//      stager keys on. Just RR math (no scipy): SD1=√(½·SDSD²), SD2=√(2·SDNN²−½·SDSD²).
+//      Add to EpochFeatures + feed classifyOne. LF/HF would need an on-device FFT
+//      (no scipy) — defer; SD1/SD2 captures most of the same regularity signal.
+//
+//   3. Validate/tune against the user's OWN labelled nights — DO REGARDLESS.
+//      ~204 official-WHOOP nights (deviceId `my-whoop`, ≈deep 23% / REM 24%) are a
+//      noisy-but-real personal label set. Use RealNightValidationTests as the
+//      harness to tune the percentile-band constants (stageHR*Pct etc.) to THIS
+//      user's physiology instead of literature defaults — or to fit a small
+//      per-user calibration.
+//
+//   4. Gradient-boosted trees (XGBoost/LightGBM) classifier — DEFER until 1–3 done.
+//      Likely beats hand-tuned bands, BUT needs a labelled-PSG training pipeline
+//      (Walch ~31 nights), ships a model artifact, and loses the current
+//      interpretability — for marginal gain under the EEG-free ceiling. Low
+//      priority; revisit only if 1–3 plateau below the WHOOP baseline.
+//
+// Keep the Android twin (android/.../analytics/SleepStager.kt) in lockstep on any
+// of these, same as the 1.72 fix.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // MARK: - Public output shapes
 
