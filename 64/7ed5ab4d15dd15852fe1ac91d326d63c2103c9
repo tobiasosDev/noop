@@ -1,0 +1,27 @@
+Strand/Resources/Localizable.xcstrings
+  s_5593293f1faf9c::t_5ff29e0060a395 190-206
+  s_5593293f1faf9c::t_c537c28f3aa7d3 224-240
+Strand/Data/SleepModel.swift
+  s_5593293f1faf9c::t_723e0596a94c4c 154
+Strand/Screens/SleepView.swift
+  s_5593293f1faf9c::t_2204bcafc18290 405
+docs/superpowers/specs/2026-06-11-sleepview-redesign-design.md
+  s_5593293f1faf9c::t_2ca1aa92da3f70 62-63
+  s_5593293f1faf9c::t_4c437f7452f150 41-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "647ed5ab4d15dd15852fe1ac91d326d63c2103c9",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
