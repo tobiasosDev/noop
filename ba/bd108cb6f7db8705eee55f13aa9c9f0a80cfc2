@@ -1,0 +1,23 @@
+Strand/Screens/SleepView.swift
+  s_5593293f1faf9c::t_e6490f72a86cae 46-47
+  s_5593293f1faf9c::t_3a5a9eb9bcbacd 159-163
+  s_5593293f1faf9c::t_e80d971da66873 51-52,72
+Strand/Data/SleepModel.swift
+  s_5593293f1faf9c::t_4a58334d7f05a6 1-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "babd108cb6f7db8705eee55f13aa9c9f0a80cfc2",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
