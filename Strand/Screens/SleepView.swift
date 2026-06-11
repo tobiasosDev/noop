@@ -58,7 +58,7 @@ struct SleepView: View {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 if let resolved {
                     sleepHero(resolved)
-                    hero(resolved)               // stage breakdown; Task 4 renames to nightTimeline
+                    nightTimeline(resolved)
                     stagesVsTypical(resolved)
                     metricGrid(resolved)
                     durationTrend(resolved)
@@ -83,6 +83,356 @@ struct SleepView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 0. HERO — sleep performance ring
+
+    @ViewBuilder
+    private func sleepHero(_ model: SleepModel) -> some View {
+        let night = model.night
+        // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
+        // SleepNeed.needMin floors at ~7.5h, so the need is always present.
+        let supporting = "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed"
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Last night", overline: "Sleep",
+                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
+            NoopCard {
+                // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 28) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    VStack(spacing: 10) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    /// Ring with score, or a zero-fill track with "—" when no performance value exists.
+    @ViewBuilder
+    private func heroRing(_ model: SleepModel, supporting: String) -> some View {
+        if let perf = model.performance.latest {
+            RecoveryRing(score: perf, supporting: supporting,
+                         diameter: 180, lineWidth: 14,
+                         centerText: "\(Int(perf.rounded()))%",
+                         stateText: String(localized: "PERFORMANCE"),
+                         valueFormat: { "\(String(localized: "Performance")) \(Int($0.rounded()))%" })
+        } else {
+            RecoveryRing(score: 0, supporting: supporting,
+                         diameter: 180, lineWidth: 14, showsHover: false,
+                         centerText: "—", stateText: String(localized: "PERFORMANCE"))
+        }
+    }
+
+    /// "8h 01m in bed · 90% efficiency[ · stages approximate (on-device)]"
+    private func heroSubline(_ model: SleepModel) -> String {
+        var parts = ["\(durationText(model.night.timeInBed)) in bed",
+                     "\(efficiencyText(model.night)) efficiency"]
+        if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - 1. Night timeline — stage breakdown
+
+    @ViewBuilder
+    private func nightTimeline(_ model: SleepModel) -> some View {
+        let night = model.night
+        let s = night.stages
+        // Intervals are reconstructed ONCE in the model build, not on every body pass
+        // (Night.intervals is a computed property and was previously evaluated twice here).
+        let intervals = model.intervals
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            ChartCard(
+                title: "Stage breakdown",
+                trailing: durationText(s.asleep),
+                height: NoopMetrics.chartHeight,
+                chart: {
+                    if intervals.count >= 2 {
+                        Hypnogram(intervals: intervals,
+                                  height: NoopMetrics.chartHeight,
+                                  showsStageAxis: true,
+                                  nightStart: night.onsetDate)
+                    } else {
+                        stageBar(s)
+                    }
+                },
+                footer: { stageChips(s) }
+            )
+        }
+    }
+
+    /// REM/Deep/Light/Awake duration+percent chips — replaces the ChartFooter rows.
+    @ViewBuilder
+    private func stageChips(_ s: Stages) -> some View {
+        WrapLayout(spacing: 8) {
+            stageChip(.rem,   s.rem,   s.total)
+            stageChip(.deep,  s.deep,  s.total)
+            stageChip(.light, s.light, s.total)
+            stageChip(.awake, s.awake, s.total)
+        }
+    }
+
+    private func stageChip(_ stage: SleepStage, _ minutes: Double, _ total: Double) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(StrandPalette.sleepStageColor(stage)).frame(width: 7, height: 7)
+            Text(stage.label).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+            Text(verbatim: "\(durationText(minutes)) · \(pct(minutes, total))%")
+                .font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(stage.label): \(durationText(minutes)), \(pct(minutes, total)) percent")
+    }
+
+    /// Full-width proportional stacked stage bar (fallback when no intervals).
+    @ViewBuilder
+    private func stageBar(_ s: Stages) -> some View {
+        let total = max(1, s.total)
+        VStack(alignment: .leading, spacing: 10) {
+            Spacer(minLength: 0)
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    segment(.deep, s.deep, total, geo.size.width)
+                    segment(.light, s.light, total, geo.size.width)
+                    segment(.rem, s.rem, total, geo.size.width)
+                    segment(.awake, s.awake, total, geo.size.width)
+                }
+            }
+            .frame(height: 34)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Sleep stage breakdown: deep \(pct(s.deep, s.total)) percent, light \(pct(s.light, s.total)) percent, REM \(pct(s.rem, s.total)) percent, awake \(pct(s.awake, s.total)) percent")
+            HStack(spacing: 16) {
+                legend(.deep, "Deep")
+                legend(.light, "Light")
+                legend(.rem, "REM")
+                legend(.awake, "Awake")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func segment(_ stage: SleepStage, _ minutes: Double, _ total: Double, _ width: CGFloat) -> some View {
+        let w = CGFloat(minutes / total) * width
+        Rectangle()
+            .fill(StrandPalette.sleepStageColor(stage))
+            .frame(width: max(0, w))
+    }
+
+    @ViewBuilder
+    private func legend(_ stage: SleepStage, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(StrandPalette.sleepStageColor(stage))
+                .frame(width: 9, height: 9)
+            Text(label).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        }
+    }
+
+    // MARK: - 2. Stages vs typical
+
+    @ViewBuilder
+    private func stagesVsTypical(_ model: SleepModel) -> some View {
+        let s = model.night.stages
+        // Per-stage typical means are computed ONCE in the model build (each a full pass
+        // over repo.days) and read here.
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Stages vs typical", overline: "Last night",
+                          trailing: "marker = your mean")
+            NoopCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    stageRow("Deep",  last: s.deep,  typical: model.typicalDeepMin,  color: StrandPalette.sleepDeep)
+                    Divider().overlay(StrandPalette.hairline)
+                    stageRow("REM",   last: s.rem,   typical: model.typicalRemMin,   color: StrandPalette.sleepREM)
+                    Divider().overlay(StrandPalette.hairline)
+                    stageRow("Light", last: s.light, typical: model.typicalLightMin, color: StrandPalette.sleepLight)
+                }
+            }
+        }
+    }
+
+    /// One stage bar: last-night minutes filled, with a vertical marker at the typical mean.
+    @ViewBuilder
+    private func stageRow(_ label: String, last: Double, typical: Double?, color: Color) -> some View {
+        // Scale both values against a shared per-row max so the marker is meaningful.
+        let scaleMax = max(last, typical ?? 0) * 1.18
+        let max = scaleMax > 0 ? scaleMax : 1
+        let deltaText: String = {
+            guard let typical, typical > 0 else { return "" }
+            let diff = last - typical
+            let sign = diff >= 0 ? "+" : "−"
+            return "\(sign)\(durationText(abs(diff))) vs typ"
+        }()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label.uppercased()).strandOverline()
+                Spacer()
+                Text(durationText(last)).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
+                if !deltaText.isEmpty {
+                    Text(deltaText)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(last >= (typical ?? last) ? StrandPalette.statusPositive : StrandPalette.statusWarning)
+                }
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    // track
+                    Capsule(style: .continuous)
+                        .fill(StrandPalette.surfaceInset)
+                    // last-night fill
+                    Capsule(style: .continuous)
+                        .fill(color)
+                        .frame(width: w * CGFloat(min(1, last / max)))
+                    // typical marker
+                    if let typical, typical > 0 {
+                        Rectangle()
+                            .fill(StrandPalette.textPrimary)
+                            .frame(width: 2, height: 16)
+                            .position(x: w * CGFloat(min(1, typical / max)), y: 5)
+                    }
+                }
+            }
+            .frame(height: 10)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(label): \(durationText(last)) last night\(typical.map { ", typical \(durationText($0))" } ?? "")")
+        }
+    }
+
+    // MARK: - 3. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
+
+    @ViewBuilder
+    private func metricGrid(_ model: SleepModel) -> some View {
+        // Per-tile latest value + history series (for the sparkline) + typical mean.
+        // All seven series are computed ONCE in the model build (each is a full pass over
+        // repo.days/repo.sleeps) — here we only read the memoized results.
+        let perf  = model.performance
+        let eff   = model.efficiency
+        let cons  = model.consistency
+        let need  = model.hoursVsNeeded
+        let rest  = model.restorative
+        let resp  = model.respiratory
+        let debt  = model.sleepDebt
+
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Night detail", overline: "Metrics", trailing: "vs typical")
+            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
+
+                StatTile(
+                    label: "Sleep Performance",
+                    value: pctValue(perf.latest),
+                    caption: vsTypical(perf.latest, perf.typical, suffix: "%"),
+                    accent: perf.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
+                    sparkline: spark(perf.series),
+                    sparkColor: StrandPalette.accent)
+
+                StatTile(
+                    label: "Efficiency",
+                    value: pctValue(eff.latest),
+                    caption: vsTypical(eff.latest, eff.typical, suffix: "%"),
+                    accent: StrandPalette.statusPositive,
+                    sparkline: spark(eff.series),
+                    sparkColor: StrandPalette.statusPositive)
+
+                StatTile(
+                    label: "Consistency",
+                    value: pctValue(cons.latest),
+                    caption: vsTypical(cons.latest, cons.typical, suffix: "%"),
+                    accent: cons.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
+                    sparkline: spark(cons.series),
+                    sparkColor: StrandPalette.metricCyan)
+
+                StatTile(
+                    label: "Hours vs Needed",
+                    value: pctValue(need.latest),
+                    caption: vsTypical(need.latest, need.typical, suffix: "%"),
+                    accent: need.latest.map { StrandPalette.recoveryColor(min(100, $0)) } ?? StrandPalette.textPrimary,
+                    sparkline: spark(need.series),
+                    sparkColor: StrandPalette.accent)
+
+                StatTile(
+                    label: "Restorative",
+                    value: pctValue(rest.latest),
+                    caption: vsTypical(rest.latest, rest.typical, suffix: "%"),
+                    accent: StrandPalette.sleepREM,
+                    sparkline: spark(rest.series),
+                    sparkColor: StrandPalette.sleepREM)
+
+                StatTile(
+                    label: "Respiratory",
+                    value: rrValue(resp.latest),
+                    caption: vsTypical(resp.latest, resp.typical, suffix: " rpm", decimals: 1),
+                    accent: StrandPalette.metricPurple,
+                    sparkline: spark(resp.series),
+                    sparkColor: StrandPalette.metricPurple)
+
+                StatTile(
+                    label: "Sleep Debt",
+                    value: debt.latest.map { durationText($0) } ?? "—",
+                    caption: debtCaption(debt.latest),
+                    accent: debtColor(debt.latest),
+                    sparkline: spark(debt.series),
+                    sparkColor: StrandPalette.metricRose)
+            }
+        }
+    }
+
+    // MARK: - 4. 30-day asleep-hours trend (duration trend)
+
+    @ViewBuilder
+    private func durationTrend(_ model: SleepModel) -> some View {
+        // Trailing-30 trend points and the typical total are precomputed in the model build
+        // (full passes over repo.days) — read here, not recomputed per render.
+        let pts = model.trendPoints
+        let avg = model.typicalTotalMin.map { $0 / 60.0 }
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Asleep duration", overline: "Trend", trailing: "Last 30 days")
+            ChartCard(
+                title: "Hours asleep",
+                subtitle: "Per night, trailing 30 days",
+                trailing: avg.map { String(format: "%.1f h avg", $0) },
+                height: NoopMetrics.chartHeight,
+                chart: {
+                    if pts.count >= 2 {
+                        TrendChart(points: pts,
+                                   gradient: StrandPalette.recoveryGradient,
+                                   valueRange: trendRange(pts),
+                                   showsArea: true,
+                                   height: NoopMetrics.chartHeight,
+                                   valueFormat: { String(format: "%.1f h", $0) })
+                    } else {
+                        sparsePlaceholder
+                    }
+                },
+                footer: {
+                    ChartFooter([
+                        ("Avg",    avg.map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Min",    pts.map(\.value).min().map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Max",    pts.map(\.value).max().map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Nights", "\(pts.count)"),
+                    ])
+                }
+            )
+        }
+    }
+
+    private func trendRange(_ pts: [TrendPoint]) -> ClosedRange<Double> {
+        let vals = pts.map(\.value)
+        let lo = Swift.max(0, (vals.min() ?? 0) - 1)
+        let hi = (vals.max() ?? 9) + 1
+        return lo...Swift.max(hi, lo + 1)
     }
 
     // MARK: - 5. Sleep Planner — tonight's plan (bottom; renders in both branches)
@@ -195,346 +545,6 @@ struct SleepView: View {
     }
     #endif
 
-    // MARK: - 0. HERO — sleep performance ring
-
-    @ViewBuilder
-    private func sleepHero(_ model: SleepModel) -> some View {
-        let night = model.night
-        // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
-        // SleepNeed.needMin floors at ~7.5h, so the need is always present.
-        let supporting = "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed"
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Last night", overline: "Sleep",
-                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
-            NoopCard {
-                // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 28) {
-                        heroRing(model, supporting: supporting)
-                        Text(heroSubline(model))
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    VStack(spacing: 10) {
-                        heroRing(model, supporting: supporting)
-                        Text(heroSubline(model))
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-        }
-    }
-
-    /// Ring with score, or a zero-fill track with "—" when no performance value exists.
-    @ViewBuilder
-    private func heroRing(_ model: SleepModel, supporting: String) -> some View {
-        if let perf = model.performance.latest {
-            RecoveryRing(score: perf, supporting: supporting,
-                         diameter: 180, lineWidth: 14,
-                         centerText: "\(Int(perf.rounded()))%",
-                         stateText: String(localized: "PERFORMANCE"),
-                         valueFormat: { "\(String(localized: "Performance")) \(Int($0.rounded()))%" })
-        } else {
-            RecoveryRing(score: 0, supporting: supporting,
-                         diameter: 180, lineWidth: 14, showsHover: false,
-                         centerText: "—", stateText: String(localized: "PERFORMANCE"))
-        }
-    }
-
-    /// "8h 01m in bed · 90% efficiency[ · stages approximate (on-device)]"
-    private func heroSubline(_ model: SleepModel) -> String {
-        var parts = ["\(durationText(model.night.timeInBed)) in bed",
-                     "\(efficiencyText(model.night)) efficiency"]
-        if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: - 1. Night timeline — stage breakdown (Task 4 will rename this func)
-
-    @ViewBuilder
-    private func hero(_ model: SleepModel) -> some View {
-        let night = model.night
-        let s = night.stages
-        // Intervals are reconstructed ONCE in the model build, not on every body pass
-        // (Night.intervals is a computed property and was previously evaluated twice here).
-        let intervals = model.intervals
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            ChartCard(
-                title: "Stage breakdown",
-                subtitle: "\(durationText(night.timeInBed)) in bed · \(efficiencyText(night)) efficiency"
-                    + (model.isPersistedHypnogram ? " · stages approximate (on-device)" : ""),
-                trailing: durationText(s.asleep),
-                height: NoopMetrics.chartHeight,
-                chart: {
-                    if intervals.count >= 2 {
-                        Hypnogram(intervals: intervals,
-                                  height: NoopMetrics.chartHeight,
-                                  showsStageAxis: true,
-                                  nightStart: night.onsetDate)
-                    } else {
-                        stageBar(s)
-                    }
-                },
-                footer: {
-                    ChartFooter([
-                        ("REM",   "\(durationText(s.rem)) · \(pct(s.rem, s.total))%"),
-                        ("Deep",  "\(durationText(s.deep)) · \(pct(s.deep, s.total))%"),
-                        ("Light", "\(durationText(s.light)) · \(pct(s.light, s.total))%"),
-                        ("Awake", "\(durationText(s.awake)) · \(pct(s.awake, s.total))%"),
-                    ])
-                }
-            )
-        }
-    }
-
-    /// Full-width proportional stacked stage bar (fallback when no intervals).
-    @ViewBuilder
-    private func stageBar(_ s: Stages) -> some View {
-        let total = max(1, s.total)
-        VStack(alignment: .leading, spacing: 10) {
-            Spacer(minLength: 0)
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    segment(.deep, s.deep, total, geo.size.width)
-                    segment(.light, s.light, total, geo.size.width)
-                    segment(.rem, s.rem, total, geo.size.width)
-                    segment(.awake, s.awake, total, geo.size.width)
-                }
-            }
-            .frame(height: 34)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Sleep stage breakdown: deep \(pct(s.deep, s.total)) percent, light \(pct(s.light, s.total)) percent, REM \(pct(s.rem, s.total)) percent, awake \(pct(s.awake, s.total)) percent")
-            HStack(spacing: 16) {
-                legend(.deep, "Deep")
-                legend(.light, "Light")
-                legend(.rem, "REM")
-                legend(.awake, "Awake")
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    @ViewBuilder
-    private func segment(_ stage: SleepStage, _ minutes: Double, _ total: Double, _ width: CGFloat) -> some View {
-        let w = CGFloat(minutes / total) * width
-        Rectangle()
-            .fill(StrandPalette.sleepStageColor(stage))
-            .frame(width: max(0, w))
-    }
-
-    @ViewBuilder
-    private func legend(_ stage: SleepStage, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(StrandPalette.sleepStageColor(stage))
-                .frame(width: 9, height: 9)
-            Text(label).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-        }
-    }
-
-    // MARK: - 3. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
-
-    @ViewBuilder
-    private func metricGrid(_ model: SleepModel) -> some View {
-        // Per-tile latest value + history series (for the sparkline) + typical mean.
-        // All seven series are computed ONCE in the model build (each is a full pass over
-        // repo.days/repo.sleeps) — here we only read the memoized results.
-        let perf  = model.performance
-        let eff   = model.efficiency
-        let cons  = model.consistency
-        let need  = model.hoursVsNeeded
-        let rest  = model.restorative
-        let resp  = model.respiratory
-        let debt  = model.sleepDebt
-
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Night detail", overline: "Metrics", trailing: "vs typical")
-            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
-
-                StatTile(
-                    label: "Sleep Performance",
-                    value: pctValue(perf.latest),
-                    caption: vsTypical(perf.latest, perf.typical, suffix: "%"),
-                    accent: perf.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(perf.series),
-                    sparkColor: StrandPalette.accent)
-
-                StatTile(
-                    label: "Efficiency",
-                    value: pctValue(eff.latest),
-                    caption: vsTypical(eff.latest, eff.typical, suffix: "%"),
-                    accent: StrandPalette.statusPositive,
-                    sparkline: spark(eff.series),
-                    sparkColor: StrandPalette.statusPositive)
-
-                StatTile(
-                    label: "Consistency",
-                    value: pctValue(cons.latest),
-                    caption: vsTypical(cons.latest, cons.typical, suffix: "%"),
-                    accent: cons.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(cons.series),
-                    sparkColor: StrandPalette.metricCyan)
-
-                StatTile(
-                    label: "Hours vs Needed",
-                    value: pctValue(need.latest),
-                    caption: vsTypical(need.latest, need.typical, suffix: "%"),
-                    accent: need.latest.map { StrandPalette.recoveryColor(min(100, $0)) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(need.series),
-                    sparkColor: StrandPalette.accent)
-
-                StatTile(
-                    label: "Restorative",
-                    value: pctValue(rest.latest),
-                    caption: vsTypical(rest.latest, rest.typical, suffix: "%"),
-                    accent: StrandPalette.sleepREM,
-                    sparkline: spark(rest.series),
-                    sparkColor: StrandPalette.sleepREM)
-
-                StatTile(
-                    label: "Respiratory",
-                    value: rrValue(resp.latest),
-                    caption: vsTypical(resp.latest, resp.typical, suffix: " rpm", decimals: 1),
-                    accent: StrandPalette.metricPurple,
-                    sparkline: spark(resp.series),
-                    sparkColor: StrandPalette.metricPurple)
-
-                StatTile(
-                    label: "Sleep Debt",
-                    value: debt.latest.map { durationText($0) } ?? "—",
-                    caption: debtCaption(debt.latest),
-                    accent: debtColor(debt.latest),
-                    sparkline: spark(debt.series),
-                    sparkColor: StrandPalette.metricRose)
-            }
-        }
-    }
-
-    // MARK: - 2. Stages vs typical
-
-    @ViewBuilder
-    private func stagesVsTypical(_ model: SleepModel) -> some View {
-        let s = model.night.stages
-        // Per-stage typical means are computed ONCE in the model build (each a full pass
-        // over repo.days) and read here.
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Stages vs typical", overline: "Last night",
-                          trailing: "marker = your mean")
-            NoopCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    stageRow("Deep",  last: s.deep,  typical: model.typicalDeepMin,  color: StrandPalette.sleepDeep)
-                    Divider().overlay(StrandPalette.hairline)
-                    stageRow("REM",   last: s.rem,   typical: model.typicalRemMin,   color: StrandPalette.sleepREM)
-                    Divider().overlay(StrandPalette.hairline)
-                    stageRow("Light", last: s.light, typical: model.typicalLightMin, color: StrandPalette.sleepLight)
-                }
-            }
-        }
-    }
-
-    /// One stage bar: last-night minutes filled, with a vertical marker at the typical mean.
-    @ViewBuilder
-    private func stageRow(_ label: String, last: Double, typical: Double?, color: Color) -> some View {
-        // Scale both values against a shared per-row max so the marker is meaningful.
-        let scaleMax = max(last, typical ?? 0) * 1.18
-        let max = scaleMax > 0 ? scaleMax : 1
-        let deltaText: String = {
-            guard let typical, typical > 0 else { return "" }
-            let diff = last - typical
-            let sign = diff >= 0 ? "+" : "−"
-            return "\(sign)\(durationText(abs(diff))) vs typ"
-        }()
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label.uppercased()).strandOverline()
-                Spacer()
-                Text(durationText(last)).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
-                if !deltaText.isEmpty {
-                    Text(deltaText)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(last >= (typical ?? last) ? StrandPalette.statusPositive : StrandPalette.statusWarning)
-                }
-            }
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .leading) {
-                    // track
-                    Capsule(style: .continuous)
-                        .fill(StrandPalette.surfaceInset)
-                    // last-night fill
-                    Capsule(style: .continuous)
-                        .fill(color)
-                        .frame(width: w * CGFloat(min(1, last / max)))
-                    // typical marker
-                    if let typical, typical > 0 {
-                        Rectangle()
-                            .fill(StrandPalette.textPrimary)
-                            .frame(width: 2, height: 16)
-                            .position(x: w * CGFloat(min(1, typical / max)), y: 5)
-                    }
-                }
-            }
-            .frame(height: 10)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(label): \(durationText(last)) last night\(typical.map { ", typical \(durationText($0))" } ?? "")")
-        }
-    }
-
-    // MARK: - 4. 30-day asleep-hours trend (duration trend)
-
-    @ViewBuilder
-    private func durationTrend(_ model: SleepModel) -> some View {
-        // Trailing-30 trend points and the typical total are precomputed in the model build
-        // (full passes over repo.days) — read here, not recomputed per render.
-        let pts = model.trendPoints
-        let avg = model.typicalTotalMin.map { $0 / 60.0 }
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Asleep duration", overline: "Trend", trailing: "Last 30 days")
-            ChartCard(
-                title: "Hours asleep",
-                subtitle: "Per night, trailing 30 days",
-                trailing: avg.map { String(format: "%.1f h avg", $0) },
-                height: NoopMetrics.chartHeight,
-                chart: {
-                    if pts.count >= 2 {
-                        TrendChart(points: pts,
-                                   gradient: StrandPalette.recoveryGradient,
-                                   valueRange: trendRange(pts),
-                                   showsArea: true,
-                                   height: NoopMetrics.chartHeight,
-                                   valueFormat: { String(format: "%.1f h", $0) })
-                    } else {
-                        sparsePlaceholder
-                    }
-                },
-                footer: {
-                    ChartFooter([
-                        ("Avg",    avg.map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Min",    pts.map(\.value).min().map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Max",    pts.map(\.value).max().map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Nights", "\(pts.count)"),
-                    ])
-                }
-            )
-        }
-    }
-
-    /// "HH:MM" from minutes-since-midnight — non-linguistic, rendered verbatim.
-    private static func clock(_ minutes: Int) -> String {
-        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
-    }
-
-    private func trendRange(_ pts: [TrendPoint]) -> ClosedRange<Double> {
-        let vals = pts.map(\.value)
-        let lo = Swift.max(0, (vals.min() ?? 0) - 1)
-        let hi = (vals.max() ?? 9) + 1
-        return lo...Swift.max(hi, lo + 1)
-    }
-
     // MARK: - Empty / sparse states
 
     @ViewBuilder
@@ -613,6 +623,11 @@ struct SleepView: View {
         let m = Swift.max(0, Int(minutes.rounded()))
         if m < 60 { return "\(m)m" }
         return "\(m / 60)h \(m % 60)m"
+    }
+
+    /// "HH:MM" from minutes-since-midnight — non-linguistic, rendered verbatim.
+    private static func clock(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
     }
 
     /// A sparkline needs at least two points; otherwise return nil so the tile stays clean.
