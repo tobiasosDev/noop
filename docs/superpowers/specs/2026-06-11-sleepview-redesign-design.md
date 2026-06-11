@@ -59,7 +59,10 @@ screen to see how they slept; the plan matters in the evening, end of scroll.
 - Existing `StatTile` + `tileColumns` adaptive grid (min 168pt → 2 columns iPhone).
 - Six tiles, all with sparkline + vs-typical caption, all sourced from the memoized series:
   Restorative, Sleep Debt, Consistency, Hours vs Needed, Efficiency, Respiratory.
-- Sleep Performance tile removed — value lives in the hero now.
+- Sleep Performance tile removed — value lives in the hero now. Its vs-typical caption
+  moves into the hero subline ("performance +3% vs typical"); its 30-day sparkline is
+  intentionally omitted — the approved Layout A v2 mockup shows the hero without one,
+  and the performance series remains computed in the model if a future surface wants it.
 
 ### 5. Trend
 
