@@ -6,20 +6,24 @@ import WhoopStore
 
 // MARK: - SleepView
 //
-// Whoop-sleep clarity on the locked Noop component system. Scannable in two seconds:
-//   0. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
-//      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
-//      manual stepper) and, on iOS, the wind-down reminder toggle. Renders above BOTH
-//      branches — with no nights yet it falls back to defaults and says so.
-//   1. HERO ChartCard "Last night" — the stage breakdown (Hypnogram if intervals
-//      reconstruct from stagesJSON, else a clean proportional stacked stage bar),
-//      trailing = total asleep, footer = REM/Deep/Light/Awake each "Xh Ym · NN%".
-//   2. A uniform grid of fixed StatTiles, each with a sparkline and a "vs typical"
-//      caption: Performance, Efficiency, Consistency, Hours vs Needed, Restorative,
-//      Respiratory, Sleep Debt.
-//   3. "Stages vs typical" NoopCard — Deep/REM/Light as horizontal bars, last-night
+// Whoop-sleep clarity on the locked Noop component system. Score answers "how did I
+// sleep?" first. Scannable in two seconds:
+//   0. HERO — sleep performance ring (RecoveryRing, score overridden with "PERFORMANCE"
+//      label, supporting = asleep + need; no-data path shows "—").
+//   1. Night timeline ChartCard "Last night" — the stage breakdown (Hypnogram if
+//      intervals reconstruct from stagesJSON, else a clean proportional stacked stage
+//      bar), trailing = total asleep, footer = REM/Deep/Light/Awake each "Xh Ym · NN%".
+//   2. "Stages vs typical" NoopCard — Deep/REM/Light as horizontal bars, last-night
 //      minutes with a marker at the personal typical (mean) so highs/lows pop.
+//   3. A uniform grid of six fixed StatTiles, each with a sparkline and a "vs typical"
+//      caption: Efficiency, Consistency, Hours vs Needed, Restorative, Respiratory,
+//      Sleep Debt.
 //   4. A 30-day asleep-hours ChartCard trend.
+//   5. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
+//      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
+//      manual stepper) and, on iOS, the wind-down reminder toggle. Renders AFTER the
+//      data sections in BOTH branches — even with no nights yet it falls back to
+//      defaults and says so.
 //
 // Every surface is a NoopCard / StatTile / ChartCard — no hand-sized cards, one grid,
 // equal margins. Data wiring is preserved from the previous screen (stagesJSON =
@@ -31,7 +35,9 @@ struct SleepView: View {
     @EnvironmentObject private var behavior: BehaviorStore
 
     // The standard tile grid: ONE adaptive column set, used for every tile group.
-    private let tileColumns = [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)]
+    // 164pt min → two columns on ≥396pt iPhones (e.g. 16 Pro: 346pt content, 164×2+12=340;
+    // 390–393pt devices stay 1-col), more on mac. 168 missed Pro-width 2-col by 2pt.
+    private let tileColumns = [GridItem(.adaptive(minimum: 164), spacing: NoopMetrics.gap)]
 
     /// Memoized snapshot of every expensive derivation (latest Night with its intervals
     /// resolved once, the seven metric series, the trend points, the typical means). Rebuilt
@@ -43,33 +49,35 @@ struct SleepView: View {
     @State private var modelKey: SleepInputKey?
 
     var body: some View {
-        // Resolve the memoized model for THIS render. `dataKey` is O(1)-ish (counts + last-row
-        // identity), so comparing it every render is cheap. When it matches the cached key we
+        // Resolve the memoized model for THIS render. `SleepInputKey(repo:)` is O(1)-ish
+        // (counts + last-row identity), so comparing it every render is cheap. When it matches the cached key we
         // reuse the cached model untouched — the many body re-evaluations from hover/animation/
         // 1Hz HR ticks pay nothing. When it differs (or on first render) we build once, here,
         // synchronously, so the very first frame already shows content (no empty-state flash).
-        let key = dataKey
-        let resolved: SleepModel? = (key == modelKey) ? model : buildModel()
+        let key = SleepInputKey(repo: repo)
+        let resolved: SleepModel? = (key == modelKey) ? model : SleepModel.build(repo: repo)
         ScreenScaffold(title: "Sleep", subtitle: "Last night, read in two seconds.") {
-            // The planner leads BOTH branches — even with no nights yet it answers
-            // "when should I go to bed tonight?" from defaults (and says so).
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                plannerSection
                 if let resolved {
-                    hero(resolved)
-                    metricGrid(resolved)
+                    sleepHero(resolved)
+                    nightTimeline(resolved)
                     stagesVsTypical(resolved)
+                    metricGrid(resolved)
                     durationTrend(resolved)
                 } else {
                     emptyState
                 }
+                // The planner closes BOTH branches — even with no nights it answers
+                // "when should I go to bed tonight?" from defaults (and says so).
+                plannerSection
             }
             // Persist the freshly-built model so subsequent renders with the same inputs hit
             // the cache. Writing State during body is not allowed, so commit it after layout;
-            // `resolved` already drives THIS frame, so there is no flash and no extra rebuild.
+            // `resolved` already drives THIS frame AND is what we persist — the closure captures
+            // this render's freshly-built value, so a key change costs exactly one build.
             .onChange(of: key) { newKey in
                 modelKey = newKey
-                model = buildModel()
+                model = resolved
             }
             .onAppear {
                 if modelKey != key {
@@ -80,7 +88,356 @@ struct SleepView: View {
         }
     }
 
-    // MARK: - 0. Sleep Planner — tonight's plan
+    // MARK: - 0. HERO — sleep performance ring
+
+    @ViewBuilder
+    private func sleepHero(_ model: SleepModel) -> some View {
+        let night = model.night
+        // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
+        // SleepNeed.needMin floors at ~7.5h, so the need is always present.
+        // Non-breaking spaces inside each duration so the line never wraps mid-duration ("7h / 30m").
+        let asleepText = durationText(night.stages.asleep).replacingOccurrences(of: " ", with: "\u{00A0}")
+        let needText = durationText(model.needMin).replacingOccurrences(of: " ", with: "\u{00A0}")
+        let supporting = String(localized: "\(asleepText) asleep · \(needText) needed")
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Last night", overline: "Sleep",
+                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
+            NoopCard {
+                // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 28) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    VStack(spacing: 10) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    /// Ring with score, or a zero-fill track with "—" when no performance value exists.
+    @ViewBuilder
+    private func heroRing(_ model: SleepModel, supporting: String) -> some View {
+        if let perf = model.performance.latest {
+            RecoveryRing(score: perf, supporting: supporting,
+                         diameter: 180, lineWidth: 14,
+                         centerText: "\(Int(perf.rounded()))%",
+                         stateText: String(localized: "PERFORMANCE"),
+                         valueFormat: { "\(String(localized: "Performance")) \(Int($0.rounded()))%" })
+        } else {
+            RecoveryRing(score: 0, supporting: supporting,
+                         diameter: 180, lineWidth: 14, showsHover: false,
+                         centerText: "—", stateText: String(localized: "PERFORMANCE"))
+        }
+    }
+
+    /// "8h 01m in bed · 90% efficiency[ · performance +3% vs typical][ · stages approximate (on-device)]"
+    private func heroSubline(_ model: SleepModel) -> String {
+        var parts = [String(localized: "\(durationText(model.night.timeInBed)) in bed"),
+                     String(localized: "\(efficiencyText(model.night)) efficiency")]
+        // The dropped Sleep Performance tile carried a "vs typical" caption — zero
+        // information loss: it lives here now.
+        if let perf = model.performance.latest, let typical = model.performance.typical, typical != 0 {
+            parts.append(String(localized: "performance \(vsTypical(perf, typical, suffix: "%"))"))
+        }
+        if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - 1. Night timeline — stage breakdown
+
+    @ViewBuilder
+    private func nightTimeline(_ model: SleepModel) -> some View {
+        let night = model.night
+        let s = night.stages
+        // Intervals are reconstructed ONCE in the model build, not on every body pass
+        // (Night.intervals is a computed property and was previously evaluated twice here).
+        let intervals = model.intervals
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            ChartCard(
+                title: "Stage breakdown",
+                trailing: durationText(s.asleep),
+                height: NoopMetrics.chartHeight,
+                chart: {
+                    if intervals.count >= 2 {
+                        Hypnogram(intervals: intervals,
+                                  height: NoopMetrics.chartHeight,
+                                  showsStageAxis: true,
+                                  nightStart: night.onsetDate)
+                    } else {
+                        stageBar(s)
+                    }
+                },
+                footer: { stageChips(s) }
+            )
+        }
+    }
+
+    /// REM/Deep/Light/Awake duration+percent chips — replaces the ChartFooter rows.
+    @ViewBuilder
+    private func stageChips(_ s: Stages) -> some View {
+        WrapLayout(spacing: 8) {
+            stageChip(.rem,   s.rem,   s.total)
+            stageChip(.deep,  s.deep,  s.total)
+            stageChip(.light, s.light, s.total)
+            stageChip(.awake, s.awake, s.total)
+        }
+    }
+
+    private func stageChip(_ stage: SleepStage, _ minutes: Double, _ total: Double) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(StrandPalette.sleepStageColor(stage)).frame(width: 7, height: 7)
+            Text(stage.label).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+            Text(verbatim: "\(durationText(minutes)) · \(pct(minutes, total))%")
+                .font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(stage.label): \(durationText(minutes)), \(pct(minutes, total)) percent")
+    }
+
+    /// Full-width proportional stacked stage bar (fallback when no intervals).
+    @ViewBuilder
+    private func stageBar(_ s: Stages) -> some View {
+        let total = max(1, s.total)
+        VStack(alignment: .leading, spacing: 10) {
+            Spacer(minLength: 0)
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    segment(.deep, s.deep, total, geo.size.width)
+                    segment(.light, s.light, total, geo.size.width)
+                    segment(.rem, s.rem, total, geo.size.width)
+                    segment(.awake, s.awake, total, geo.size.width)
+                }
+            }
+            .frame(height: 34)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Sleep stage breakdown: deep \(pct(s.deep, s.total)) percent, light \(pct(s.light, s.total)) percent, REM \(pct(s.rem, s.total)) percent, awake \(pct(s.awake, s.total)) percent")
+            HStack(spacing: 16) {
+                legend(.deep, "Deep")
+                legend(.light, "Light")
+                legend(.rem, "REM")
+                legend(.awake, "Awake")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func segment(_ stage: SleepStage, _ minutes: Double, _ total: Double, _ width: CGFloat) -> some View {
+        let w = CGFloat(minutes / total) * width
+        Rectangle()
+            .fill(StrandPalette.sleepStageColor(stage))
+            .frame(width: max(0, w))
+    }
+
+    @ViewBuilder
+    private func legend(_ stage: SleepStage, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(StrandPalette.sleepStageColor(stage))
+                .frame(width: 9, height: 9)
+            Text(label).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        }
+    }
+
+    // MARK: - 2. Stages vs typical
+
+    @ViewBuilder
+    private func stagesVsTypical(_ model: SleepModel) -> some View {
+        let s = model.night.stages
+        // Per-stage typical means are computed ONCE in the model build (each a full pass
+        // over repo.days) and read here.
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Stages vs typical", overline: "Last night",
+                          trailing: String(localized: "marker = your mean"))
+            NoopCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    stageRow("Deep",  last: s.deep,  typical: model.typicalDeepMin,  color: StrandPalette.sleepDeep)
+                    Divider().overlay(StrandPalette.hairline)
+                    stageRow("REM",   last: s.rem,   typical: model.typicalRemMin,   color: StrandPalette.sleepREM)
+                    Divider().overlay(StrandPalette.hairline)
+                    stageRow("Light", last: s.light, typical: model.typicalLightMin, color: StrandPalette.sleepLight)
+                }
+            }
+        }
+    }
+
+    /// One stage bar: last-night minutes filled, with a vertical marker at the typical mean.
+    @ViewBuilder
+    private func stageRow(_ label: String, last: Double, typical: Double?, color: Color) -> some View {
+        // Scale both values against a shared per-row max so the marker is meaningful.
+        let scaleMax = max(last, typical ?? 0) * 1.18
+        let max = scaleMax > 0 ? scaleMax : 1
+        let deltaText: String = {
+            guard let typical, typical > 0 else { return "" }
+            let diff = last - typical
+            let sign = diff >= 0 ? "+" : "−"
+            return "\(sign)\(durationText(abs(diff))) vs typ"
+        }()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label.uppercased()).strandOverline()
+                Spacer()
+                Text(durationText(last)).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
+                if !deltaText.isEmpty {
+                    Text(deltaText)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(last >= (typical ?? last) ? StrandPalette.statusPositive : StrandPalette.statusWarning)
+                }
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    // track
+                    Capsule(style: .continuous)
+                        .fill(StrandPalette.surfaceInset)
+                    // last-night fill
+                    Capsule(style: .continuous)
+                        .fill(color)
+                        .frame(width: w * CGFloat(min(1, last / max)))
+                    // typical marker
+                    if let typical, typical > 0 {
+                        Rectangle()
+                            .fill(StrandPalette.textPrimary)
+                            .frame(width: 2, height: 16)
+                            .position(x: w * CGFloat(min(1, typical / max)), y: 5)
+                    }
+                }
+            }
+            .frame(height: 10)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(label): \(durationText(last)) last night\(typical.map { ", typical \(durationText($0))" } ?? "")")
+        }
+    }
+
+    // MARK: - 3. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
+
+    @ViewBuilder
+    private func metricGrid(_ model: SleepModel) -> some View {
+        // Per-tile latest value + history series (for the sparkline) + typical mean.
+        // Six series are read here, each computed ONCE in the model build (full passes over
+        // repo.days/repo.sleeps). A seventh model series (performance) feeds the hero ring, not this grid.
+        let eff   = model.efficiency
+        let cons  = model.consistency
+        let need  = model.hoursVsNeeded
+        let rest  = model.restorative
+        let resp  = model.respiratory
+        let debt  = model.sleepDebt
+
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Night detail", overline: "Metrics", trailing: String(localized: "vs typical"))
+            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
+
+                StatTile(
+                    label: "Efficiency",
+                    value: pctValue(eff.latest),
+                    caption: vsTypical(eff.latest, eff.typical, suffix: "%"),
+                    accent: StrandPalette.statusPositive,
+                    sparkline: spark(eff.series),
+                    sparkColor: StrandPalette.statusPositive)
+
+                StatTile(
+                    label: "Consistency",
+                    value: pctValue(cons.latest),
+                    caption: vsTypical(cons.latest, cons.typical, suffix: "%"),
+                    accent: cons.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
+                    sparkline: spark(cons.series),
+                    sparkColor: StrandPalette.metricCyan)
+
+                StatTile(
+                    label: "Hours vs Needed",
+                    value: pctValue(need.latest),
+                    caption: vsTypical(need.latest, need.typical, suffix: "%"),
+                    accent: need.latest.map { StrandPalette.recoveryColor(min(100, $0)) } ?? StrandPalette.textPrimary,
+                    sparkline: spark(need.series),
+                    sparkColor: StrandPalette.accent)
+
+                StatTile(
+                    label: "Restorative",
+                    value: pctValue(rest.latest),
+                    caption: vsTypical(rest.latest, rest.typical, suffix: "%"),
+                    accent: StrandPalette.sleepREM,
+                    sparkline: spark(rest.series),
+                    sparkColor: StrandPalette.sleepREM)
+
+                StatTile(
+                    label: "Respiratory",
+                    value: rrValue(resp.latest),
+                    caption: vsTypical(resp.latest, resp.typical, suffix: " rpm", decimals: 1),
+                    accent: StrandPalette.metricPurple,
+                    sparkline: spark(resp.series),
+                    sparkColor: StrandPalette.metricPurple)
+
+                StatTile(
+                    label: "Sleep Debt",
+                    value: debt.latest.map { durationText($0) } ?? "—",
+                    caption: debtCaption(debt.latest),
+                    accent: debtColor(debt.latest),
+                    sparkline: spark(debt.series),
+                    sparkColor: StrandPalette.metricRose)
+            }
+        }
+    }
+
+    // MARK: - 4. 30-day asleep-hours trend (duration trend)
+
+    @ViewBuilder
+    private func durationTrend(_ model: SleepModel) -> some View {
+        // Trailing-30 trend points and the typical total are precomputed in the model build
+        // (full passes over repo.days) — read here, not recomputed per render.
+        let pts = model.trendPoints
+        let avg = model.typicalTotalMin.map { $0 / 60.0 }
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Asleep duration", overline: "Trend", trailing: String(localized: "Last 30 days"))
+            ChartCard(
+                title: "Hours asleep",
+                subtitle: String(localized: "Per night, trailing 30 days"),
+                trailing: avg.map { String(format: "%.1f h avg", $0) },
+                height: NoopMetrics.chartHeight,
+                chart: {
+                    if pts.count >= 2 {
+                        TrendChart(points: pts,
+                                   gradient: StrandPalette.recoveryGradient,
+                                   valueRange: trendRange(pts),
+                                   showsArea: true,
+                                   height: NoopMetrics.chartHeight,
+                                   valueFormat: { String(format: "%.1f h", $0) })
+                    } else {
+                        sparsePlaceholder
+                    }
+                },
+                footer: {
+                    ChartFooter([
+                        ("Avg",    avg.map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Min",    pts.map(\.value).min().map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Max",    pts.map(\.value).max().map { String(format: "%.1f h", $0) } ?? "—"),
+                        ("Nights", "\(pts.count)"),
+                    ])
+                }
+            )
+        }
+    }
+
+    private func trendRange(_ pts: [TrendPoint]) -> ClosedRange<Double> {
+        let vals = pts.map(\.value)
+        let lo = Swift.max(0, (vals.min() ?? 0) - 1)
+        let hi = (vals.max() ?? 9) + 1
+        return lo...Swift.max(hi, lo + 1)
+    }
+
+    // MARK: - 5. Sleep Planner — tonight's plan (bottom; renders in both branches)
 
     @ViewBuilder
     private var plannerSection: some View {
@@ -156,6 +513,11 @@ struct SleepView: View {
         #endif
     }
 
+    private var plannerGoal: SleepPlanner.Goal { SleepPlannerInputs.goal(behavior) }
+    private var plannerRecommendation: SleepPlanner.Recommendation {
+        SleepPlannerInputs.recommendation(repo: repo, behavior: behavior)
+    }
+
     private func goalLabel(_ g: SleepPlanner.Goal) -> String {
         switch g {
         case .peak:    return String(localized: "Peak")
@@ -184,513 +546,6 @@ struct SleepView: View {
                                               bedMinutes: plannerRecommendation.bedMinutes)
     }
     #endif
-
-    // MARK: - 1. HERO — stage breakdown
-
-    @ViewBuilder
-    private func hero(_ model: SleepModel) -> some View {
-        let night = model.night
-        let s = night.stages
-        // Intervals are reconstructed ONCE in the model build, not on every body pass
-        // (Night.intervals is a computed property and was previously evaluated twice here).
-        let intervals = model.intervals
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Last night", overline: "Sleep",
-                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
-            ChartCard(
-                title: "Stage breakdown",
-                subtitle: "\(durationText(night.timeInBed)) in bed · \(efficiencyText(night)) efficiency"
-                    + (model.isPersistedHypnogram ? " · stages approximate (on-device)" : ""),
-                trailing: durationText(s.asleep),
-                height: NoopMetrics.chartHeight,
-                chart: {
-                    if intervals.count >= 2 {
-                        Hypnogram(intervals: intervals,
-                                  height: NoopMetrics.chartHeight,
-                                  showsStageAxis: true,
-                                  nightStart: night.onsetDate)
-                    } else {
-                        stageBar(s)
-                    }
-                },
-                footer: {
-                    ChartFooter([
-                        ("REM",   "\(durationText(s.rem)) · \(pct(s.rem, s.total))%"),
-                        ("Deep",  "\(durationText(s.deep)) · \(pct(s.deep, s.total))%"),
-                        ("Light", "\(durationText(s.light)) · \(pct(s.light, s.total))%"),
-                        ("Awake", "\(durationText(s.awake)) · \(pct(s.awake, s.total))%"),
-                    ])
-                }
-            )
-        }
-    }
-
-    /// Full-width proportional stacked stage bar (fallback when no intervals).
-    @ViewBuilder
-    private func stageBar(_ s: Stages) -> some View {
-        let total = max(1, s.total)
-        VStack(alignment: .leading, spacing: 10) {
-            Spacer(minLength: 0)
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    segment(.deep, s.deep, total, geo.size.width)
-                    segment(.light, s.light, total, geo.size.width)
-                    segment(.rem, s.rem, total, geo.size.width)
-                    segment(.awake, s.awake, total, geo.size.width)
-                }
-            }
-            .frame(height: 34)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Sleep stage breakdown: deep \(pct(s.deep, s.total)) percent, light \(pct(s.light, s.total)) percent, REM \(pct(s.rem, s.total)) percent, awake \(pct(s.awake, s.total)) percent")
-            HStack(spacing: 16) {
-                legend(.deep, "Deep")
-                legend(.light, "Light")
-                legend(.rem, "REM")
-                legend(.awake, "Awake")
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    @ViewBuilder
-    private func segment(_ stage: SleepStage, _ minutes: Double, _ total: Double, _ width: CGFloat) -> some View {
-        let w = CGFloat(minutes / total) * width
-        Rectangle()
-            .fill(StrandPalette.sleepStageColor(stage))
-            .frame(width: max(0, w))
-    }
-
-    @ViewBuilder
-    private func legend(_ stage: SleepStage, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(StrandPalette.sleepStageColor(stage))
-                .frame(width: 9, height: 9)
-            Text(label).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-        }
-    }
-
-    // MARK: - 2. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
-
-    @ViewBuilder
-    private func metricGrid(_ model: SleepModel) -> some View {
-        // Per-tile latest value + history series (for the sparkline) + typical mean.
-        // All seven series are computed ONCE in the model build (each is a full pass over
-        // repo.days/repo.sleeps) — here we only read the memoized results.
-        let perf  = model.performance
-        let eff   = model.efficiency
-        let cons  = model.consistency
-        let need  = model.hoursVsNeeded
-        let rest  = model.restorative
-        let resp  = model.respiratory
-        let debt  = model.sleepDebt
-
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Night detail", overline: "Metrics", trailing: "vs typical")
-            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
-
-                StatTile(
-                    label: "Sleep Performance",
-                    value: pctValue(perf.latest),
-                    caption: vsTypical(perf.latest, perf.typical, suffix: "%"),
-                    accent: perf.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(perf.series),
-                    sparkColor: StrandPalette.accent)
-
-                StatTile(
-                    label: "Efficiency",
-                    value: pctValue(eff.latest),
-                    caption: vsTypical(eff.latest, eff.typical, suffix: "%"),
-                    accent: StrandPalette.statusPositive,
-                    sparkline: spark(eff.series),
-                    sparkColor: StrandPalette.statusPositive)
-
-                StatTile(
-                    label: "Consistency",
-                    value: pctValue(cons.latest),
-                    caption: vsTypical(cons.latest, cons.typical, suffix: "%"),
-                    accent: cons.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(cons.series),
-                    sparkColor: StrandPalette.metricCyan)
-
-                StatTile(
-                    label: "Hours vs Needed",
-                    value: pctValue(need.latest),
-                    caption: vsTypical(need.latest, need.typical, suffix: "%"),
-                    accent: need.latest.map { StrandPalette.recoveryColor(min(100, $0)) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(need.series),
-                    sparkColor: StrandPalette.accent)
-
-                StatTile(
-                    label: "Restorative",
-                    value: pctValue(rest.latest),
-                    caption: vsTypical(rest.latest, rest.typical, suffix: "%"),
-                    accent: StrandPalette.sleepREM,
-                    sparkline: spark(rest.series),
-                    sparkColor: StrandPalette.sleepREM)
-
-                StatTile(
-                    label: "Respiratory",
-                    value: rrValue(resp.latest),
-                    caption: vsTypical(resp.latest, resp.typical, suffix: " rpm", decimals: 1),
-                    accent: StrandPalette.metricPurple,
-                    sparkline: spark(resp.series),
-                    sparkColor: StrandPalette.metricPurple)
-
-                StatTile(
-                    label: "Sleep Debt",
-                    value: debt.latest.map { durationText($0) } ?? "—",
-                    caption: debtCaption(debt.latest),
-                    accent: debtColor(debt.latest),
-                    sparkline: spark(debt.series),
-                    sparkColor: StrandPalette.metricRose)
-            }
-        }
-    }
-
-    // MARK: - 3. Stages vs typical
-
-    @ViewBuilder
-    private func stagesVsTypical(_ model: SleepModel) -> some View {
-        let s = model.night.stages
-        // Per-stage typical means are computed ONCE in the model build (each a full pass
-        // over repo.days) and read here.
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Stages vs typical", overline: "Last night",
-                          trailing: "marker = your mean")
-            NoopCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    stageRow("Deep",  last: s.deep,  typical: model.typicalDeepMin,  color: StrandPalette.sleepDeep)
-                    Divider().overlay(StrandPalette.hairline)
-                    stageRow("REM",   last: s.rem,   typical: model.typicalRemMin,   color: StrandPalette.sleepREM)
-                    Divider().overlay(StrandPalette.hairline)
-                    stageRow("Light", last: s.light, typical: model.typicalLightMin, color: StrandPalette.sleepLight)
-                }
-            }
-        }
-    }
-
-    /// One stage bar: last-night minutes filled, with a vertical marker at the typical mean.
-    @ViewBuilder
-    private func stageRow(_ label: String, last: Double, typical: Double?, color: Color) -> some View {
-        // Scale both values against a shared per-row max so the marker is meaningful.
-        let scaleMax = max(last, typical ?? 0) * 1.18
-        let max = scaleMax > 0 ? scaleMax : 1
-        let deltaText: String = {
-            guard let typical, typical > 0 else { return "" }
-            let diff = last - typical
-            let sign = diff >= 0 ? "+" : "−"
-            return "\(sign)\(durationText(abs(diff))) vs typ"
-        }()
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label.uppercased()).strandOverline()
-                Spacer()
-                Text(durationText(last)).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
-                if !deltaText.isEmpty {
-                    Text(deltaText)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(last >= (typical ?? last) ? StrandPalette.statusPositive : StrandPalette.statusWarning)
-                }
-            }
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .leading) {
-                    // track
-                    Capsule(style: .continuous)
-                        .fill(StrandPalette.surfaceInset)
-                    // last-night fill
-                    Capsule(style: .continuous)
-                        .fill(color)
-                        .frame(width: w * CGFloat(min(1, last / max)))
-                    // typical marker
-                    if let typical, typical > 0 {
-                        Rectangle()
-                            .fill(StrandPalette.textPrimary)
-                            .frame(width: 2, height: 16)
-                            .position(x: w * CGFloat(min(1, typical / max)), y: 5)
-                    }
-                }
-            }
-            .frame(height: 10)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(label): \(durationText(last)) last night\(typical.map { ", typical \(durationText($0))" } ?? "")")
-        }
-    }
-
-    // MARK: - 4. 30-day asleep-hours trend
-
-    @ViewBuilder
-    private func durationTrend(_ model: SleepModel) -> some View {
-        // Trailing-30 trend points and the typical total are precomputed in the model build
-        // (full passes over repo.days) — read here, not recomputed per render.
-        let pts = model.trendPoints
-        let avg = model.typicalTotalMin.map { $0 / 60.0 }
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Asleep duration", overline: "Trend", trailing: "Last 30 days")
-            ChartCard(
-                title: "Hours asleep",
-                subtitle: "Per night, trailing 30 days",
-                trailing: avg.map { String(format: "%.1f h avg", $0) },
-                height: NoopMetrics.chartHeight,
-                chart: {
-                    if pts.count >= 2 {
-                        TrendChart(points: pts,
-                                   gradient: StrandPalette.recoveryGradient,
-                                   valueRange: trendRange(pts),
-                                   showsArea: true,
-                                   height: NoopMetrics.chartHeight,
-                                   valueFormat: { String(format: "%.1f h", $0) })
-                    } else {
-                        sparsePlaceholder
-                    }
-                },
-                footer: {
-                    ChartFooter([
-                        ("Avg",    avg.map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Min",    pts.map(\.value).min().map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Max",    pts.map(\.value).max().map { String(format: "%.1f h", $0) } ?? "—"),
-                        ("Nights", "\(pts.count)"),
-                    ])
-                }
-            )
-        }
-    }
-
-    // MARK: - Memoization plumbing
-
-    /// A cheap fingerprint of the repo inputs this screen derives from. Recomputed every
-    /// render but only contains counts + the identity of the newest/oldest rows, so equality
-    /// is fast. When it changes we know `repo.days`/`repo.sleeps` actually changed and the
-    /// memoized `model` must be rebuilt; otherwise hover/animation/1Hz HR re-renders are free.
-    private var dataKey: SleepInputKey {
-        SleepInputKey(
-            loaded: repo.loaded,
-            daysCount: repo.days.count,
-            sleepsCount: repo.sleeps.count,
-            firstDay: repo.days.first?.day,
-            lastDay: repo.days.last?.day,
-            lastDayUpdated: repo.days.last,
-            lastSleep: repo.sleeps.last,
-            refreshSeq: repo.refreshSeq)
-    }
-
-    /// Build every expensive derivation exactly once. Called only when `dataKey` changes,
-    /// so each full pass over repo.days / repo.sleeps runs once per data change rather than
-    /// once per render. Returns nil when there is no usable latest night (renders empty state).
-    private func buildModel() -> SleepModel? {
-        guard let night = latestNight else { return nil }
-        return SleepModel(
-            night: night,
-            intervals: night.intervals,
-            isPersistedHypnogram: (night.realSegments?.count ?? 0) >= 2,
-            performance: performanceSeries,
-            efficiency: efficiencySeries,
-            consistency: consistencySeries,
-            hoursVsNeeded: hoursVsNeededSeries,
-            restorative: restorativeSeries,
-            respiratory: respiratorySeries,
-            sleepDebt: sleepDebtSeries,
-            typicalTotalMin: typicalTotalMin,
-            typicalDeepMin: typicalStageMin(\.deepMin),
-            typicalRemMin: typicalStageMin(\.remMin),
-            typicalLightMin: typicalStageMin(\.lightMin),
-            trendPoints: durationTrendPoints)
-    }
-
-    // MARK: - Derived model
-
-    /// The most recent sleep, decoded into stage durations. TWO stagesJSON formats exist:
-    /// imported nights store a dict of MINUTES {"light","deep","rem","awake"}; on-device computed
-    /// nights store a SEGMENT ARRAY [{start,end,stage}] (AnalyticsEngine.encodeStages). Only the
-    /// dict was decoded before, so a Bluetooth-only user's night vanished from this tab entirely
-    /// while Intelligence showed it (#77). Computed nights also carry their REAL timeline now —
-    /// the hypnogram draws genuine segments instead of the synthetic reconstruction.
-    private var latestNight: Night? {
-        guard let s = repo.sleeps.last else { return nil }
-        if let stages = decodeStages(s.stagesJSON), stages.total > 0 {
-            return Night(session: s, stages: stages)
-        }
-        if let seg = decodeSegments(s.stagesJSON, sessionStart: s.startTs), seg.stages.total > 0 {
-            return Night(session: s, stages: seg.stages, realSegments: seg.intervals)
-        }
-        return nil
-    }
-
-    /// Mean total sleep duration (minutes) across nights with data — the "typical".
-    private var typicalTotalMin: Double? {
-        mean(repo.days.compactMap { $0.totalSleepMin }.filter { $0 > 0 })
-    }
-
-    /// Mean of a per-stage minutes column across days with data.
-    private func typicalStageMin(_ key: KeyPath<DailyMetric, Double?>) -> Double? {
-        mean(repo.days.compactMap { $0[keyPath: key] }.filter { $0 > 0 })
-    }
-
-    // MARK: - Per-tile series (latest, typical mean, sparkline history)
-
-    private typealias Metric = (latest: Double?, typical: Double?, series: [Double])
-
-    /// Build a metric from a per-day transform, keeping only finite positive-ish values.
-    private func metric(_ transform: (DailyMetric) -> Double?) -> Metric {
-        let series = repo.days.compactMap(transform).filter { $0.isFinite }
-        return (series.last, mean(series), series)
-    }
-
-    /// Sleep performance %: the imported WHOOP figure (sleep_performance, 0–100) when the
-    /// export carried one for that day; else the APPROXIMATE fallback (asleep / personal
-    /// need, capped 100) so strap-only days after the import horizon stay populated.
-    private var performanceSeries: Metric {
-        let imported = repo.importedSleep
-        let need = sleepNeedMin
-        return metric { d in
-            if let p = imported[d.day]?.performancePct { return p }   // export-verbatim
-            guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
-            return min(100, asleep / need * 100)   // APPROXIMATE fallback
-        }
-    }
-
-    private var efficiencySeries: Metric {
-        metric { d in
-            guard let e = d.efficiency else { return nil }
-            return e <= 1.0 ? e * 100 : e
-        }
-    }
-
-    /// Consistency: prefer the imported sleep_consistency series, but only when it covers
-    /// the latest night — otherwise "latest" would silently be a months-old import-era
-    /// value. Fallback is the APPROXIMATE rolling bedtime-spread score (per session, lower
-    /// spread → higher score, same SD→score mapping).
-    private var consistencySeries: Metric {
-        let imported = repo.importedSleep
-        if let lastDay = repo.days.last?.day, imported[lastDay]?.consistencyPct != nil {
-            let series = repo.days.compactMap { imported[$0.day]?.consistencyPct }
-            return (series.last, mean(series), series)
-        }
-        let cal = Calendar.current
-        func bedMinutes(_ s: CachedSleepSession) -> Double {
-            let d = Date(timeIntervalSince1970: TimeInterval(s.startTs))
-            let comps = cal.dateComponents([.hour, .minute], from: d)
-            var m = Double((comps.hour ?? 0) * 60 + (comps.minute ?? 0))
-            if m < 12 * 60 { m += 24 * 60 }   // wrap evening onsets into one continuous scale
-            return m
-        }
-        let mins = repo.sleeps.map(bedMinutes)
-        guard mins.count >= 3 else { return (nil, nil, []) }
-        var scores: [Double] = []
-        for i in mins.indices {
-            let lo = Swift.max(0, i - 13)
-            let window = Array(mins[lo...i])
-            guard window.count >= 3 else { continue }
-            let m = window.reduce(0, +) / Double(window.count)
-            let variance = window.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Double(window.count)
-            let sd = variance.squareRoot()
-            scores.append(Swift.max(0, Swift.min(100, 100 * (1 - sd / 120))))
-        }
-        return (scores.last, mean(scores), scores)
-    }
-
-    /// Hours vs needed % = asleep / need (can exceed 100 on a long night). The imported
-    /// sleep_need_min wins per day; else the APPROXIMATE personal-mean need.
-    private var hoursVsNeededSeries: Metric {
-        let imported = repo.importedSleep
-        let fallbackNeed = sleepNeedMin
-        return metric { d in
-            guard let asleep = d.totalSleepMin, asleep > 0 else { return nil }
-            let need = imported[d.day]?.needMin ?? fallbackNeed
-            guard need > 0 else { return nil }
-            return asleep / need * 100
-        }
-    }
-
-    /// Restorative % = (deep + REM) / asleep — the share of the night that does the work.
-    private var restorativeSeries: Metric {
-        metric { d in
-            guard let deep = d.deepMin, let rem = d.remMin,
-                  let asleep = d.totalSleepMin, asleep > 0 else { return nil }
-            return (deep + rem) / asleep * 100
-        }
-    }
-
-    private var respiratorySeries: Metric {
-        metric { $0.respRateBpm }
-    }
-
-    /// Sleep debt (minutes): the imported sleep_debt_min when the export carried it; else
-    /// the APPROXIMATE per-night need − asleep, floored at 0 (no "credit").
-    private var sleepDebtSeries: Metric {
-        let imported = repo.importedSleep
-        let need = sleepNeedMin
-        let series = repo.days.compactMap { d -> Double? in
-            if let debt = imported[d.day]?.debtMin { return debt }   // minutes, export-verbatim
-            guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
-            return SleepNeed.debtMin(needMin: need, asleepMin: asleep)   // APPROXIMATE fallback
-        }
-        return (series.last, mean(series), series)
-    }
-
-    /// The personal sleep need (minutes) — shared math with the Sleep Planner (SleepNeed).
-    private var sleepNeedMin: Double {
-        SleepNeed.needMin(totalSleepMinsByNight: repo.days.compactMap { $0.totalSleepMin })
-    }
-
-    // MARK: - Sleep Planner inputs
-
-    private var plannerGoal: SleepPlanner.Goal {
-        SleepPlanner.Goal(rawValue: behavior.plannerGoalRaw) ?? .perform
-    }
-
-    /// Strap alarm wins when enabled; manual planner time otherwise.
-    private var plannerWakeMinutes: Int {
-        behavior.smartAlarmEnabled ? behavior.smartAlarmMinutes : behavior.plannerWakeMinutes
-    }
-
-    /// Personal typical efficiency as 0–1, nil without history.
-    private var typicalEfficiency: Double? {
-        let vals = repo.days.compactMap { $0.efficiency }.map { $0 <= 1.0 ? $0 : $0 / 100 }
-        guard !vals.isEmpty else { return nil }
-        return vals.reduce(0, +) / Double(vals.count)
-    }
-
-    private var plannerRecommendation: SleepPlanner.Recommendation {
-        let lastDebt = sleepDebtSeries.latest ?? 0
-        return SleepPlanner.recommend(wakeMinutes: plannerWakeMinutes,
-                                      baseNeedMin: sleepNeedMin,
-                                      debtMin: lastDebt,
-                                      efficiency: typicalEfficiency,
-                                      goal: plannerGoal)
-    }
-
-    /// "HH:MM" from minutes-since-midnight — non-linguistic, rendered verbatim.
-    private static func clock(_ minutes: Int) -> String {
-        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
-    }
-
-    // MARK: - Trend points
-
-    /// Trailing 30 days of total sleep, plotted in HOURS. Falls back to all nights with
-    /// data if the trailing window is too sparse.
-    private var durationTrendPoints: [TrendPoint] {
-        let fmt = SleepView.dayParser
-        func build(_ slice: ArraySlice<DailyMetric>) -> [TrendPoint] {
-            slice.compactMap { d -> TrendPoint? in
-                guard let mins = d.totalSleepMin, mins > 0,
-                      let date = fmt.date(from: d.day) else { return nil }
-                return TrendPoint(date: date, value: mins / 60.0)
-            }
-        }
-        let recent = build(repo.days.suffix(30))
-        if recent.count >= 2 { return recent }
-        return build(repo.days[...])
-    }
-
-    private func trendRange(_ pts: [TrendPoint]) -> ClosedRange<Double> {
-        let vals = pts.map(\.value)
-        let lo = Swift.max(0, (vals.min() ?? 0) - 1)
-        let hi = (vals.max() ?? 9) + 1
-        return lo...Swift.max(hi, lo + 1)
-    }
 
     // MARK: - Empty / sparse states
 
@@ -729,17 +584,17 @@ struct SleepView: View {
 
     /// "+12% vs typical" / "−0.4 rpm vs typical" — the latest-vs-mean caption every tile carries.
     private func vsTypical(_ latest: Double?, _ typical: Double?, suffix: String, decimals: Int = 0) -> String {
-        guard let latest, let typical, typical != 0 else { return "vs typical —" }
+        guard let latest, let typical, typical != 0 else { return String(localized: "vs typical —") }
         let diff = latest - typical
         let sign = diff >= 0 ? "+" : "−"
         let mag = abs(diff)
         let num = decimals == 0 ? "\(Int(mag.rounded()))" : String(format: "%.\(decimals)f", mag)
-        return "\(sign)\(num)\(suffix) vs typical"
+        return String(localized: "\(sign)\(num)\(suffix) vs typical")
     }
 
     private func debtCaption(_ debt: Double?) -> String {
-        guard let debt else { return "vs need" }
-        return debt < 15 ? "On target" : "Below need"
+        guard let debt else { return String(localized: "vs need") }
+        return debt < 15 ? String(localized: "On target") : String(localized: "Below need")
     }
 
     private func debtColor(_ debt: Double?) -> Color {
@@ -772,185 +627,17 @@ struct SleepView: View {
         return "\(m / 60)h \(m % 60)m"
     }
 
+    /// "HH:MM" from minutes-since-midnight — non-linguistic, rendered verbatim.
+    private static func clock(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
+    }
+
     /// A sparkline needs at least two points; otherwise return nil so the tile stays clean.
     private func spark(_ series: [Double]) -> [Double]? {
         let tail = Array(series.suffix(30))
         return tail.count > 1 ? tail : nil
     }
 
-    private func mean(_ vals: [Double]) -> Double? {
-        guard !vals.isEmpty else { return nil }
-        return vals.reduce(0, +) / Double(vals.count)
-    }
-
-    // MARK: - Stage decoding
-
-    /// Decode the imported stagesJSON dict of MINUTES {"light","deep","rem","awake"}.
-    private func decodeStages(_ json: String?) -> Stages? {
-        guard let json, let data = json.data(using: .utf8) else { return nil }
-        guard let obj = try? JSONSerialization.jsonObject(with: data),
-              let dict = obj as? [String: Any] else { return nil }
-        func val(_ key: String) -> Double {
-            if let n = dict[key] as? NSNumber { return n.doubleValue }
-            if let d = dict[key] as? Double { return d }
-            if let i = dict[key] as? Int { return Double(i) }
-            return 0
-        }
-        let s = Stages(awake: val("awake"), light: val("light"),
-                       deep: val("deep"), rem: val("rem"))
-        return s.total > 0 ? s : nil
-    }
-
-    /// Decode the COMPUTED stagesJSON segment array [{"start":epoch,"end":epoch,"stage":"wake"|
-    /// "light"|"deep"|"rem"}] into stage totals plus the real timeline (seconds relative to the
-    /// session start, the Hypnogram's domain). The on-device SleepStager calls awake "wake". (#77)
-    private func decodeSegments(
-        _ json: String?, sessionStart: Int
-    ) -> (stages: Stages, intervals: [SleepInterval])? {
-        guard let json, let data = json.data(using: .utf8),
-              let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
-              !arr.isEmpty else { return nil }
-        var stages = Stages(awake: 0, light: 0, deep: 0, rem: 0)
-        var intervals: [SleepInterval] = []
-        for seg in arr {
-            guard let start = (seg["start"] as? NSNumber)?.intValue,
-                  let end = (seg["end"] as? NSNumber)?.intValue, end > start,
-                  let name = seg["stage"] as? String else { continue }
-            let minutes = Double(end - start) / 60.0
-            let stage: SleepStage
-            switch name {
-            case "wake", "awake": stage = .awake; stages.awake += minutes
-            case "light": stage = .light; stages.light += minutes
-            case "deep": stage = .deep; stages.deep += minutes
-            case "rem": stage = .rem; stages.rem += minutes
-            default: continue
-            }
-            intervals.append(SleepInterval(
-                stage: stage,
-                start: TimeInterval(start - sessionStart),
-                end: TimeInterval(end - sessionStart)))
-        }
-        return stages.total > 0 ? (stages, intervals) : nil
-    }
-
-    /// yyyy-MM-dd → Date (en_US_POSIX, UTC), per task spec.
-    private static let dayParser: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-}
-
-// MARK: - Local value types
-
-/// Cheap, Equatable fingerprint of the repo inputs SleepView derives from. Two snapshots are
-/// equal iff the data the screen reads is unchanged, so the heavy `SleepModel` rebuild is
-/// skipped on the many `body` re-evaluations that don't touch sleep data.
-private struct SleepInputKey: Equatable {
-    let loaded: Bool
-    let daysCount: Int
-    let sleepsCount: Int
-    let firstDay: String?
-    let lastDay: String?
-    /// Newest day row (Equatable) — catches in-place edits to the latest day's values.
-    let lastDayUpdated: DailyMetric?
-    /// Newest sleep session (Equatable) — catches a re-import of the latest night.
-    let lastSleep: CachedSleepSession?
-    /// Bumped on every Repository.refresh — catches a re-import that changes only the
-    /// imported metricSeries figures (importedSleep) without touching days/sleeps.
-    let refreshSeq: Int
-}
-
-/// Memoized result of every expensive SleepView derivation. Built once per data change in
-/// `buildModel()` and read by the subviews, so full passes over repo.days / repo.sleeps and
-/// the Night.intervals reconstruction no longer run on every render.
-private struct SleepModel {
-    /// (latest, typical mean, full history) per metric — mirrors SleepView.Metric.
-    typealias Metric = (latest: Double?, typical: Double?, series: [Double])
-
-    let night: Night
-    /// Stage intervals for the hypnogram — computed once (Night.intervals is a computed
-    /// property; it was previously re-derived on each access during render).
-    let intervals: [SleepInterval]
-    /// True when `intervals` are the stager's persisted per-epoch segments (on-device
-    /// APPROXIMATE staging), not the synthesized architecture.
-    let isPersistedHypnogram: Bool
-
-    let performance: Metric
-    let efficiency: Metric
-    let consistency: Metric
-    let hoursVsNeeded: Metric
-    let restorative: Metric
-    let respiratory: Metric
-    let sleepDebt: Metric
-
-    let typicalTotalMin: Double?
-    let typicalDeepMin: Double?
-    let typicalRemMin: Double?
-    let typicalLightMin: Double?
-
-    let trendPoints: [TrendPoint]
-}
-
-private struct Stages {
-    var awake: Double
-    var light: Double
-    var deep: Double
-    var rem: Double
-    /// All stages (includes awake) — total time-in-bed minutes.
-    var total: Double { awake + light + deep + rem }
-    /// Asleep time = total minus awake.
-    var asleep: Double { light + deep + rem }
-}
-
-private struct Night {
-    let session: CachedSleepSession
-    let stages: Stages
-    /// The REAL per-segment timeline for on-device computed nights (nil for imported nights,
-    /// whose export carries totals only — those keep the synthetic reconstruction below). (#77)
-    var realSegments: [SleepInterval]? = nil
-
-    /// Total time in bed in minutes (from reconstructed stages).
-    var timeInBed: Double { stages.total }
-
-    /// The wall-clock start of the night (for the Hypnogram's clock labels).
-    var onsetDate: Date { Date(timeIntervalSince1970: TimeInterval(session.startTs)) }
-
-    /// Stage intervals laid end-to-end across the night, in seconds from start.
-    /// On-device computed nights use their REAL timeline; imported nights are reconstructed
-    /// from durations only (the export has no per-epoch timeline).
-    var intervals: [SleepInterval] {
-        if let real = realSegments, real.count >= 2 { return real }
-        var t: TimeInterval = 0
-        var out: [SleepInterval] = []
-        func add(_ stage: SleepStage, _ minutes: Double) {
-            guard minutes > 0 else { return }
-            let secs = minutes * 60
-            out.append(SleepInterval(stage: stage, start: t, end: t + secs))
-            t += secs
-        }
-        // A plausible architecture: deep early, REM later, awake last.
-        add(.light, stages.light * 0.4)
-        add(.deep, stages.deep)
-        add(.light, stages.light * 0.3)
-        add(.rem, stages.rem)
-        add(.light, stages.light * 0.3)
-        add(.awake, stages.awake)
-        return out
-    }
-
-    var onsetText: String { Night.timeFmt.string(from: Date(timeIntervalSince1970: TimeInterval(session.startTs))) }
-    var wakeText: String { Night.timeFmt.string(from: Date(timeIntervalSince1970: TimeInterval(session.endTs))) }
-    var dateLabel: String { Night.dateFmt.string(from: Date(timeIntervalSince1970: TimeInterval(session.startTs))) }
-
-    private static let timeFmt: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
-    private static let dateFmt: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f
-    }()
 }
 
 // MARK: - Preview

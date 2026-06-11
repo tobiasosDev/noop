@@ -76,3 +76,5 @@ build-device/
 build-sim/
 build-mac-test/
 build-archive/
+
+.superpowers/
