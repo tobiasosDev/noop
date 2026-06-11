@@ -1,0 +1,22 @@
+Strand/Resources/Localizable.xcstrings
+  s_5593293f1faf9c::t_447b53085e19d4 7558-7612,7628-7630,7646-7649
+  s_5593293f1faf9c::t_0fd3235824869f 7843-7859
+  s_5593293f1faf9c::t_23a55e6285cd7e 6392-6408
+  s_5593293f1faf9c::t_e2b8e993c5076d 7613-7627,7631-7645
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "55048c9c7e521e783ca21c0e0809528680f8f3c6",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
