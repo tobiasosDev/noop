@@ -1,0 +1,25 @@
+Strand/Data/IntelligenceEngine.swift
+  s_5593293f1faf9c::t_a145df61b55e52 143
+  s_5593293f1faf9c::t_e7f26375606eca 173-174,178,184-185
+  s_5593293f1faf9c::t_391176c2633306 67
+  s_5593293f1faf9c::t_a4b2c58fa367c3 122
+  s_5593293f1faf9c::t_ebbae1ca7fa56b 310,314
+  s_5593293f1faf9c::t_46811fdda5f844 175-177,179-183
+  s_5593293f1faf9c::t_9a10958b421b03 311-313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "d12fef690e34c85c34e51512c1ca7e7ca8ea358d",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
