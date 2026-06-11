@@ -1,0 +1,23 @@
+Strand/Data/IntelligenceEngine.swift
+  s_5593293f1faf9c::t_e7f26375606eca 173-184
+  s_5593293f1faf9c::t_a145df61b55e52 143
+  s_5593293f1faf9c::t_391176c2633306 67
+  s_5593293f1faf9c::t_a4b2c58fa367c3 122
+  s_5593293f1faf9c::t_ebbae1ca7fa56b 309-311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "3ccc09f7222bb940bd93376d4b8ae010f50f7002",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
