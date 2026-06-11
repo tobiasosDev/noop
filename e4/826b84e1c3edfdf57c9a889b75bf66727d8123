@@ -1,0 +1,36 @@
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStager.swift
+  s_1c0d40ff11afcf::t_5bf7364dded7ab 198-203
+  s_1c0d40ff11afcf::t_210101f477ff94 212-221
+  s_1c0d40ff11afcf::t_755801ecab3e48 1119-1120,1124-1125,1146-1151,1154-1157
+  s_1c0d40ff11afcf::t_b09d10f5f8f092 1110,1114
+  s_1c0d40ff11afcf::t_f6a89f6fce6b27 1134-1139
+  s_1c0d40ff11afcf::t_6d42179dfb98f6 208-210
+  s_1c0d40ff11afcf::t_cff04a2fe31f77 1191-1192,1195-1216
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/RealNightValidationTests.swift
+  s_1c0d40ff11afcf::t_2bb1845c37a126 53-57
+  s_1c0d40ff11afcf::t_34d8db324d0126 1-52,58-95
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/SleepStagerTests.swift
+  s_1c0d40ff11afcf::t_c757176dea2934 425-439,446,485-528
+  s_1c0d40ff11afcf::t_51ed3e61e029fa 440-445,447-484
+android/app/src/main/java/com/noop/analytics/SleepStager.kt
+  s_1c0d40ff11afcf::t_fea3e4cd1f0330 144-151
+  s_1c0d40ff11afcf::t_b305e1af3c1562 130-135,140-142
+  s_1c0d40ff11afcf::t_e544215bd06c87 1025,1029,1036,1041-1042,1051-1056,1063-1066,1069-1071
+  s_1c0d40ff11afcf::t_4761f323e53cbc 1108-1109,1112-1132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e4826b84e1c3edfdf57c9a889b75bf66727d8123",
+  "prompts": {},
+  "sessions": {
+    "s_1c0d40ff11afcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "408fdfd8-aed8-47b0-a02e-ef3c421bd764",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
