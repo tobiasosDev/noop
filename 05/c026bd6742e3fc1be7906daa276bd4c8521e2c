@@ -1,0 +1,20 @@
+docs/superpowers/plans/2026-06-11-sleep-reanalysis.md
+  s_5593293f1faf9c::t_072f82bab1658f 1-433,444
+  s_5593293f1faf9c::t_15c7000f66fc6a 434-443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "05c026bd6742e3fc1be7906daa276bd4c8521e2c",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
