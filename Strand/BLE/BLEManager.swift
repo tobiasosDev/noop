@@ -830,10 +830,16 @@ public final class BLEManager: NSObject, ObservableObject {
         // Never re-arm the heavy R10/R11 burst once the marginal-radio fallback has tripped (#80) — that
         // would just re-trigger the drop the keep-alive is meant to prevent. 0x2A37 keeps the HR flowing,
         // and its inbound frames still wake the app, so the wake alarm keeps working in fallback too.
-        if (wantsRealtime || wakeWindowActive || holdLinkForWake)   // keep hot through window / eager hold
-            && !standardHRFallback {
+        // R10/R11 is re-armed ONLY for the Live tab (wantsRealtime). The wake hold/window re-arms just
+        // the light type-40 stream: R10/R11 raw mode persists across an unexpected disconnect and
+        // blocks the strap from banking type-47 biometrics while away from the phone (verified
+        // on-device 2026-06-11: every phone-away window banked console frames only), so a 24/7 path
+        // must never leave it armed.
+        if wantsRealtime && !standardHRFallback {
             send(.sendR10R11Realtime, payload: [0x01])
             send(.toggleRealtimeHR, payload: [0x01])
+        } else if (wakeWindowActive || holdLinkForWake) && !standardHRFallback {
+            send(.toggleRealtimeHR, payload: [0x01])   // keep hot through window / eager hold
         }   // re-arm so it can't lapse
         keepAliveTick += 1
         if keepAliveTick % 2 == 0 { send(.getBatteryLevel, payload: []) }  // ~every 60s
@@ -1098,7 +1104,8 @@ public final class BLEManager: NSObject, ObservableObject {
             log("Wake alarm: holding link hot from now through wake (reliable wrist buzz — more battery)")
             guard state.connected, didBond else { return }   // re-armed by onCommandChannelReady on connect
             enableLiveNotifications(reason: "wake hold")
-            send(.sendR10R11Realtime, payload: [0x01])
+            // Type-40 only — enough inbound frames to keep waking the suspended app. NOT R10/R11:
+            // raw mode persists across a link drop and stops the strap banking type-47 while away.
             send(.toggleRealtimeHR, payload: [0x01])
         } else {
             log("Wake alarm: releasing held link")
@@ -1115,7 +1122,7 @@ public final class BLEManager: NSObject, ObservableObject {
         log("Wake alarm: pre-wake keep-alive window open — keeping link hot to fire on time")
         guard state.connected, didBond, selectedModel.deviceFamily == .whoop4 else { return }
         enableLiveNotifications(reason: "wake window")
-        send(.sendR10R11Realtime, payload: [0x01])
+        // Type-40 only — see setWakeKeepAlive: R10/R11 left armed across a drop blocks offline banking.
         send(.toggleRealtimeHR, payload: [0x01])
     }
 
