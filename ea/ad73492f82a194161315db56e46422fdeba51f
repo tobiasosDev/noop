@@ -1,0 +1,333 @@
+android/app/src/test/java/com/noop/analytics/WorkoutSportTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-36
+android/app/src/test/java/com/noop/ble/SyncNowGateTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-46
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/config
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-14
+android/app/src/main/java/com/noop/ui/AppleHealthScreen.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 21,257-259,275-276,283-284,380-381,384,390
+docs/ANDROID.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 40,223-243
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/objects/f1/eb48b0cfc6cab3daa8157495dbbfa606e14510
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-2
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-receive.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-24
+CODE_OF_CONDUCT.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-55
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/packed-refs
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-204
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/fsmonitor-watchman.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-174
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/update.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-128
+android/app/src/test/java/com/noop/analytics/VitalBandsTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-109
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-applypatch.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-14
+build-mac-test/info.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-10
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/packed-refs
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-954
+android/app/src/main/java/com/noop/analytics/AnalyticsEngine.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 101-104,108-110,178
+Strand/Collect/RawHistoryArchive.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-93
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-receive.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-24
+Packages/WhoopProtocol/Tests/WhoopProtocolTests/RejectedHistoryTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-100
+android/app/src/test/java/com/noop/location/TrackFilterTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-35
+Packages/StrandImport/Tests/StrandImportTests/AppleHealthImporterTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 147-252
+build-archive/ExportOptions.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-12
+.github/PULL_REQUEST_TEMPLATE.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-33
+android/app/src/test/java/com/noop/analytics/RouteMathTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-60
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStager.swift
+  s_1c0d40ff11afcf::t_b196fec1bb89ba 479-484
+  s_1c0d40ff11afcf::t_4233a615fb55fd 544-557
+.github/ISSUE_TEMPLATE/feature_request.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-27
+android/app/src/main/java/com/noop/ble/RawHistoryArchive.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-97
+Strand/Data/CsvExport.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1,3,5-100,111-116,126,128-149
+  s_1c0d40ff11afcf::t_f8f409fae381dd 101-110,117-125,127
+  s_1c0d40ff11afcf::t_0d88ac0b00962a 2,4
+android/app/src/main/java/com/noop/ui/InsightsScreen.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 34-35,149-151,154-165,171-173,191-219,230,233-235
+StrandTests/DataBackupOriginTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-35
+build-mac-test/Logs/Localization/LogStoreManifest.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-10
+Strand/Data/JournalCatalog.swift
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 171-174
+StrandTests/StandardHRNoteTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-37
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-commit.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-49
+android/app/src/test/java/com/noop/ingest/HealthConnectCoveredDaysTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-79
+Packages/StrandImport/Sources/StrandImport/AppleHealthImporter.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 79,82-88,93-96,150-153,158-161,163-169,175,215-220,434-437,448-449,538-796
+TERMS.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-120
+build-mac-test/Logs/Test/LogStoreManifest.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-70
+android/app/src/main/java/com/noop/analytics/SleepStager.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 74-107,314-345,351-355,362,384-388
+android/app/src/main/java/com/noop/ui/JournalLog.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-236
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/VitalBandsTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-100
+StrandTests/WorkoutSourceTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-119
+android/app/src/test/java/com/noop/ingest/WhoopCsvExporterTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-223
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/commit-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-24
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/AnalyticsEngineTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 115-163
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/push-to-checkout.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-78
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/HEAD
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+CONTRIBUTING.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-102
+Strand/App/TermsGateView.swift
+  s_1c0d40ff11afcf::t_678b1bf5cd0931 62-64
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-61,65-82
+Packages/WhoopStore/Tests/WhoopStoreTests/MetricsCacheTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 145-179
+build-mac-test/Logs/Test/Test-Strand-2026.06.10_21-43-30-+0200.xcresult/Info.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-29
+Packages/StrandImport/Tests/StrandImportTests/WhoopCsvExporterTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-152
+android/app/src/test/java/com/noop/ui/TodayMetricTilesTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-86
+Strand/Data/MetricCatalog.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 30-62
+build-mac-test/ModuleCache.noindex/Session.modulevalidation
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/sendemail-validate.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-77
+Strand/Screens/HealthView.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 3,65-70,100-103,141-146,198-206,226-229,239-241,244-278,282-284,287-291,294-297,300-305,318-319,331-335,338-341,343-349,354
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-applypatch.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-14
+build-mac-test/Logs/Launch/LogStoreManifest.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-10
+Packages/StrandDesign/Sources/StrandDesign/TrendChart.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 186-197
+Strand/AI/AICoach.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 27,36,45,71-77,81-83,88,97-125,373-374,404,409-410,503,601-644
+Strand/App/ContentView.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 10,41-47,50
+Strand/Screens/ManualWorkoutSheet.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-213
+android/app/src/main/java/com/noop/analytics/RouteMath.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-102
+android/app/src/test/java/com/noop/ui/WorkoutEditingTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-150
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/FETCH_HEAD
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-953
+android/app/build.gradle.kts
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 168
+android/app/src/main/java/com/noop/ui/TermsGate.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-113
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/RespRateRsaTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-45
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/DayCaloriesTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-90
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/sendemail-validate.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-77
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/post-update.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-8
+Strand/Screens/JournalLogCard.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-113
+build-archive/export/DistributionSummary.plist
+  s_ff049a8bced57c::t_a8d70edeeb8f83 1-126
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/RecoveryScorerTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 82-101
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/fsmonitor-watchman.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-174
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/prepare-commit-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-42
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-rebase.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-169
+build-mac-test/Logs/Test/Test-Strand-2026.06.10_21-43-30-+0200.xcresult/Data/data.0~yA42XOTIVke-0O9j2DvspiqIWDvcIihbcLBYQotD_Lx0DdC5eYDBdMUp-G1GKGG6EH00c4QVcpzQrTlrYmjEgA==
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+Strand/Screens/InsightsView.swift
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 161
+Strand/App/Terms.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-24
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/FETCH_HEAD
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-197
+Packages/StrandImport/Sources/StrandImport/ImportModels.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 311-317,324-325,332
+android/app/src/main/java/com/noop/data/Entities.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 264-283
+StrandTests/MarginalRadioDetectorTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-99
+android/app/src/main/java/com/noop/ui/RouteCanvas.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-29
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/applypatch-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-15
+Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutDetector.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 353-367
+StrandTests/UnitFormatterTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-125
+android/app/src/test/java/com/noop/protocol/RejectedHistoricalRecordsTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-95
+Strand/Collect/Collector.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 55-58,131
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/commit-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-24
+android/app/src/test/java/com/noop/ingest/HealthConnectActiveKcalTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-54
+StrandTests/JournalLogicTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-49
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-push.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-53
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/description
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/config
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-14
+android/app/src/main/java/com/noop/ui/CompareScreen.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 46,95-116,770-774,800-801
+Packages/WhoopStore/Tests/WhoopStoreTests/JournalWorkoutAppleCacheTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 55-73
+Packages/WhoopStore/Sources/WhoopStore/Reads.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 108-118
+.github/workflows/swift-packages.yml
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-49
+android/app/src/test/java/com/noop/analytics/SleepStagerDaytimeGuardTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-134
+android/app/src/main/java/com/noop/ui/WorkoutEditing.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-130
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/StepsDailyTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-88
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/push-to-checkout.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-78
+Packages/StrandAnalytics/Sources/StrandAnalytics/VitalBands.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-129
+Packages/WhoopProtocol/Sources/WhoopProtocol/HistoricalStreams.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 3-34
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/update.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-128
+build-archive/export/ExportOptions.plist
+  s_ff049a8bced57c::t_a8d70edeeb8f83 1-24
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/prepare-commit-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-42
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/info/exclude
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-6
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/objects/fe/3b957e5f67012e0009c13b7947e357dc037a49
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-mac-test/SourcePackages/workspace-state.json
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-47
+android/app/src/main/java/com/noop/ingest/ExerciseTypes.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-48
+Strand/Data/AppleHealthImport.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 23
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-rebase.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-169
+android/app/src/main/java/com/noop/ingest/AppleHealthImporter.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 13,15,56-64,193-201,203,206-218,220-234,236-237,240-242,426-427,433-434,450-456,468-500,711-717,730-739,749,784,801,913-1138
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/post-update.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-8
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/description
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-archive/NOOP.xcarchive/Info.plist
+  s_ff049a8bced57c::t_ba51ccf09ecb61 1-33
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/pre-merge-commit.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-13
+Strand/Data/Units.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-179
+.github/workflows/android.yml
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-52
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/refs/heads/development
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-commit.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-49
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/SkinTempAnalyticsTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-107
+android/app/src/test/java/com/noop/ingest/AppleHealthImporterToleranceTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-149
+android/app/src/test/java/com/noop/ui/JournalLogTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-66
+build-mac-test/SourcePackages/repositories/ZIPFoundation-789121e4/hooks/applypatch-msg.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-15
+android/app/src/main/java/com/noop/ingest/WhoopCsvExporter.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-354
+Strand/Data/WorkoutSource.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-95
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-merge-commit.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-13
+SECURITY.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-50
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/hooks/pre-push.sample
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-53
+Packages/WhoopStore/Sources/WhoopStore/MetricsCache.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 47-50,54-55,61,103-104,119-121,125-126,157,169-170
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/objects/ce/4d9c4a691fa94d0a779fa913cd32cf80a1648d
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-3
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/info/exclude
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-6
+StrandTests/AIProviderModelListTests.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-76
+android/app/src/test/java/com/noop/ui/UnitFormatterTest.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-157
+android/app/src/main/java/com/noop/ui/Units.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-189
+android/app/src/main/java/com/noop/location/LocationTracker.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-70
+android/app/src/main/java/com/noop/ui/WorkoutStart.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-162
+android/app/src/main/java/com/noop/analytics/WorkoutSport.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-16
+.github/ISSUE_TEMPLATE/bug_report.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-37
+docs/PRIVACY_SECURITY.md
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 403
+build-mac-test/Logs/Package/LogStoreManifest.plist
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-83
+Strand/Screens/WorkoutsView.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 22-26,32-41,50-55,88-95,98-125,132-133,145-158,208,225,439,445,469-504,514-516,518-527,649
+build-mac-test/SourcePackages/repositories/GRDB.swift-dd0599db/HEAD
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+build-mac-test/TestResults/metadata.db
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1-216
+Packages/StrandImport/Sources/StrandImport/WhoopCsvExporter.swift
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-248
+android/app/src/main/java/com/noop/analytics/VitalBands.kt
+  s_1c0d40ff11afcf::t_d5ae2f93d5b90b 1-125
+build-mac-test/Logs/Test/Test-Strand-2026.06.10_21-43-30-+0200.xcresult/Data/data.0~BNFJOnBO94V7SQi3WoPNOWBXIZgXz0SKrAow_nL5WCR-HRVtEndAloiONMbJdptU5RdFIS60shnf2Sol6id3mQ==
+  s_1c0d40ff11afcf::t_b2f8e1fd542859 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "eaad73492f82a194161315db56e46422fdeba51f",
+  "prompts": {},
+  "sessions": {
+    "s_1c0d40ff11afcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "408fdfd8-aed8-47b0-a02e-ef3c421bd764",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    },
+    "s_ff049a8bced57c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc8790c1-c0b6-4364-afc9-7dface6930d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
