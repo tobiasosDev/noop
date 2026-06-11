@@ -4,6 +4,24 @@ import WhoopProtocol
 import WhoopStore
 import StrandAnalytics
 
+/// Scope of a FORCED re-analysis: bypasses the `intel_hr_frontier` incremental gate so
+/// already-cached nights are recomputed from raw streams (needed whenever the staging
+/// algorithm changes — cached results are otherwise reused forever).
+enum ReanalysisScope {
+    /// Forces day offsets 0 and 1 — the most recent sleep may have ENDED on
+    /// yesterday's UTC day when re-analysis runs before tonight's offload.
+    case lastNight
+    /// Forces every offset in the analysis window.
+    case everything
+
+    func forcesOffset(_ offset: Int) -> Bool {
+        switch self {
+        case .lastNight:  return offset <= 1
+        case .everything: return true
+        }
+    }
+}
+
 /// On-device "intelligence": computes recovery / day-strain / sleep from the raw strap streams using
 /// the same model shape WHOOP uses (HRV vs personal baseline ~60%, resting HR ~20%, sleep ~15%,
 /// respiration ~5%; strain 0–21 from cardiovascular load). This is what makes NOOP independent of
