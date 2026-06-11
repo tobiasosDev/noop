@@ -29,12 +29,18 @@ public struct NoopCard<Content: View>: View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(StrandPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                .strokeBorder(hover ? StrandPalette.hairlineStrong : StrandPalette.hairline, lineWidth: 1))
-            .shadow(color: .black.opacity(hover ? 0.25 : 0), radius: 10, y: 4)
+            // Hover chrome (fill + border + shadow) lives in the background so its animation is
+            // scoped to the card surface ONLY. It must never animate the content() subtree, or a
+            // chart inside re-animates its line every time the cursor crosses the card. (#104)
+            .background {
+                RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
+                    .fill(StrandPalette.surfaceRaised)
+                    .overlay(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
+                        .strokeBorder(hover ? StrandPalette.hairlineStrong : StrandPalette.hairline, lineWidth: 1))
+                    .shadow(color: .black.opacity(hover ? 0.25 : 0), radius: 10, y: 4)
+                    .animation(.easeOut(duration: 0.16), value: hover)
+            }
             .onHover { hover = $0 }
-            .animation(.easeOut(duration: 0.16), value: hover)
     }
 }
 

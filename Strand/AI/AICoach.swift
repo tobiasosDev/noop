@@ -716,6 +716,12 @@ final class AICoachEngine: ObservableObject {
                      + ", sleep: \(avgSleepHours(last30))h"
                      + ", HRV: \(avgInt(last30.compactMap { $0.avgHrv })) ms"
                      + ", RHR: \(avgInt(last30.compactMap { $0.restingHr.map(Double.init) })) bpm")
+        // Additional vitals when present (#124 — the coach used to see only recovery/strain/sleep/HRV/RHR).
+        lines.append("  SpO2: \(avgInt(last30.compactMap { $0.spo2Pct }))%"
+                     + ", respiration: \(avgOne(last30.compactMap { $0.respRateBpm }))/min"
+                     + ", skin-temp deviation: \(avgOne(last30.compactMap { $0.skinTempDevC }))°C"
+                     + ", steps: \(avgInt(last30.compactMap { $0.steps.map(Double.init) }))/day"
+                     + ", active energy: \(avgInt(last30.compactMap { $0.activeKcalEst }))kcal/day")
 
         return lines.joined(separator: "\n")
     }

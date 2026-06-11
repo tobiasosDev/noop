@@ -465,7 +465,6 @@ private struct ScanStep: View {
 
     @State private var scanning = false
     @State private var showHelp = false
-    @State private var autoScanStarted = false
 
     /// Which strap to look for — shared with the Live screen via the same key.
     @AppStorage("selectedWhoopModel") private var selectedModelRaw = WhoopModel.whoop4.rawValue
@@ -473,7 +472,7 @@ private struct ScanStep: View {
 
     var body: some View {
         StepShell(title: "Find your strap",
-                  subtitle: live.bonded ? "Bonded. You're set." : "NOOP starts looking as soon as this step appears. You can keep going while it bonds.") {
+                  subtitle: live.bonded ? "Bonded. You're set." : "Pick your strap below, then tap Scan — NOOP will find it.") {
             VStack(spacing: 24) {
                 RadarSweep(active: scanning && !live.bonded, bonded: live.bonded)
                     .frame(width: 220, height: 220)
@@ -482,7 +481,7 @@ private struct ScanStep: View {
 
                 if !live.bonded {
                     VStack(spacing: 8) {
-                        Text("Which strap?").font(StrandFont.caption)
+                        Text("Which strap are you pairing?").font(StrandFont.caption)
                             .foregroundStyle(StrandPalette.textSecondary)
                         SegmentedPillControl(
                             WhoopModel.allCases,
@@ -494,8 +493,19 @@ private struct ScanStep: View {
                         )
                     }
 
+                    // Proactive 5/MG guidance (#130): the strap bonds to one host at a time, so a scan
+                    // here finds nothing while it's still paired in the official WHOOP app.
+                    if selectedModel == .whoop5mg {
+                        Text("WHOOP 5.0/MG pairs with one app at a time. If nothing's found, unpair it in the official WHOOP app and fully close that app, then Scan.")
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: 360)
+                    }
+
                     Button(action: { startScan() }) {
-                        Label(scanning ? "Scanning…" : "Scan again", systemImage: "dot.radiowaves.left.and.right")
+                        Label(scanning ? "Scanning…" : "Scan", systemImage: "dot.radiowaves.left.and.right")
                     }
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(scanning)
@@ -506,7 +516,6 @@ private struct ScanStep: View {
                 }
             }
         }
-        .onAppear(perform: startAutoScanIfNeeded)
         .onDisappear { scanning = false }
     }
 
@@ -543,12 +552,6 @@ private struct ScanStep: View {
         guard !live.bonded else { return }
         model.disconnect()
         startScan(model: newModel)
-    }
-
-    private func startAutoScanIfNeeded() {
-        guard !autoScanStarted, !live.bonded, !live.connected else { return }
-        autoScanStarted = true
-        startScan()
     }
 
     // The calm, never-alarmist "can't find it" card.

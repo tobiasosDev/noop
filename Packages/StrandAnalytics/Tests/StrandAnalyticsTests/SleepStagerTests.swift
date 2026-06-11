@@ -579,4 +579,27 @@ final class SleepStagerTests: XCTestCase {
         // HR 50 < median → not the REM band, and not low enough for deep (hrLo 45) → light
         XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, hrVar: 10, rmssd: 30, rrv: .nan)), "light")
     }
+
+    // #127 / #129: a depth-signature epoch (still, low HR, regular breathing) must be classed DEEP
+    // even when per-epoch RMSSD is missing — sparse R-R (common on BLE-offloaded nights, esp. 5/MG)
+    // used to hard-block deep, so those nights decoded 0 m of deep sleep. A MEASURABLE-but-low RMSSD
+    // must still keep the epoch out of deep (the high-tone bar applies when we can measure it).
+    private func depthEpoch(rmssd: Double) -> SleepStager.EpochFeatures {
+        SleepStager.EpochFeatures(index: 0, midTs: 0, count: 0, moveFrac: 0,   // still
+                                  ckSleep: true, hr: 50, hrVar: 0, rmssd: rmssd, sdnn: 0,
+                                  respRate: 14, rrv: .nan,            // missing resp → both-arms fallback (pro-deep)
+                                  clock: 0.5)
+    }
+
+    func testMissingRmssdNoLongerBlocksDeep() {
+        // hrLo=55 (so hr=50 is "low"), rmssdHi=50, no cardiac activation.
+        let withMissingRmssd = SleepStager.classifyOne(depthEpoch(rmssd: .nan),
+            hrLo: 55, hrHi: 90, rmssdHi: 50, hrvarHi: 100, rrvHi: 1, rrvLo: 0.5)
+        XCTAssertEqual(withMissingRmssd, "deep", "a missing per-epoch RMSSD must not block deep")
+
+        let withLowRmssd = SleepStager.classifyOne(depthEpoch(rmssd: 10),
+            hrLo: 55, hrHi: 90, rmssdHi: 50, hrvarHi: 100, rrvHi: 1, rrvLo: 0.5)
+        XCTAssertNotEqual(withLowRmssd, "deep", "a measurable-but-low RMSSD epoch must still clear the high-tone bar")
+    }
+
 }

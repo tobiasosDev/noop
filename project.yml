@@ -63,6 +63,11 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.device.bluetooth: true
         com.apple.security.files.user-selected.read-write: true
+        # Outbound client access — used ONLY by the opt-in, consent-gated, BYOK AI Coach.
+        # The ad-hoc distributed build applies NO entitlements (unsigned build + ad-hoc
+        # re-sign), so this matters only for a SIGNED/sandboxed build (where the sandbox
+        # otherwise blocks the Coach's request — #128). Data path stays network-free.
+        com.apple.security.network.client: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop

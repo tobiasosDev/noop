@@ -316,13 +316,19 @@ public enum SleepStager {
         let n = grav.count
         if n < 2 { return [Bool](repeating: false, count: n) }
         let half = windowSize(grav.map { $0.ts }) / 2
+        // stillPrefix[i] = # still samples among deltas[0..<i]: O(1) window counts → an O(n) scan, not
+        // O(n×window). The old nested loop burned minutes of CPU per analysis tick (and on Android, on
+        // the main thread, froze the app into ANRs after a few nights of 1 Hz history). Identical output.
+        var stillPrefix = [Int](repeating: 0, count: n + 1)
+        for i in 0..<n {
+            stillPrefix[i + 1] = stillPrefix[i] + (deltas[i] < gravityStillThresholdG ? 1 : 0)
+        }
         var flags: [Bool] = []
         flags.reserveCapacity(n)
         for i in 0..<n {
             let lo = max(0, i - half)
             let hi = min(n, i + half + 1)
-            var stillCount = 0
-            for j in lo..<hi where deltas[j] < gravityStillThresholdG { stillCount += 1 }
+            let stillCount = stillPrefix[hi] - stillPrefix[lo]
             flags.append(Double(stillCount) / Double(hi - lo) >= stillFraction)
         }
         return flags
@@ -1190,9 +1196,14 @@ public enum SleepStager {
         // DEEP (N3): still + low HR (mandatory bradycardia) + at least one parasympathetic
         // signature — high RMSSD OR regular respiration. The old conjunction required low HR
         // AND top-tail RMSSD in the SAME epoch, which co-occurs in ~4% of epochs on narrow-HR
-        // nights → near-zero deep. The disjunction matches the literature N3 signature and is
-        // robust to a narrow HR range or all-NaN RRV (then rrvRegular is true ⇒ deep = still+lowHR).
-        if still && hrLow && (parasympHigh || rrvRegular) { return "deep" }
+        // nights → near-zero deep. The disjunction matches the literature N3 signature.
+        // Upstream #127/#129: when NEITHER arm is measurable (sparse per-epoch R-R on
+        // BLE-offloaded / 5/MG nights AND no respiration), missing data is treated as pro-deep
+        // rather than deep-blocking, so those nights stop decoding 0 m deep despite a real depth
+        // signature (still + low HR). An epoch WITH a finite RMSSD or RRV must still clear its
+        // bar; over-minting is bounded by deepPlausibleMaxFraction in reimposePhysiology.
+        let bothArmsUnmeasured = !f.rmssd.isFinite && !f.rrv.isFinite
+        if still && hrLow && (parasympHigh || rrvRegular || bothArmsUnmeasured) { return "deep" }
         // REM: still body + activated cardiac + irregular respiration.
         if still && cardiacActivated && rrvIrregular { return "rem" }
         // REM fallback when respiration unavailable (all-NaN RRV): the primary rule is dead, so

@@ -205,7 +205,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         maxHROverride = profileStore.hrMaxOverride
                             .takeIf { it > 0 }?.toDouble(),
                     )
-                }
+                    // analyzeRecent now hops to Dispatchers.Default; a scope cancellation surfaces as a
+                    // CancellationException that runCatching would otherwise swallow, breaking the loop's
+                    // own cancellation — rethrow it so onCleared() actually stops the loop. (#125)
+                }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
                 // Opt-in writeback: push the freshly computed nights into Health Connect so other
                 // apps see them. Idempotent (clientRecordId per metric+day), so re-running every
                 // cycle just upserts. Never let an HC hiccup (perm revoked mid-flight, provider
@@ -235,6 +238,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // survive restarts. Only the reconnect itself respects the pref. (#78 fork)
         _selectedModel.value = saved.second
         if (!NoopPrefs.backgroundConnection(appContext)) return
+        // APK updates tear down the old foreground service along with the old process. Re-promote it
+        // on the first launch after update/restart before reconnecting, so the persistent notification
+        // and long-lived connection both come back without the user toggling the setting again.
+        WhoopConnectionService.start(appContext)
         ble.reconnectToAddress(saved.first, saved.second)
     }
 

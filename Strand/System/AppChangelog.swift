@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.83"
+    static let currentVersion = "1.89"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,54 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.89",
+            title: "Live heart rate lands on today's chart even when the strap's clock is off (Android)",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): if your WHOOP's internal clock was invalid (the same condition that can stop it banking history), live heart rate still streamed and was saved — but it got stamped with the strap's bogus clock, so it landed off-today and the Today 24-hour HR trend read empty even though live HR was working. Live readings are now anchored to your phone's clock as they arrive, so they always land on today's timeline. (#126)",
+            ]),
+        Release(
+            version: "1.88",
+            title: "Smoother Explore charts, and a clearer way to connect a WHOOP 5.0/MG",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac): the Explore chart no longer flickers or re-animates its line when you move the cursor across a card. The v1.77 fix caught one cause; a second remained — the card surface was animating its hover transition over its whole contents, the chart included — now scoped to just the card's border and shadow. (#104)",
+                "Improved (Mac and Android): connecting a WHOOP 5.0/MG is clearer. macOS first-run setup now asks you to pick your strap model first instead of defaulting to a WHOOP 4.0 scan, and selecting WHOOP 5.0/MG (both platforms) shows an inline note that it pairs with one app at a time — so if a scan finds nothing, free it in the official WHOOP app and try again. (#130)",
+            ]),
+        Release(
+            version: "1.87",
+            title: "Deep sleep that happens later in the night no longer reads 0 minutes",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac and Android): a follow-on to the deep-sleep fix. NOOP assumes deep sleep is front-loaded (it usually is) and re-imposes that on the staging — but it was zeroing out ALL deep detected after the first third of the night, so nights where your deepest stretch lands later showed 0 minutes of deep even though the signature was there. It now only applies that rule when there's deep early in the night to anchor it; a later-deep night keeps its deep. Thanks to a very precise bug report. (#127)",
+            ]),
+        Release(
+            version: "1.86",
+            title: "Deep sleep no longer reads 0 minutes, and a smarter AI Coach",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac and Android): on-device sleep nights no longer show 0 minutes of deep sleep. Deep sleep required a per-epoch HRV reading, which is often sparse on Bluetooth-synced nights (especially WHOOP 5/MG), so it was getting blocked entirely. It now falls back to the other depth signals — stillness, low heart rate and regular breathing — when HRV isn't measurable that second, while still requiring genuinely high HRV when it is. (#127, #129)",
+                "Improved (Mac and Android): the AI Coach now also sees your SpO₂, respiration, skin-temperature deviation, steps and active energy in its summary — it previously had only recovery, strain, sleep, HRV and resting HR. (#124)",
+            ]),
+        Release(
+            version: "1.85",
+            title: "Browse the last few days, interactive charts, and a Vital Signs screen (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): browse the last 3 days on Today, Sleep and Vital Signs — flip between Today, Yesterday and 2 days ago from the same screen.",
+                "New (Android): charts are now interactive on Sleep, Trends and the new Vital Signs detail — tap and swipe across the line to read off the exact value at any point.",
+                "New (Android): Vital Signs is now a first-class screen reachable from the menu — your resting HR, HRV, SpO₂, skin temperature and respiratory rate with their recent history and context in one place.",
+                "Improved (Android): more robust background reconnect — the long-lived connection and its persistent notification come back cleanly after an app update or restart. (A community contribution — thank you.) (Mac: version bump only.)",
+            ]),
+        Release(
+            version: "1.84",
+            title: "Fix the Android freeze after a few nights of data",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): the app could freeze and get killed (\"app isn't responding\") after a strap had banked a few nights of history. The nightly sleep analysis ran a slow scan ON the main thread; it's now off the main thread and the scan itself went from O(n²) to O(n) — so the app stays responsive no matter how much history accumulates. (Mac was never affected — it already ran this off-screen.) (#125, thanks to a detailed field report)",
+                "Improved (Mac and Android): the strap log no longer reads a history chunk that's only the strap's own diagnostic chatter as \"dropped\" data, and it now logs undecodable records on partially-decoded chunks too — clearer when something genuinely needs attention. (#120, #123)",
+            ]),
         Release(
             version: "1.83",
             title: "Workout calories — for manual sessions and Health Connect imports",

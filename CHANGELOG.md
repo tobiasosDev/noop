@@ -17,6 +17,78 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.89 — Live heart rate lands on today's chart even when the strap's clock is off (Android)
+
+- **Fixed (Android):** if your WHOOP's internal clock was invalid (the same condition that can stop it
+  banking history), live heart rate still streamed and was saved — but it got stamped with the strap's
+  bogus clock, so it landed off-today and the **Today 24-hour HR trend read empty** even though live HR
+  was working. Live readings are now anchored to your phone's clock as they arrive, so they always land
+  on today's timeline. (#126)
+
+---
+
+## 1.88 — Smoother Explore charts, and a clearer way to connect a WHOOP 5.0/MG
+
+- **Fixed (Mac):** the Explore chart no longer flickers or re-animates its line when you move the
+  cursor across a card. The v1.77 fix removed one cause; a second remained — the card surface was
+  animating its hover transition over its whole contents (the chart included) — now scoped to just the
+  card's border and shadow. (#104)
+- **Improved (Mac and Android):** connecting a WHOOP 5.0/MG is clearer. macOS first-run setup now asks
+  you to **pick your strap model first** instead of defaulting to a WHOOP 4.0 scan, and selecting
+  WHOOP 5.0/MG (both platforms) shows an inline note that it pairs with one app at a time — so if a
+  scan finds nothing, free it in the official WHOOP app and try again. (#130)
+
+---
+
+## 1.87 — Deep sleep that happens later in the night no longer reads 0 minutes
+
+- **Fixed (Mac and Android):** follow-on to the deep-sleep fix. NOOP assumes deep sleep is
+  front-loaded (it usually is) and re-imposes that — but it was zeroing out **all** deep detected
+  after the first third of the night, so nights where the deepest stretch lands later showed 0 m of
+  deep despite a clear signature. It now only applies that rule when there's deep early in the night
+  to anchor it. (#127)
+
+---
+
+## 1.86 — Deep sleep no longer reads 0 minutes, and a smarter AI Coach
+
+- **Fixed (Mac and Android):** on-device sleep nights no longer show **0 minutes of deep sleep**. Deep
+  required a per-epoch HRV reading, which is often sparse on Bluetooth-synced nights (especially WHOOP
+  5/MG), so it was blocked entirely. It now falls back to the other depth signals (stillness, low HR,
+  regular breathing) when HRV isn't measurable that second, while still requiring genuinely high HRV
+  when it is. (#127, #129)
+- **Improved (Mac and Android):** the AI Coach now also sees your SpO₂, respiration, skin-temperature
+  deviation, steps and active energy — it previously summarized only recovery/strain/sleep/HRV/RHR. (#124)
+
+---
+
+## 1.85 — Browse the last few days, interactive charts, and a Vital Signs screen (Android)
+
+- **New (Android):** browse the last **3 days** on Today, Sleep and Vital Signs — flip between Today,
+  Yesterday and 2 days ago from the same screen.
+- **New (Android):** charts are now **interactive** on Sleep, Trends and the new Vital Signs detail —
+  tap and swipe across the line to read off the exact value at any point.
+- **New (Android):** **Vital Signs** is now a first-class screen reachable from the menu — resting HR,
+  HRV, SpO₂, skin temperature and respiratory rate with their recent history and context in one place.
+- **Improved (Android):** more robust background reconnect — the long-lived connection and its
+  persistent notification come back cleanly after an app update or restart. _(A community
+  contribution — thank you.)_ (Mac: version bump only.)
+
+---
+
+## 1.84 — Fix the Android freeze after a few nights of data
+
+- **Fixed (Android):** the app could freeze and get ANR-killed ("app isn't responding") once a strap
+  had banked a few nights of history. The nightly sleep analysis ran a slow scan **on the main
+  thread**; it now runs off the main thread, and the scan itself went from **O(n²) to O(n)** — so the
+  app stays responsive regardless of how much history accumulates. (Mac was never affected — it
+  already ran this off-screen.) (#125, thanks to a detailed field report)
+- **Improved (Mac and Android):** the strap log no longer reads a history chunk that's only the
+  strap's own diagnostic chatter as "dropped" data, and it now logs undecodable records on
+  partially-decoded chunks too. (#120, #123)
+
+---
+
 ## 1.83 — Workout calories (manual sessions + Health Connect imports)
 
 - **Fixed (Mac and Android):** a workout you **start yourself** now estimates its calories from your

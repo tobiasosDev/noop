@@ -218,14 +218,19 @@ object SleepStager {
         val n = grav.size
         if (n < 2) return List(n) { false }
         val half = windowSize(grav.map { it.ts }) / 2
+        // stillPrefix[i] = number of still samples among deltas[0 until i]. Turns each per-sample
+        // window count from O(window) into O(1), so the whole scan is O(n) not O(n×window). The old
+        // nested loop ran ~n×window times per night and — ×21 nights, on the MAIN THREAD — froze the
+        // app into ANRs after a few nights of 1 Hz history. Output is byte-identical. (#125)
+        val stillPrefix = IntArray(n + 1)
+        for (i in 0 until n) {
+            stillPrefix[i + 1] = stillPrefix[i] + if (deltas[i] < gravityStillThresholdG) 1 else 0
+        }
         val flags = ArrayList<Boolean>(n)
         for (i in 0 until n) {
             val lo = maxOf(0, i - half)
             val hi = minOf(n, i + half + 1)
-            var stillCount = 0
-            for (j in lo until hi) {
-                if (deltas[j] < gravityStillThresholdG) stillCount += 1
-            }
+            val stillCount = stillPrefix[hi] - stillPrefix[lo]
             flags.add(stillCount.toDouble() / (hi - lo).toDouble() >= stillFraction)
         }
         return flags
@@ -1073,7 +1078,11 @@ object SleepStager {
         // DEEP (N3): still + low HR (mandatory bradycardia) + at least one parasympathetic
         // signature — high RMSSD OR measured-regular respiration. The old conjunction required low
         // HR AND top-tail RMSSD in the SAME epoch (~4% co-occurrence on narrow-HR nights → ~0% deep).
-        if (still && hrLow && (parasympHigh || rrvRegular)) return "deep"
+        // Upstream #127/#129: when NEITHER arm is measurable (sparse per-epoch R-R on
+        // BLE-offloaded / 5/MG nights AND no respiration), missing data is pro-deep rather than
+        // deep-blocking; over-minting is bounded by deepPlausibleMaxFraction in reimposePhysiology.
+        val bothArmsUnmeasured = !f.rmssd.isFinite() && !f.rrv.isFinite()
+        if (still && hrLow && (parasympHigh || rrvRegular || bothArmsUnmeasured)) return "deep"
         // REM: still body + activated cardiac + irregular respiration.
         if (still && cardiacActivated && rrvIrregular) return "rem"
         // REM fallback when respiration unavailable (all-NaN RRV): carry REM on the DoG-HR surge,

@@ -292,6 +292,17 @@ fun LiveScreen(viewModel: AppViewModel) {
                     onSelect = { viewModel.setSelectedModel(it) },
                 )
             }
+            // Proactive 5/MG guidance (#130): the strap bonds to one host at a time, so a scan finds
+            // nothing while it's still paired in the official WHOOP app. Shown the moment 5/MG is picked.
+            if (selectedModel == WhoopModel.WHOOP5_MG) {
+                Text(
+                    "WHOOP 5.0/MG pairs with one app at a time. If a scan finds nothing, unpair it in " +
+                        "the official WHOOP app and fully close that app, then Connect again.",
+                    style = NoopType.footnote,
+                    color = Palette.textSecondary,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+            }
         }
 
         // Controls.

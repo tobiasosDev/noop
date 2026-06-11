@@ -328,23 +328,39 @@ struct LiveView: View {
     /// Pick the strap family to scan for. Switching the selection drops the current strap's bond so the
     /// newly-picked one connects fresh — letting a user move between a WHOOP 4 and a 5/MG.
     private var modelPicker: some View {
-        HStack(spacing: 10) {
-            Text("Strap").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
-            SegmentedPillControl(
-                WhoopModel.allCases,
-                selection: Binding(
-                    get: { selectedModel },
-                    set: { newModel in
-                        guard newModel.rawValue != selectedModelRaw else { return }
-                        selectedModelRaw = newModel.rawValue
-                        // Clear the previous strap's sticky bond/connection so the next scan targets the
-                        // new family's service and bonds it fresh.
-                        model.prepareStrapSwitch()
-                    }
-                ),
-                label: { $0.displayName }
-            )
-            Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Strap").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                SegmentedPillControl(
+                    WhoopModel.allCases,
+                    selection: Binding(
+                        get: { selectedModel },
+                        set: { newModel in
+                            guard newModel.rawValue != selectedModelRaw else { return }
+                            selectedModelRaw = newModel.rawValue
+                            // Clear the previous strap's sticky bond/connection so the next scan targets the
+                            // new family's service and bonds it fresh.
+                            model.prepareStrapSwitch()
+                        }
+                    ),
+                    label: { $0.displayName }
+                )
+                Spacer()
+            }
+            // Proactive 5/MG guidance: the strap bonds to one host at a time, so if it's still paired in
+            // the official WHOOP app a scan here finds nothing. Shown the moment 5/MG is picked — not only
+            // after a failed scan (#130) or a bond-refusal (which is the separate `pairingHint` banner).
+            if selectedModel == .whoop5mg { whoop5PairingNote }
+        }
+    }
+
+    private var whoop5PairingNote: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").foregroundStyle(StrandPalette.accent)
+            Text("WHOOP 5.0/MG pairs with one app at a time. If a scan finds nothing, unpair it in the official WHOOP app and fully close that app, then Scan again.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
