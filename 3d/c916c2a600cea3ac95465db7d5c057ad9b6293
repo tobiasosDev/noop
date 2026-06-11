@@ -1,0 +1,22 @@
+Packages/WhoopStore/Tests/WhoopStoreTests/MetricsCacheTests.swift
+  s_5593293f1faf9c::t_0db7a335e270f0 58-60,65-66,71-72,74,77
+  s_5593293f1faf9c::t_61e91d45aa8c0b 56-57,61-64,67-70,73,75-76,78-81
+Packages/WhoopStore/Sources/WhoopStore/MetricsCache.swift
+  s_5593293f1faf9c::t_19763583c5a4ff 133-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "3dc916c2a600cea3ac95465db7d5c057ad9b6293",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
