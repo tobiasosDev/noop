@@ -64,7 +64,7 @@ final class IntelligenceEngine: ObservableObject {
     /// Compute on-device scores for each of the last `maxDays` that actually has raw HR data.
     /// Personal baselines (HRV / resting HR) are folded from the imported history, so even the first
     /// live night can be scored against your norm.
-    func analyzeRecent(maxDays: Int = 21) async {
+    func analyzeRecent(maxDays: Int = 21, force: ReanalysisScope? = nil) async {
         guard !computing else { return }
         guard let store = await repo.storeHandle() else { note = "No on-device store yet."; return }
         guard let hrvCfg = Baselines.metricCfg["hrv"],
@@ -119,6 +119,7 @@ final class IntelligenceEngine: ObservableObject {
         // composite. The hr/rr/resp/gravity arrays go out of scope each iteration (memory stays bounded).
         var scoredNights: [(daily: DailyMetric, strain: Double?, cachedSleep: [CachedSleepSession],
                             workouts: [ExerciseSession], nightlySkin: Double?)] = []
+        var forcedNights = 0   // forced days that actually had raw data to recompute
         // Nightly values harvested in pass 1, keyed by day, to seed the pass-2 baseline.
         var nightlyHrvByDay: [String: Double?] = [:]
         var nightlyRhrByDay: [String: Double?] = [:]
@@ -139,7 +140,7 @@ final class IntelligenceEngine: ObservableObject {
             // re-collected (empty here). respRateBpm IS persisted, so cached nights keep feeding
             // the resp baseline; the raw skin mean is not, so it comes from the in-memory memo
             // seeded by this launch's first full pass.
-            if to <= frontier, let cached = cachedByDay[day] {
+            if force?.forcesOffset(offset) != true, to <= frontier, let cached = cachedByDay[day] {
                 nightlyHrvByDay[day] = cached.avgHrv
                 nightlyRhrByDay[day] = cached.restingHr.map(Double.init)
                 nightlyRespByDay[day] = cached.respRateBpm
@@ -168,6 +169,19 @@ final class IntelligenceEngine: ObservableObject {
             let dayEnd = dayMid + 86_400 - 1
             let dayHr = (try? await store.hrSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
             let daySteps = (try? await store.stepSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
+
+            // Forced re-analysis: clear this day's computed sessions BEFORE the fresh upsert.
+            // Attribution mirrors the engine's own rule (a session belongs to the UTC day it ENDS
+            // on). Gated on the ≥200-sample HR guard above (hr is never empty here), so a night
+            // whose raw rows were trimmed keeps its old result — re-analysis must never delete
+            // what it cannot recreate. A failed delete skips the count so the note stays honest.
+            if force?.forcesOffset(offset) == true, !hr.isEmpty {
+                if (try? await store.deleteSleepSessions(deviceId: computedId,
+                                                         endFrom: dayMid,
+                                                         endTo: dayMid + 86_400)) != nil {
+                    forcedNights += 1
+                }
+            }
 
             let res = await Task.detached(priority: .utility) {
                 AnalyticsEngine.analyzeDay(day: day, hr: hr, rr: rr, resp: resp, gravity: grav,
@@ -293,6 +307,11 @@ final class IntelligenceEngine: ObservableObject {
         note = out.isEmpty
             ? "No scored nights yet. Wear the strap with NOOP connected overnight and the engine will score your recovery, strain and sleep itself, no WHOOP cloud required."
             : nil
+        if force != nil {
+            note = forcedNights == 0
+                ? String(localized: "No raw data to re-analyze")
+                : String(localized: "Re-analyzed \(forcedNights) nights")
+        }
 
         // Reload the dashboard caches so the freshly computed scores show up immediately.
         if !dailies.isEmpty { await repo.refresh() }
