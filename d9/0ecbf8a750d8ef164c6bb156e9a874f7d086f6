@@ -1,0 +1,19 @@
+Strand/Screens/SleepView.swift
+  s_5593293f1faf9c::t_2f83e688f78c3b 137,141-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "d90ecbf8a750d8ef164c6bb156e9a874f7d086f6",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
