@@ -73,10 +73,11 @@ struct SleepView: View {
             }
             // Persist the freshly-built model so subsequent renders with the same inputs hit
             // the cache. Writing State during body is not allowed, so commit it after layout;
-            // `resolved` already drives THIS frame, so there is no flash and no extra rebuild.
+            // `resolved` already drives THIS frame AND is what we persist — the closure captures
+            // this render's freshly-built value, so a key change costs exactly one build.
             .onChange(of: key) { newKey in
                 modelKey = newKey
-                model = SleepModel.build(repo: repo)
+                model = resolved
             }
             .onAppear {
                 if modelKey != key {
