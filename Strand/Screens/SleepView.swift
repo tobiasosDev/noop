@@ -35,7 +35,9 @@ struct SleepView: View {
     @EnvironmentObject private var behavior: BehaviorStore
 
     // The standard tile grid: ONE adaptive column set, used for every tile group.
-    private let tileColumns = [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)]
+    // 164pt min → two columns on ≥396pt iPhones (e.g. 16 Pro: 346pt content, 164×2+12=340;
+    // 390–393pt devices stay 1-col), more on mac. 168 missed Pro-width 2-col by 2pt.
+    private let tileColumns = [GridItem(.adaptive(minimum: 164), spacing: NoopMetrics.gap)]
 
     /// Memoized snapshot of every expensive derivation (latest Night with its intervals
     /// resolved once, the seven metric series, the trend points, the typical means). Rebuilt
@@ -92,7 +94,10 @@ struct SleepView: View {
         let night = model.night
         // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
         // SleepNeed.needMin floors at ~7.5h, so the need is always present.
-        let supporting = String(localized: "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed")
+        // Non-breaking spaces inside each duration so the line never wraps mid-duration ("7h / 30m").
+        let asleepText = durationText(night.stages.asleep).replacingOccurrences(of: " ", with: "\u{00A0}")
+        let needText = durationText(model.needMin).replacingOccurrences(of: " ", with: "\u{00A0}")
+        let supporting = String(localized: "\(asleepText) asleep · \(needText) needed")
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Last night", overline: "Sleep",
                           trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
@@ -255,7 +260,7 @@ struct SleepView: View {
         // over repo.days) and read here.
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Stages vs typical", overline: "Last night",
-                          trailing: "marker = your mean")
+                          trailing: String(localized: "marker = your mean"))
             NoopCard {
                 VStack(alignment: .leading, spacing: 14) {
                     stageRow("Deep",  last: s.deep,  typical: model.typicalDeepMin,  color: StrandPalette.sleepDeep)
@@ -331,7 +336,7 @@ struct SleepView: View {
         let debt  = model.sleepDebt
 
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Night detail", overline: "Metrics", trailing: "vs typical")
+            SectionHeader("Night detail", overline: "Metrics", trailing: String(localized: "vs typical"))
             LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
 
                 StatTile(
@@ -394,7 +399,7 @@ struct SleepView: View {
         let pts = model.trendPoints
         let avg = model.typicalTotalMin.map { $0 / 60.0 }
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Asleep duration", overline: "Trend", trailing: "Last 30 days")
+            SectionHeader("Asleep duration", overline: "Trend", trailing: String(localized: "Last 30 days"))
             ChartCard(
                 title: "Hours asleep",
                 subtitle: "Per night, trailing 30 days",

@@ -4973,6 +4973,23 @@
         }
       }
     },
+    "Last 30 days": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Letzte 30 Tage"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 30 days"
+          }
+        }
+      }
+    },
     "Last Workouts": {
       "localizations": {
         "de": {
@@ -11037,6 +11054,23 @@
         }
       }
     },
+    "marker = your mean": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markierung = dein Mittel"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "marker = your mean"
+          }
+        }
+      }
+    },
     "mid": {
       "localizations": {
         "de": {
@@ -11281,6 +11315,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "vs need"
+          }
+        }
+      }
+    },
+    "vs typical": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs. typisch"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vs typical"
           }
         }
       }
