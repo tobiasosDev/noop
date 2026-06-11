@@ -1,0 +1,24 @@
+Packages/StrandDesign/Sources/StrandDesign/RecoveryRing.swift
+  s_5593293f1faf9c::t_bd7303c7a490ef 26-27,29
+  s_5593293f1faf9c::t_2fd9cbb1a9b5ea 28
+  s_5593293f1faf9c::t_d9d2919d355c57 85
+  s_5593293f1faf9c::t_3a63816642f34e 40-41,50-51
+  s_5593293f1faf9c::t_9add7eca0c19c7 193
+  s_5593293f1faf9c::t_dd007df3ed9277 190,194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e5966ed38e1bad7d99e7a84b2df6125a52cf43a3",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
