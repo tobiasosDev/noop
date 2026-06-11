@@ -1,0 +1,19 @@
+.gitignore
+  s_1c0d40ff11afcf::t_37469664ca5ff0 77-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "90aee59e491584fd214e5a1716ad920a84e5f4e3",
+  "prompts": {},
+  "sessions": {
+    "s_1c0d40ff11afcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "408fdfd8-aed8-47b0-a02e-ef3c421bd764",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
