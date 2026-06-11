@@ -134,10 +134,15 @@ struct SleepView: View {
         }
     }
 
-    /// "8h 01m in bed · 90% efficiency[ · stages approximate (on-device)]"
+    /// "8h 01m in bed · 90% efficiency[ · performance +3% vs typical][ · stages approximate (on-device)]"
     private func heroSubline(_ model: SleepModel) -> String {
         var parts = ["\(durationText(model.night.timeInBed)) in bed",
                      "\(efficiencyText(model.night)) efficiency"]
+        // The dropped Sleep Performance tile carried a "vs typical" caption — zero
+        // information loss: it lives here now.
+        if let perf = model.performance.latest, let typical = model.performance.typical, typical != 0 {
+            parts.append("performance \(vsTypical(perf, typical, suffix: "%"))")
+        }
         if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
         return parts.joined(separator: " · ")
     }
