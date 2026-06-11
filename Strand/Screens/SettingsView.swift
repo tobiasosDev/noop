@@ -13,12 +13,18 @@ struct SettingsView: View {
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
     @EnvironmentObject var journal: JournalStore
+    @EnvironmentObject private var intelligence: IntelligenceEngine
 
     /// Backup & restore UI state.
     @State private var backupBusy = false
     @State private var backupAlertTitle = ""
     @State private var backupAlertMessage = ""
     @State private var showBackupAlert = false
+
+    /// True once the user has triggered a forced re-analysis from this screen. Gates only the
+    /// re-analysis card's NOTE so launch-time engine notes never show here; the spinner follows
+    /// any busy state so greyed buttons are always explained.
+    @State private var reanalysisRequested = false
 
     /// Opt-in WHOOP 5/MG protocol experiments (off by default). See [PuffinExperiment].
     @AppStorage(PuffinExperiment.defaultsKey) private var puffinExperiments = false
@@ -61,6 +67,7 @@ struct SettingsView: View {
             journalCard
             experimentalCard
             backupCard
+            reanalysisSection
             aboutCard
         }
         .alert(backupAlertTitle, isPresented: $showBackupAlert) {
@@ -584,6 +591,51 @@ struct SettingsView: View {
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Re-analysis
+
+    private var reanalysisSection: some View {
+        SettingsSection(icon: "arrow.triangle.2.circlepath",
+                        title: "Re-analysis",
+                        blurb: "Recompute sleep from the strap's raw data after algorithm changes. Nights without raw data keep their current values.") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        reanalysisRequested = true
+                        Task { await intelligence.analyzeRecent(force: .lastNight) }
+                    } label: {
+                        Label("Re-analyze last night", systemImage: "moon.zzz")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(StrandPalette.accent)
+                    .disabled(intelligence.computing)
+
+                    Button {
+                        reanalysisRequested = true
+                        Task { await intelligence.analyzeRecent(force: .everything) }
+                    } label: {
+                        Label("Re-analyze everything", systemImage: "arrow.clockwise")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(StrandPalette.accent)
+                    .disabled(intelligence.computing)
+
+                    if intelligence.computing {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                if reanalysisRequested, !intelligence.computing, let note = intelligence.note {
+                    Text(note)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
                 }
             }
         }
