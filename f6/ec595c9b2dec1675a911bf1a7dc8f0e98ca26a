@@ -1,0 +1,21 @@
+android/app/src/main/java/com/noop/analytics/SleepStager.kt
+  s_1c0d40ff11afcf::t_f6c32607904cc3 48-57
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStager.swift
+  s_1c0d40ff11afcf::t_bce6869c4988ed 29-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f6ec595c9b2dec1675a911bf1a7dc8f0e98ca26a",
+  "prompts": {},
+  "sessions": {
+    "s_1c0d40ff11afcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "408fdfd8-aed8-47b0-a02e-ef3c421bd764",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
