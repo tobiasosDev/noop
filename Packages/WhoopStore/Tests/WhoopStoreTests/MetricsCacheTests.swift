@@ -53,6 +53,32 @@ final class MetricsCacheTests: XCTestCase {
         XCTAssertEqual(rows.map { $0.startTs }, [500])
     }
 
+    func testDeleteSleepSessionsByEndRange() async throws {
+        let store = try await WhoopStore.inMemory()
+        // Five sessions for the target device: ends at 1_000, 2_000, 5_000, 6_000, 9_000.
+        // The 2_000 / 6_000 rows sit exactly ON the half-open [endFrom, endTo) boundaries —
+        // callers compute endTo = next-midnight and rely on the upper bound being exclusive.
+        let mk = { (start: Int, end: Int) in
+            CachedSleepSession(startTs: start, endTs: end, efficiency: 0.9,
+                               restingHr: 50, avgHrv: 60, stagesJSON: nil)
+        }
+        try await store.upsertSleepSessions([mk(500, 1_000), mk(1_500, 2_000), mk(4_000, 5_000),
+                                             mk(5_500, 6_000), mk(8_000, 9_000)],
+                                            deviceId: "devA-noop")
+        // Same shape under ANOTHER device id — must survive untouched.
+        try await store.upsertSleepSessions([mk(4_000, 5_000)], deviceId: "devB")
+
+        // Delete devA-noop sessions ending in [2_000, 6_000) → end=2_000 dies (lower bound
+        // inclusive) and end=5_000 dies; end=6_000 survives (upper bound exclusive).
+        let n = try await store.deleteSleepSessions(deviceId: "devA-noop", endFrom: 2_000, endTo: 6_000)
+        XCTAssertEqual(n, 2)
+
+        let a = try await store.sleepSessions(deviceId: "devA-noop", from: 0, to: 100_000, limit: 100)
+        XCTAssertEqual(a.map(\.endTs).sorted(), [1_000, 6_000, 9_000])
+        let b = try await store.sleepSessions(deviceId: "devB", from: 0, to: 100_000, limit: 100)
+        XCTAssertEqual(b.count, 1, "other device ids must be untouched")
+    }
+
     // MARK: - daily metrics
 
     func testDailyMetricUpsertReadAndIdempotency() async throws {
