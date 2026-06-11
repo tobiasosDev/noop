@@ -195,18 +195,30 @@ public enum SleepStager {
     public static let hrDogSigma1S: Double = 120.0
     public static let hrDogSigma2S: Double = 600.0
 
-    public static let stageHRLowPct: Double = 25.0
-    public static let stageHRHighPct: Double = 70.0
-    public static let stageHRVHighPct: Double = 70.0
-    public static let stageHRVarHighPct: Double = 65.0
-    public static let stageRRVHighPct: Double = 65.0
-    public static let stageRRVLowPct: Double = 50.0
+    public static let stageHRLowPct: Double = 40.0    // deep low-HR band (was 25): narrow-HR nights under-admit true bradycardic N3 at p25
+    public static let stageHRHighPct: Double = 60.0   // REM activated-HR band (was 70): REM HR elevation is milder than wake
+    public static let stageHRVHighPct: Double = 50.0  // deep parasympathetic (RMSSD) band (was 70): N3 needs above-median vagal tone, not extreme top-tail
+    public static let stageHRVarHighPct: Double = 55.0 // REM DoG-HR-variability band (was 65)
+    public static let stageRRVHighPct: Double = 55.0   // REM irregular-respiration band (was 65)
+    public static let stageRRVLowPct: Double = 50.0    // deep regular-respiration band
     public static let stageWakeMoveFrac: Double = 0.15
     public static let stageStillMoveFrac: Double = 0.10
 
     public static let smoothEpochs: Int = 5
-    public static let noREMAfterOnsetMin: Double = 15.0
+    public static let noREMAfterOnsetMin: Double = 60.0
+    // Retained for API/ABI compatibility but NO LONGER GATES DEEP (see reimposePhysiology):
+    // it encoded a wall-clock time-in-bed cutoff that wrongly proxied NREM-cycle position.
     public static let deepFirstFraction: Double = 1.0 / 3.0
+    // Physiologic first-N3 latency: deep does not appear in the first minutes after onset
+    // (that descent is N1/N2). Absolute minutes — does NOT scale with session length, so it
+    // protects short naps as well as full nights (replaces the old span-relative pre-sleep cap).
+    public static let deepOnsetLatencyMin: Double = 10.0
+    // Plausibility ceiling on total N3 as a fraction of asleep epochs. Healthy-adult N3 tops out
+    // ~25-35% of TST; with no wall-clock cap, a session-relative gate on a single-arm (NaN-RRV)
+    // night can over-mint deep. This is a SOFT cap: excess deep is demoted LATEST-first (SWS is
+    // front-loaded, so late deep is least likely to be true N3). A ceiling, never a floor — it
+    // cannot re-introduce the 0%-deep failure mode.
+    public static let deepPlausibleMaxFraction: Double = 0.35
 
     /// te Lindert 30 s Cole–Kripke weights [A₋₄..A₊₂]. SI = 0.001·Σ wᵢ·Aᵢ; sleep iff SI<1.
     public static let ckWeights: [Double] = [106.0, 54.0, 58.0, 76.0, 230.0, 74.0, 67.0]
@@ -1095,18 +1107,22 @@ public enum SleepStager {
         let hrvarHi = percentile(sleepFeats.map { $0.hrVar }, stageHRVarHighPct)
         let rrvHi = percentile(sleepFeats.map { $0.rrv }, stageRRVHighPct)
         let rrvLo = percentile(sleepFeats.map { $0.rrv }, stageRRVLowPct)
+        let hrMid = percentile(sleepFeats.map { $0.hr }, 50)
 
         return features.map {
             classifyOne($0, hrLo: hrLo, hrHi: hrHi, rmssdHi: rmssdHi,
-                        hrvarHi: hrvarHi, rrvHi: rrvHi, rrvLo: rrvLo)
+                        hrvarHi: hrvarHi, rrvHi: rrvHi, rrvLo: rrvLo, hrMid: hrMid)
         }
     }
 
     static func classifyOne(_ f: EpochFeatures, hrLo: Double?, hrHi: Double?,
-                            rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?) -> String {
+                            rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+                            hrMid: Double? = nil) -> String {
         let hasHR = f.hr.isFinite
         let hrLow = hasHR && hrLo != nil && f.hr <= hrLo!
         let hrHigh = hasHR && hrHi != nil && f.hr >= hrHi!
+        // REM HR is wake-like (above the calm low/mid band), not the bradycardic deep tail.
+        let hrAboveMid = hasHR && hrMid != nil && f.hr >= hrMid!
 
         // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only.
         let parasympHigh = f.rmssd.isFinite && rmssdHi != nil && f.rmssd >= rmssdHi!
@@ -1115,20 +1131,30 @@ public enum SleepStager {
         let cardiacActivated = hrHigh || hrvarHigh
 
         let rrvIrregular = f.rrv.isFinite && rrvHi != nil && f.rrv >= rrvHi!
-        // Missing respiration (NaN RRV) treated as "regular" (pro-deep bias).
-        let rrvRegular = (!f.rrv.isFinite) || (rrvLo != nil && f.rrv <= rrvLo!)
+        // Regular respiration as a parasympathetic corroborator for deep. Only counts when RRV is
+        // actually measured — a NaN RRV is "unknown breathing", NOT evidence of regular breathing,
+        // so it must not vacuously satisfy the deep gate (that would collapse deep to still+lowHR
+        // and over-call N3 on RR-only / WHOOP4 nights). On NaN-RRV nights the RMSSD parasympathetic
+        // arm carries the gate instead.
+        let rrvRegular = f.rrv.isFinite && rrvLo != nil && f.rrv <= rrvLo!
 
         let still = f.moveFrac <= stageStillMoveFrac
         let moving = f.moveFrac >= stageWakeMoveFrac
 
         // WAKE: sustained motion + activated cardiac (or no HR to vet motion).
         if moving && (cardiacActivated || !hasHR) { return "wake" }
-        // DEEP: still + high parasympathetic tone + low HR + regular respiration.
-        if still && parasympHigh && hrLow && rrvRegular { return "deep" }
+        // DEEP (N3): still + low HR (mandatory bradycardia) + at least one parasympathetic
+        // signature — high RMSSD OR regular respiration. The old conjunction required low HR
+        // AND top-tail RMSSD in the SAME epoch, which co-occurs in ~4% of epochs on narrow-HR
+        // nights → near-zero deep. The disjunction matches the literature N3 signature and is
+        // robust to a narrow HR range or all-NaN RRV (then rrvRegular is true ⇒ deep = still+lowHR).
+        if still && hrLow && (parasympHigh || rrvRegular) { return "deep" }
         // REM: still body + activated cardiac + irregular respiration.
         if still && cardiacActivated && rrvIrregular { return "rem" }
-        // REM fallback when respiration unavailable: require BOTH cardiac signals.
-        if still && hrHigh && hrvarHigh && !f.rrv.isFinite { return "rem" }
+        // REM fallback when respiration unavailable (all-NaN RRV): the primary rule is dead, so
+        // carry REM on the DoG-HR surge, but only in the wake-like HR band (≥ median) so it never
+        // collides with deep (which requires HR ≤ p40). Disjoint HR conditions ⇒ mutual exclusivity.
+        if still && hrvarHigh && hrAboveMid && !f.rrv.isFinite { return "rem" }
         return "light"
     }
 
@@ -1162,10 +1188,32 @@ public enum SleepStager {
                                    onsetIdx: Int, finalWakeIdx: Int) -> [String] {
         var out = labels
         let noREMEpochs = Int((noREMAfterOnsetMin * 60.0 / epochS).rounded())
-        for (i, f) in features.enumerated() {
+        let deepLatencyEpochs = Int((deepOnsetLatencyMin * 60.0 / epochS).rounded())
+        for (i, _) in features.enumerated() {
             if i < onsetIdx || i > finalWakeIdx { continue }
             if out[i] == "rem" && (i - onsetIdx) < noREMEpochs { out[i] = "light" }
-            if out[i] == "deep" && f.clock > deepFirstFraction { out[i] = "light" }
+            // Deep is NOT confined to the first wall-clock third (the old `clock > 1/3 → light`
+            // rule zeroed this user's back-half SWS, which legitimately ran clock 0.41–0.92 after a
+            // fragmented onset). The deep gate is already SWS-specific (still + low HR +
+            // parasympathetic); we only suppress deep during the physiologic first-N3 latency, as
+            // an ABSOLUTE duration (not a fraction of the window) so short naps are protected too.
+            if out[i] == "deep" && (i - onsetIdx) < deepLatencyEpochs { out[i] = "light" }
+        }
+
+        // Soft plausibility ceiling: with no wall-clock cap, a session-relative deep gate on a
+        // single-arm (NaN-RRV / RR-only device) night can over-mint N3. If total deep exceeds
+        // deepPlausibleMaxFraction of asleep epochs, demote the LATEST deep epochs first (SWS is
+        // front-loaded → late deep is least likely to be genuine), preserving the early
+        // consolidated block. This is a ceiling only; it can never raise deep above what the gate
+        // produced, so it cannot re-create the 0%-deep failure mode.
+        let asleepCount = (onsetIdx...max(onsetIdx, finalWakeIdx)).reduce(0) { acc, i in
+            i < out.count && out[i] != "wake" ? acc + 1 : acc
+        }
+        let maxDeep = Int((Double(asleepCount) * deepPlausibleMaxFraction).rounded(.down))
+        var deepIdx = (onsetIdx...max(onsetIdx, finalWakeIdx)).filter { $0 < out.count && out[$0] == "deep" }
+        if deepIdx.count > maxDeep {
+            deepIdx.sort { features[$0].clock > features[$1].clock }  // latest (highest clock) first
+            for j in deepIdx.prefix(deepIdx.count - maxDeep) { out[j] = "light" }
         }
         return out
     }
