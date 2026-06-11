@@ -1,0 +1,35 @@
+Strand/Data/SleepModel.swift
+  s_5593293f1faf9c::t_5c1ccf7bfa8993 238,240
+  s_5593293f1faf9c::t_bc2627613ea206 82-85,87-89
+  s_5593293f1faf9c::t_539b1883689b2a 81,86,94-95,98,101
+  s_5593293f1faf9c::t_3745abaf2fdec9 44
+  s_5593293f1faf9c::t_5cbc204332cde3 54-58
+  s_5593293f1faf9c::t_9175220623a98a 154,156
+  s_5593293f1faf9c::t_fd84fc1a2ef97a 209,211
+Strand/Screens/SleepView.swift
+  s_5593293f1faf9c::t_38e4738694b8cb 88
+  s_5593293f1faf9c::t_8908ef30585644 203-205
+  s_5593293f1faf9c::t_cbcec92b1dae14 9-16,18-20,22-26
+  s_5593293f1faf9c::t_5df25b133cee1f 255
+  s_5593293f1faf9c::t_0cf7b9e1a1d62e 417
+  s_5593293f1faf9c::t_18f2b7e98f7029 60-61,63,68-70
+  s_5593293f1faf9c::t_f1e7e45079a15b 339
+  s_5593293f1faf9c::t_bc9ee96f64d436 487
+  s_5593293f1faf9c::t_b1f2a6c13aa55c 198-202,206-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "24dc2a8377de28547b5be7f284d844c0e9ec0b16",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
