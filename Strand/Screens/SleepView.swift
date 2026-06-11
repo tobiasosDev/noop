@@ -16,8 +16,8 @@ import WhoopStore
 //   2. "Stages vs typical" NoopCard — Deep/REM/Light as horizontal bars, last-night
 //      minutes with a marker at the personal typical (mean) so highs/lows pop.
 //   3. A uniform grid of six fixed StatTiles, each with a sparkline and a "vs typical"
-//      caption: Performance, Efficiency, Consistency, Hours vs Needed, Restorative,
-//      Respiratory.
+//      caption: Efficiency, Consistency, Hours vs Needed, Restorative, Respiratory,
+//      Sleep Debt.
 //   4. A 30-day asleep-hours ChartCard trend.
 //   5. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
 //      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
@@ -316,9 +316,8 @@ struct SleepView: View {
     @ViewBuilder
     private func metricGrid(_ model: SleepModel) -> some View {
         // Per-tile latest value + history series (for the sparkline) + typical mean.
-        // All seven series are computed ONCE in the model build (each is a full pass over
-        // repo.days/repo.sleeps) — here we only read the memoized results.
-        let perf  = model.performance
+        // Six series are read here, each computed ONCE in the model build (full passes over
+        // repo.days/repo.sleeps). A seventh model series (performance) feeds the hero ring, not this grid.
         let eff   = model.efficiency
         let cons  = model.consistency
         let need  = model.hoursVsNeeded
@@ -329,14 +328,6 @@ struct SleepView: View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Night detail", overline: "Metrics", trailing: "vs typical")
             LazyVGrid(columns: tileColumns, alignment: .leading, spacing: NoopMetrics.gap) {
-
-                StatTile(
-                    label: "Sleep Performance",
-                    value: pctValue(perf.latest),
-                    caption: vsTypical(perf.latest, perf.typical, suffix: "%"),
-                    accent: perf.latest.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: spark(perf.series),
-                    sparkColor: StrandPalette.accent)
 
                 StatTile(
                     label: "Efficiency",
