@@ -6389,6 +6389,23 @@
         }
       }
     },
+    "No raw data to re-analyze": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Rohdaten zum Neuanalysieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No raw data to re-analyze"
+          }
+        }
+      }
+    },
     "No readings recorded.": {
       "localizations": {
         "de": {
@@ -7538,6 +7555,98 @@
         }
       }
     },
+    "Re-analysis": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuanalyse"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-analysis"
+          }
+        }
+      }
+    },
+    "Re-analyze everything": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alles neu analysieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-analyze everything"
+          }
+        }
+      }
+    },
+    "Re-analyze last night": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Letzte Nacht neu analysieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-analyze last night"
+          }
+        }
+      }
+    },
+    "Re-analyzed %lld nights": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "1 Nacht neu analysiert"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld Nächte neu analysiert"
+                }
+              }
+            }
+          }
+        },
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Re-analyzed 1 night"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Re-analyzed %lld nights"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Re-scan": {
       "localizations": {
         "de": {
@@ -7727,6 +7836,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Recompute"
+          }
+        }
+      }
+    },
+    "Recompute sleep from the strap's raw data after algorithm changes. Nights without raw data keep their current values.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berechnet den Schlaf nach Algorithmus-Änderungen aus den Rohdaten des Straps neu. Nächte ohne Rohdaten behalten ihre aktuellen Werte."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recompute sleep from the strap's raw data after algorithm changes. Nights without raw data keep their current values."
           }
         }
       }

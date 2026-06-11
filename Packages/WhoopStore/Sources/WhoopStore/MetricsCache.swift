@@ -130,6 +130,22 @@ extension WhoopStore {
         }
     }
 
+    /// Delete sleep sessions whose endTs falls in [endFrom, endTo) for the given device id.
+    /// Used by forced re-analysis to clear a day's computed sessions (attribution = the UTC
+    /// day the session ENDS on) before re-upserting fresh results — without this, a staging
+    /// change that shifts a session's startTs would orphan the old row under the
+    /// (deviceId, startTs) natural key. Returns rows deleted.
+    @discardableResult
+    public func deleteSleepSessions(deviceId: String, endFrom: Int, endTo: Int) async throws -> Int {
+        try syncWrite { db in
+            try db.execute(sql: """
+                DELETE FROM sleepSession
+                WHERE deviceId = ? AND endTs >= ? AND endTs < ?
+                """, arguments: [deviceId, endFrom, endTo])
+            return db.changesCount
+        }
+    }
+
     // MARK: - Reads
 
     /// Cached sleep sessions overlapping [from, to] (by startTs), oldest first.
