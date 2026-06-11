@@ -6,20 +6,24 @@ import WhoopStore
 
 // MARK: - SleepView
 //
-// Whoop-sleep clarity on the locked Noop component system. Scannable in two seconds:
-//   0. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
-//      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
-//      manual stepper) and, on iOS, the wind-down reminder toggle. Renders above BOTH
-//      branches — with no nights yet it falls back to defaults and says so.
-//   1. HERO ChartCard "Last night" — the stage breakdown (Hypnogram if intervals
-//      reconstruct from stagesJSON, else a clean proportional stacked stage bar),
-//      trailing = total asleep, footer = REM/Deep/Light/Awake each "Xh Ym · NN%".
-//   2. A uniform grid of fixed StatTiles, each with a sparkline and a "vs typical"
-//      caption: Performance, Efficiency, Consistency, Hours vs Needed, Restorative,
-//      Respiratory, Sleep Debt.
-//   3. "Stages vs typical" NoopCard — Deep/REM/Light as horizontal bars, last-night
+// Whoop-sleep clarity on the locked Noop component system. Score answers "how did I
+// sleep?" first. Scannable in two seconds:
+//   0. HERO — sleep performance ring (RecoveryRing, score overridden with "PERFORMANCE"
+//      label, supporting = asleep + need; no-data path shows "—").
+//   1. Night timeline ChartCard "Last night" — the stage breakdown (Hypnogram if
+//      intervals reconstruct from stagesJSON, else a clean proportional stacked stage
+//      bar), trailing = total asleep, footer = REM/Deep/Light/Awake each "Xh Ym · NN%".
+//   2. "Stages vs typical" NoopCard — Deep/REM/Light as horizontal bars, last-night
 //      minutes with a marker at the personal typical (mean) so highs/lows pop.
+//   3. A uniform grid of six fixed StatTiles, each with a sparkline and a "vs typical"
+//      caption: Performance, Efficiency, Consistency, Hours vs Needed, Restorative,
+//      Respiratory.
 //   4. A 30-day asleep-hours ChartCard trend.
+//   5. "Sleep Planner" NoopCard — tonight's plan: goal chips, the one number ("In bed
+//      by HH:MM"), the need→goal→in-bed breakdown, the wake source (strap alarm or
+//      manual stepper) and, on iOS, the wind-down reminder toggle. Renders AFTER the
+//      data sections in BOTH branches — even with no nights yet it falls back to
+//      defaults and says so.
 //
 // Every surface is a NoopCard / StatTile / ChartCard — no hand-sized cards, one grid,
 // equal margins. Data wiring is preserved from the previous screen (stagesJSON =
@@ -51,18 +55,19 @@ struct SleepView: View {
         let key = SleepInputKey(repo: repo)
         let resolved: SleepModel? = (key == modelKey) ? model : SleepModel.build(repo: repo)
         ScreenScaffold(title: "Sleep", subtitle: "Last night, read in two seconds.") {
-            // The planner leads BOTH branches — even with no nights yet it answers
-            // "when should I go to bed tonight?" from defaults (and says so).
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                plannerSection
                 if let resolved {
-                    hero(resolved)
-                    metricGrid(resolved)
+                    sleepHero(resolved)
+                    hero(resolved)               // stage breakdown; Task 4 renames to nightTimeline
                     stagesVsTypical(resolved)
+                    metricGrid(resolved)
                     durationTrend(resolved)
                 } else {
                     emptyState
                 }
+                // The planner closes BOTH branches — even with no nights it answers
+                // "when should I go to bed tonight?" from defaults (and says so).
+                plannerSection
             }
             // Persist the freshly-built model so subsequent renders with the same inputs hit
             // the cache. Writing State during body is not allowed, so commit it after layout;
@@ -80,7 +85,7 @@ struct SleepView: View {
         }
     }
 
-    // MARK: - 0. Sleep Planner — tonight's plan
+    // MARK: - 5. Sleep Planner — tonight's plan (bottom; renders in both branches)
 
     @ViewBuilder
     private var plannerSection: some View {
@@ -190,7 +195,64 @@ struct SleepView: View {
     }
     #endif
 
-    // MARK: - 1. HERO — stage breakdown
+    // MARK: - 0. HERO — sleep performance ring
+
+    @ViewBuilder
+    private func sleepHero(_ model: SleepModel) -> some View {
+        let night = model.night
+        // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
+        // SleepNeed.needMin floors at ~7.5h, so the need is always present.
+        let supporting = "\(durationText(night.stages.asleep)) asleep · \(durationText(model.needMin)) needed"
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Last night", overline: "Sleep",
+                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
+            NoopCard {
+                // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 28) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    VStack(spacing: 10) {
+                        heroRing(model, supporting: supporting)
+                        Text(heroSubline(model))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    /// Ring with score, or a zero-fill track with "—" when no performance value exists.
+    @ViewBuilder
+    private func heroRing(_ model: SleepModel, supporting: String) -> some View {
+        if let perf = model.performance.latest {
+            RecoveryRing(score: perf, supporting: supporting,
+                         diameter: 180, lineWidth: 14,
+                         centerText: "\(Int(perf.rounded()))%",
+                         stateText: String(localized: "PERFORMANCE"),
+                         valueFormat: { "\(String(localized: "Performance")) \(Int($0.rounded()))%" })
+        } else {
+            RecoveryRing(score: 0, supporting: supporting,
+                         diameter: 180, lineWidth: 14, showsHover: false,
+                         centerText: "—", stateText: String(localized: "PERFORMANCE"))
+        }
+    }
+
+    /// "8h 01m in bed · 90% efficiency[ · stages approximate (on-device)]"
+    private func heroSubline(_ model: SleepModel) -> String {
+        var parts = ["\(durationText(model.night.timeInBed)) in bed",
+                     "\(efficiencyText(model.night)) efficiency"]
+        if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - 1. Night timeline — stage breakdown (Task 4 will rename this func)
 
     @ViewBuilder
     private func hero(_ model: SleepModel) -> some View {
@@ -200,8 +262,6 @@ struct SleepView: View {
         // (Night.intervals is a computed property and was previously evaluated twice here).
         let intervals = model.intervals
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Last night", overline: "Sleep",
-                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
             ChartCard(
                 title: "Stage breakdown",
                 subtitle: "\(durationText(night.timeInBed)) in bed · \(efficiencyText(night)) efficiency"
@@ -276,7 +336,7 @@ struct SleepView: View {
         }
     }
 
-    // MARK: - 2. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
+    // MARK: - 3. Metric grid (UNIFORM fixed-height StatTiles, each with sparkline)
 
     @ViewBuilder
     private func metricGrid(_ model: SleepModel) -> some View {
@@ -354,7 +414,7 @@ struct SleepView: View {
         }
     }
 
-    // MARK: - 3. Stages vs typical
+    // MARK: - 2. Stages vs typical
 
     @ViewBuilder
     private func stagesVsTypical(_ model: SleepModel) -> some View {
@@ -424,7 +484,7 @@ struct SleepView: View {
         }
     }
 
-    // MARK: - 4. 30-day asleep-hours trend
+    // MARK: - 4. 30-day asleep-hours trend (duration trend)
 
     @ViewBuilder
     private func durationTrend(_ model: SleepModel) -> some View {

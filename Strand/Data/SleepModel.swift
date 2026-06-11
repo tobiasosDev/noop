@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import StrandAnalytics
 import StrandDesign
 import WhoopStore
@@ -42,7 +41,7 @@ struct SleepInputKey: Equatable {
 /// `SleepModel.build(repo:)` and read by the subviews, so full passes over repo.days / repo.sleeps and
 /// the Night.intervals reconstruction no longer run on every render.
 struct SleepModel {
-    /// (latest, typical mean, full history) per metric — mirrors SleepView.Metric.
+    /// (latest, typical mean, full history) per metric.
     typealias Metric = (latest: Double?, typical: Double?, series: [Double])
 
     let night: Night
@@ -52,6 +51,11 @@ struct SleepModel {
     /// True when `intervals` are the stager's persisted per-epoch segments (on-device
     /// APPROXIMATE staging), not the synthesized architecture.
     let isPersistedHypnogram: Bool
+    /// Sleep need (minutes) for the latest night — the imported WHOOP need for that day
+    /// when the export carried one (so the hero's supporting line can't contradict the
+    /// export-verbatim performance %), else the personal-mean fallback. Stored here so
+    /// reading it per render is free (sleepNeedMin is a full pass over repo.days).
+    let needMin: Double
 
     let performance: Metric
     let efficiency: Metric
@@ -74,17 +78,27 @@ struct SleepModel {
     @MainActor
     static func build(repo: Repository) -> SleepModel? {
         guard let night = latestNight(repo) else { return nil }
+        // The personal-mean need is a full pass over repo.days — compute it ONCE here and
+        // thread it into the three series that previously each recomputed it. The latest
+        // night's need prefers the imported WHOOP figure (when positive) so the hero's
+        // supporting line can't contradict the export-verbatim performance %; the fallback
+        // is floored at 7.5h (SleepNeed.floorMin), so needMin is always positive.
+        let personalNeed = sleepNeedMin(repo)
+        let latestNeed = repo.days.last
+            .flatMap { repo.importedSleep[$0.day]?.needMin }
+            .flatMap { $0 > 0 ? $0 : nil } ?? personalNeed
         return SleepModel(
             night: night,
             intervals: night.intervals,
             isPersistedHypnogram: (night.realSegments?.count ?? 0) >= 2,
-            performance: performanceSeries(repo),
+            needMin: latestNeed,
+            performance: performanceSeries(repo, needMin: personalNeed),
             efficiency: efficiencySeries(repo),
             consistency: consistencySeries(repo),
-            hoursVsNeeded: hoursVsNeededSeries(repo),
+            hoursVsNeeded: hoursVsNeededSeries(repo, needMin: personalNeed),
             restorative: restorativeSeries(repo),
             respiratory: respiratorySeries(repo),
-            sleepDebt: sleepDebtSeries(repo),
+            sleepDebt: sleepDebtSeries(repo, needMin: personalNeed),
             typicalTotalMin: typicalTotalMin(repo),
             typicalDeepMin: typicalStageMin(repo, \.deepMin),
             typicalRemMin: typicalStageMin(repo, \.remMin),
@@ -137,9 +151,9 @@ struct SleepModel {
     /// export carried one for that day; else the APPROXIMATE fallback (asleep / personal
     /// need, capped 100) so strap-only days after the import horizon stay populated.
     @MainActor
-    static func performanceSeries(_ repo: Repository) -> Metric {
+    static func performanceSeries(_ repo: Repository, needMin: Double? = nil) -> Metric {
         let imported = repo.importedSleep
-        let need = sleepNeedMin(repo)
+        let need = needMin ?? sleepNeedMin(repo)
         return metric(repo) { d in
             if let p = imported[d.day]?.performancePct { return p }   // export-verbatim
             guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
@@ -192,9 +206,9 @@ struct SleepModel {
     /// Hours vs needed % = asleep / need (can exceed 100 on a long night). The imported
     /// sleep_need_min wins per day; else the APPROXIMATE personal-mean need.
     @MainActor
-    private static func hoursVsNeededSeries(_ repo: Repository) -> Metric {
+    private static func hoursVsNeededSeries(_ repo: Repository, needMin: Double? = nil) -> Metric {
         let imported = repo.importedSleep
-        let fallbackNeed = sleepNeedMin(repo)
+        let fallbackNeed = needMin ?? sleepNeedMin(repo)
         return metric(repo) { d in
             guard let asleep = d.totalSleepMin, asleep > 0 else { return nil }
             let need = imported[d.day]?.needMin ?? fallbackNeed
@@ -221,9 +235,9 @@ struct SleepModel {
     /// Sleep debt (minutes): the imported sleep_debt_min when the export carried it; else
     /// the APPROXIMATE per-night need − asleep, floored at 0 (no "credit").
     @MainActor
-    static func sleepDebtSeries(_ repo: Repository) -> Metric {
+    static func sleepDebtSeries(_ repo: Repository, needMin: Double? = nil) -> Metric {
         let imported = repo.importedSleep
-        let need = sleepNeedMin(repo)
+        let need = needMin ?? sleepNeedMin(repo)
         let series = repo.days.compactMap { d -> Double? in
             if let debt = imported[d.day]?.debtMin { return debt }   // minutes, export-verbatim
             guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
