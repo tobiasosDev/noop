@@ -1,0 +1,26 @@
+Strand/Screens/SleepView.swift
+  s_5593293f1faf9c::t_1b1d25b3241b87 339
+  s_5593293f1faf9c::t_de2d4ade6840ac 402
+  s_5593293f1faf9c::t_42548c45e07f2c 97-100
+  s_5593293f1faf9c::t_5d4f78086e8332 38-39
+  s_5593293f1faf9c::t_40b79e4b7e2233 263
+  s_5593293f1faf9c::t_5adf3453dfd99a 40
+Strand/Resources/Localizable.xcstrings
+  s_5593293f1faf9c::t_987f2deb77177c 4976-4992,11057-11073,11322-11334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1eb35f486c41ca5bd119d45a85be3274cdd40434",
+  "prompts": {},
+  "sessions": {
+    "s_5593293f1faf9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0ecfc727-f52b-4c59-8cb7-002be4922646",
+        "model": "claude-fable-5"
+      },
+      "human_author": null
+    }
+  }
+}
