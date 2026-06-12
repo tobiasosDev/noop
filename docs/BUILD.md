@@ -17,8 +17,9 @@ works only with **your own data**.
 
 The codebase is split into reusable, cross-platform Swift packages plus a thin platform-specific
 app layer. The **macOS app is the reference implementation**; **Android ships as a full app** under
-`android/`, and **iOS is an experimental, build-from-source community port** (see
-[PR #42](../../../pull/42)). All reuse the same packages where they can.
+`android/`, and **iOS ships as a build-from-source target (`NOOPiOS`)** folded into main in v1.94 —
+built in Xcode, not distributed (no App Store / TestFlight, to stay anonymous). All reuse the same
+packages where they can.
 
 ```
 Strand/
@@ -34,6 +35,9 @@ Strand/
 │   ├── System/                 # MacActions (lock screen, run Shortcut), ProjectInfo
 │   └── Resources/              # Info.plist, Strand.entitlements, Assets.xcassets (AppIcon)
 ├── StrandTests/                # macOS app unit tests
+├── StrandiOS/                  # iOS SwiftUI app shell (product name: NOOPiOS)
+├── StrandiOSShared/            # shared iOS-only app code (BLE/scene wiring)
+├── StrandiOSWidgets/           # iOS WidgetKit + Live Activity extension
 ├── Packages/
 │   ├── WhoopProtocol/          # BLE frame parsing, CRC, command/event/packet decode
 │   ├── WhoopStore/             # GRDB/SQLite persistence (migrations, streams, caches)
@@ -212,67 +216,52 @@ swift run backfill
 
 ---
 
-## iOS (experimental community port — see [PR #42](../../../pull/42))
+## iOS (build-from-source only)
 
-iOS is an **experimental, build-from-source community port** ([PR #42](../../../pull/42)) — an app
-target plus widgets, a Live Activity, and HealthKit that builds for the iOS simulator. It is **not
-officially maintained or distributed**: iOS has no anonymous distribution path (the App Store and
-TestFlight both require a real Apple Developer identity), which is fundamentally at odds with NOOP
-staying anonymous. There is no download — you build it yourself in Xcode.
+iOS ships as a **build-from-source-only** target, folded into main in v1.94. There is **no App
+Store or TestFlight build** — both require a real Apple Developer identity, which is fundamentally
+at odds with NOOP staying anonymous, so the only way to run it is to build it yourself in Xcode.
+The iOS app is **newer and less battle-tested** than macOS and Android: live BLE on a real iPhone
+isn't yet fully validated. It shares the same analytics packages, so once data is in, results match
+macOS.
 
-The port is feasible because all five packages already target `.iOS(.v16)`, so the **non-UI core
-compiles for iOS today**; the rest is the app-layer wiring captured in that PR and documented below.
+The `NOOPiOS` app target (plus the `NOOPiOSWidgets` WidgetKit / Live Activity extension) already
+exists in `project.yml` — you don't need to add it. All five packages target `.iOS(.v16)`, so the
+protocol, storage, analytics, import, and design cores compile for iOS unmodified; the iOS app
+shell lives in `StrandiOS/` with shared iOS code in `StrandiOSShared/`.
 
-### Adding an iOS app target
+### Build & run
 
-1. **Reuse the packages directly.** In `project.yml`, add an iOS application target that depends on
-   the same packages the macOS target uses:
+```bash
+cd /path/to/Strand
+xcodegen generate
 
-   ```yaml
-   targets:
-     StrandiOS:
-       type: application
-       platform: iOS
-       deploymentTarget: "16.0"
-       sources: [StrandiOS]          # iOS-specific app layer
-       dependencies:
-         - package: WhoopProtocol
-         - package: WhoopStore
-         - package: StrandAnalytics
-         - package: StrandImport
-         - package: StrandDesign
-   ```
+# build for a connected iPhone (real device — BLE doesn't work in the simulator):
+xcodebuild \
+  -project Strand.xcodeproj \
+  -scheme NOOPiOS \
+  -destination 'generic/platform=iOS' \
+  build
+```
 
-   Then `xcodegen generate` and build with `-scheme StrandiOS -destination 'generic/platform=iOS'`
-   (or a simulator destination). `WhoopProtocol`, `WhoopStore`, `StrandAnalytics`, `StrandImport`,
-   and most of `StrandDesign` need **no changes**.
+Or open the generated project and run the `NOOPiOS` scheme from Xcode:
 
-2. **CoreBluetooth on iOS.** `BLEManager` already uses CoreBluetooth, which is identical API on iOS.
-   The differences are:
-   - Add `NSBluetoothAlwaysUsageDescription` to the iOS Info.plist (the macOS one already exists).
-   - For background offload, request the `bluetooth-central` background mode and consider
-     CoreBluetooth **state restoration** — `BLEManager` already handles
-     `CBCentralManagerRestoredStatePeripheralsKey`, so restoration is wired but the iOS
-     background-modes entitlement must be added.
-   - Replace the macOS app-sandbox + `com.apple.security.device.bluetooth` entitlements with the
-     iOS signing/capabilities equivalents.
+```bash
+open Strand.xcodeproj
+```
 
-3. **App-layer code that needs an iOS variant.** The packages are clean; the macOS *app* directory
-   has a handful of AppKit dependencies that must be ported (or `#if os(macOS)`-gated) when building
-   the iOS app:
+Notes:
 
-   | macOS app code | File | iOS replacement |
-   |----------------|------|-----------------|
-   | `NSPasteboard.general` (copy donation address) | `Strand/Screens/SupportView.swift` | `UIPasteboard.general` |
-   | `NSWorkspace.shared.open(url:)` / `.icon(forFile:)` | `Strand/System/MacActions.swift`, `Strand/Data/NotificationSettingsStore.swift` | `UIApplication.shared.open(_:)`; app icons aren't available on iOS |
-   | `NSImage` for app icons | `Strand/Data/NotificationSettingsStore.swift` | `UIImage` (and rethink the macOS-only notification-mirroring feature) |
-   | `MenuBarExtra` + `MenuBarContent` (menu-bar HR) | `Strand/App/StrandApp.swift`, `Strand/MenuBar/` | No menu bar on iOS — use a widget / Live Activity instead |
-   | `MacActions.lockScreen()` (login.framework) and `runShortcut(_:)` | `Strand/System/MacActions.swift` | macOS-only; the strap-double-tap actions have no direct iOS analogue |
-   | `.windowStyle(.hiddenTitleBar)` / `.defaultSize` window chrome | `Strand/App/StrandApp.swift` | Drop window modifiers; use a normal iOS scene |
-
-   Because the design system (`StrandDesign`) already bridges `NSColor`/`UIColor` behind
-   `#if canImport(AppKit) / #elseif canImport(UIKit)`, the palette, fonts, and most components carry
-   over without edits.
+- The `NOOPiOS` and `NOOPiOSWidgets` targets deploy to **iOS 17.0**. (The shared packages still
+  declare a floor of iOS 16 — `.iOS(.v16)` — but the app targets require iOS 17.)
+- Running on a physical iPhone needs a signing identity selected in Xcode (a free personal Apple ID
+  works for on-device builds). **BLE requires a real device** — the iOS simulator can't reach a
+  physical strap.
+- The iOS app reuses `BLEManager` (CoreBluetooth is identical API on iOS) and the shared analytics,
+  store, import, and design packages. `StrandDesign` already bridges `NSColor`/`UIColor` behind
+  `#if canImport(AppKit) / #elseif canImport(UIKit)`, so the palette, fonts, and components carry
+  over. macOS-only surfaces (the menu-bar HR extra, screen-lock / Shortcut strap actions) have no
+  iOS equivalent and are `#if os(macOS)`-gated; iOS uses a widget / Live Activity instead.
 
 ---
 

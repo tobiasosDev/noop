@@ -55,17 +55,21 @@ val STARTER_JOURNAL_QUESTIONS: List<String> = listOf(
 )
 
 /** Catalog = imported questions (exact strings → logged days join imported history), then starter
- *  defaults, then user customs. Case-insensitive dedupe, first casing wins. */
+ *  defaults, then user customs. Case-insensitive dedupe, first casing wins, with `hidden` questions
+ *  (starter/imported ones the user removed) filtered out. */
 internal fun mergeJournalCatalog(
     imported: List<String>,
     custom: List<String>,
+    hidden: List<String> = emptyList(),
     starter: List<String> = STARTER_JOURNAL_QUESTIONS,
 ): List<String> {
+    val hiddenSet = hidden.map { it.trim().lowercase() }.toHashSet()
     val out = ArrayList<String>()
     val seen = HashSet<String>()
     for (q in imported + starter + custom) {
         val t = q.trim()
-        if (t.isNotEmpty() && seen.add(t.lowercase())) out.add(t)
+        val key = t.lowercase()
+        if (t.isNotEmpty() && key !in hiddenSet && seen.add(key)) out.add(t)
     }
     return out
 }
@@ -95,16 +99,29 @@ internal fun journalDayKey(daysBack: Long = 0L, today: LocalDate = LocalDate.now
 
 private const val JOURNAL_PREFS = "noop_prefs"
 private const val JOURNAL_CUSTOM_KEY = "noop.journalCustomQuestions"
+private const val JOURNAL_HIDDEN_KEY = "noop.journalHiddenQuestions"
 
-internal fun loadCustomJournalQuestions(context: Context): List<String> =
+private fun loadJournalList(context: Context, key: String): List<String> =
     (context.getSharedPreferences(JOURNAL_PREFS, Context.MODE_PRIVATE)
-        .getString(JOURNAL_CUSTOM_KEY, "") ?: "")
+        .getString(key, "") ?: "")
         .split('\n').map { it.trim() }.filter { it.isNotEmpty() }
 
-internal fun saveCustomJournalQuestions(context: Context, questions: List<String>) {
+private fun saveJournalList(context: Context, key: String, questions: List<String>) {
     context.getSharedPreferences(JOURNAL_PREFS, Context.MODE_PRIVATE)
-        .edit().putString(JOURNAL_CUSTOM_KEY, questions.joinToString("\n")).apply()
+        .edit().putString(key, questions.joinToString("\n")).apply()
 }
+
+internal fun loadCustomJournalQuestions(context: Context): List<String> =
+    loadJournalList(context, JOURNAL_CUSTOM_KEY)
+
+internal fun saveCustomJournalQuestions(context: Context, questions: List<String>) =
+    saveJournalList(context, JOURNAL_CUSTOM_KEY, questions)
+
+internal fun loadHiddenJournalQuestions(context: Context): List<String> =
+    loadJournalList(context, JOURNAL_HIDDEN_KEY)
+
+internal fun saveHiddenJournalQuestions(context: Context, questions: List<String>) =
+    saveJournalList(context, JOURNAL_HIDDEN_KEY, questions)
 
 // MARK: - The logging card (hosted at the top of Insights)
 
@@ -123,23 +140,40 @@ fun JournalLogCard(
     onAnswer: (String, Boolean) -> Unit,
     onClear: (String) -> Unit,
     onAddCustom: (String) -> Unit,
+    customQuestions: List<String> = emptyList(),
+    hidden: List<String> = emptyList(),
+    onRemoveQuestion: (String) -> Unit = {},
+    onRestoreQuestion: (String) -> Unit = {},
 ) {
+    var editing by remember { mutableStateOf(false) }
+    val customKeys = remember(customQuestions) { customQuestions.map { it.trim().lowercase() }.toHashSet() }
+    fun isCustom(q: String) = q.trim().lowercase() in customKeys
+
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        // Header: title/overline on the left, the Today/Yesterday toggle on the right. SectionHeader
-        // fills its width, so it's boxed with weight(1f) — the same pattern BehaviourSection uses.
+        // Header: title/overline on the left, the Today/Yesterday toggle (or Edit/Done) on the right.
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.weight(1f)) {
                 SectionHeader(title = "Journal", overline = "Log")
             }
-            JournalChip("Today", selected = dayOffset == 0L) { onDayOffset(0L) }
-            Spacer(Modifier.width(6.dp))
-            JournalChip("Yesterday", selected = dayOffset == 1L) { onDayOffset(1L) }
+            if (editing) {
+                JournalChip("Done", selected = true) { editing = false }
+            } else {
+                JournalChip("Edit", selected = false) { editing = true }
+                Spacer(Modifier.width(6.dp))
+                JournalChip("Today", selected = dayOffset == 0L) { onDayOffset(0L) }
+                Spacer(Modifier.width(6.dp))
+                JournalChip("Yesterday", selected = dayOffset == 1L) { onDayOffset(1L) }
+            }
         }
         NoopCard {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Answers are about the night and day leading into this morning — the same " +
-                        "attribution a WHOOP export uses, so logged and imported days line up.",
+                    if (editing)
+                        "Remove a question to tidy your list. Custom questions are deleted; the " +
+                            "built-in ones are hidden and can be restored below."
+                    else
+                        "Answers are about the night and day leading into this morning — the same " +
+                            "attribution a WHOOP export uses, so logged and imported days line up.",
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )
@@ -154,12 +188,30 @@ fun JournalLogCard(
                             color = Palette.textPrimary,
                             modifier = Modifier.weight(1f),
                         )
-                        JournalChip("Yes", selected = answers[q] == true) {
-                            if (answers[q] == true) onClear(q) else onAnswer(q, true)
+                        if (editing) {
+                            JournalRemoveButton(isCustom = isCustom(q)) { onRemoveQuestion(q) }
+                        } else {
+                            JournalChip("Yes", selected = answers[q] == true) {
+                                if (answers[q] == true) onClear(q) else onAnswer(q, true)
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            JournalChip("No", selected = answers[q] == false) {
+                                if (answers[q] == false) onClear(q) else onAnswer(q, false)
+                            }
                         }
-                        Spacer(Modifier.width(6.dp))
-                        JournalChip("No", selected = answers[q] == false) {
-                            if (answers[q] == false) onClear(q) else onAnswer(q, false)
+                    }
+                }
+                // Hidden built-in questions — only while editing, each with a restore action.
+                if (editing && hidden.isNotEmpty()) {
+                    JournalDivider()
+                    Text("Hidden", style = NoopType.caption, color = Palette.textTertiary)
+                    hidden.forEach { q ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(q, style = NoopType.body, color = Palette.textTertiary, modifier = Modifier.weight(1f))
+                            JournalChip("Restore", selected = false) { onRestoreQuestion(q) }
                         }
                     }
                 }
@@ -216,6 +268,24 @@ private fun JournalChip(label: String, selected: Boolean, onClick: () -> Unit) {
             .clip(shape)
             .background(if (selected) Palette.accent else Palette.surfaceInset)
             .border(1.dp, if (selected) Palette.accent else Palette.hairline, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
+/** Edit-mode remove control: "Delete" for a custom question, "Hide" for a built-in one. Red-tinted
+ *  text chip so it reads as removal; the label is self-describing for accessibility. */
+@Composable
+private fun JournalRemoveButton(isCustom: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Text(
+        if (isCustom) "Delete" else "Hide",
+        style = NoopType.caption,
+        color = Palette.statusCritical,
+        modifier = Modifier
+            .clip(shape)
+            .background(Palette.surfaceInset)
+            .border(1.dp, Palette.statusCritical.copy(alpha = 0.5f), shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     )

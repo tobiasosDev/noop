@@ -19,7 +19,8 @@ under the **Support** screen, each with a scan-to-donate QR code.
 **Honestly, though — if you can, please do.** Keeping NOOP free, anonymous, and
 off the cloud means there's no company and no investor behind it, just one person
 covering the bills out of pocket. A little support genuinely
-decides whether the Windows, Android, and iOS builds get finished, and it's the
+decides whether a Windows build happens, and whether the macOS, Android, and iOS
+apps keep getting better, and it's the
 difference between this being a one-off and an ongoing thing. **Crypto is the
 only way to contribute, on purpose:** staying anonymous rules out PayPal,
 Patreon, or anything with a name attached. That's not a hurdle — it's quick,
@@ -38,11 +39,10 @@ global, and private for both of us.
 You don't have to, and the project is built so you never need to. But the work
 is ongoing and unpaid, and donations go toward more of it:
 
-- **A Windows build** — bringing the same offline, local-first experience to PC.
-- **An Android app** — the protocol facts NOOP relies on are portable; an
-  Android target is the next platform after macOS and iOS.
+- **A Windows build** — bringing the same offline, local-first experience to PC;
+  it's the next target after macOS, Android, and iOS.
 - **More features and polish** — deeper analytics, broader strap coverage, and
-  improvements to the existing screens.
+  improvements to the existing screens across macOS, Android, and iOS.
 - **Test hardware and time** — straps, devices, and the hours to keep the
   reverse-engineering work current as firmware changes.
 

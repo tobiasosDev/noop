@@ -27,6 +27,11 @@ settings:
       # Distribution builds must produce a universal binary, not just the host arch.
       ONLY_ACTIVE_ARCH: NO
 packages:
+  # Renders the Coach's LLM replies (GitHub-flavored Markdown — bold, lists,
+  # headings, tables). Pinned exactly for reproducible community builds.
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    exactVersion: 2.4.1
   WhoopProtocol:
     path: Packages/WhoopProtocol
   WhoopStore:
@@ -57,6 +62,12 @@ targets:
         LSMinimumSystemVersion: "13.0"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
         NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your Mac. Nothing leaves your device."
+        # The AI Coach's "Custom (OpenAI-compatible)" provider talks to a LOCAL LLM server over plain
+        # HTTP on loopback (Ollama / LM Studio / llama.cpp at http://localhost:…). ATS blocks cleartext
+        # by default; NSAllowsLocalNetworking exempts loopback/.local/unqualified hosts ONLY — public
+        # HTTPS endpoints are unaffected. No arbitrary-loads blanket exemption.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     entitlements:
       path: Strand/Resources/Strand.entitlements
       properties:
@@ -87,6 +98,7 @@ targets:
       - package: StrandAnalytics
       - package: StrandImport
       - package: StrandDesign
+      - package: MarkdownUI
     scheme:
       testTargets:
         - StrandTests
@@ -190,6 +202,7 @@ targets:
       - package: StrandAnalytics
       - package: StrandImport
       - package: StrandDesign
+      - package: MarkdownUI
       - target: NOOPiOSWidgets
 
   # ---------------------------------------------------------------------------

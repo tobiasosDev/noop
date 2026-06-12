@@ -1,6 +1,7 @@
 package com.noop.ble
 
 import android.content.Context
+import com.noop.data.InsertCounts
 import com.noop.data.StreamBatch
 import com.noop.data.WhoopRepository
 import com.noop.protocol.DeviceFamily
@@ -62,6 +63,12 @@ class Backfiller(
      */
     private val onChunkCommitted: (StreamBatch) -> Unit = {},
     /**
+     * Per-console-only chunk hook (#77 family): a chunk arrived with frames but decoded no rows and
+     * held no genuine rejects — pure diagnostic/console output. Lets the client tally a completed-but-
+     * empty offload (the strap isn't banking) without false-positiving a normal caught-up sync.
+     */
+    private val onConsoleChunk: () -> Unit = {},
+    /**
      * Diagnostic sink into the strap log. Lets [finishChunk] surface a chunk that arrived with frames
      * but decoded to ZERO rows — the otherwise-invisible silent-data-loss case (frames failing CRC /
      * an unmapped layout are dropped, the chunk looks empty, the trim acks past them). Without this a
@@ -114,6 +121,26 @@ class Backfiller(
     private var chunkOpen = false
 
     /**
+     * Per-session persistence tally — the success-side observability flagged as the forensics blind spot
+     * (#150): NOOP logged FAILURES (decoded-to-0) but never SUCCESSES, so a strap log couldn't tell a
+     * banking strap from a broken one. Reset in [begin]; read by [WhoopBleClient] at session end to emit
+     * "persisted N rows (M with motion) across K night(s)". Nights are day-keys (ts / 86400). Mirrors the
+     * Swift Backfiller.
+     */
+    var sessionRowsPersisted = 0
+        private set
+    var sessionMotionRows = 0
+        private set
+    private val sessionNightKeys = HashSet<Long>()
+    val sessionNights: Int get() = sessionNightKeys.size
+
+    /**
+     * Logged once per session when the strap reports trim=0xFFFFFFFF — the "no valid flash cursor"
+     * sentinel: it has no banked history to offload (a clock/charge state, not a decode bug).
+     */
+    private var loggedNoCursor = false
+
+    /**
      * Called by [WhoopBleClient] when the strap signals a historical offload is beginning.
      * chunkOpen starts TRUE: the biometric replay streams records immediately and sends one
      * HISTORY_START then repeated HISTORY_ENDs, so we must accumulate from the outset.
@@ -122,6 +149,10 @@ class Backfiller(
     fun begin(family: DeviceFamily = DeviceFamily.WHOOP4) {
         this.family = family
         isBackfilling = true
+        sessionRowsPersisted = 0
+        sessionMotionRows = 0
+        sessionNightKeys.clear()
+        loggedNoCursor = false
         synchronized(chunkLock) {
             chunk.clear()
             chunkOpen = true
@@ -166,6 +197,18 @@ class Backfiller(
     private suspend fun finishChunk(unix: Long, trim: Long, endFrame: ByteArray) {
         val endData = endData(endFrame, family) ?: return
 
+        // #150 forensics: trim=0xFFFFFFFF is the strap's "no valid flash cursor" sentinel — it has no
+        // banked history to hand over. Surface it once so a log reads as a clock/charge state on the
+        // strap, not a NOOP decode bug (retro-decode can't help here). The ack still proceeds below.
+        if (trim == 0xFFFFFFFFL && !loggedNoCursor) {
+            loggedNoCursor = true
+            log(
+                "Backfill: strap reported no flash cursor (trim=0xFFFFFFFF) — it has no banked history to " +
+                    "offload. This is a clock/charge state on the strap, not a decode problem; fully charge " +
+                    "it and reconnect so it starts banking.",
+            )
+        }
+
         val frames = synchronized(chunkLock) {
             val snapshot = ArrayList(chunk)
             chunk.clear() // next records accumulate into the next chunk
@@ -185,16 +228,22 @@ class Backfiller(
             // where one good row hid the losses). Archive the rejects durably FIRST, and only then allow
             // the ack below. The WHOOP4 happy path (zero rejects) is unchanged.
             val rejected = rejectedHistoricalRecords(frames, family)
+            // #77 family: decoded no rows AND no genuine rejects ⇒ pure console output. Tally it so a
+            // completed-but-empty offload (strap not banking) is distinguishable from a caught-up sync.
+            if (decoded.isEmpty && rejected.isEmpty()) onConsoleChunk()
             if (rejected.isNotEmpty()) {
                 log(
                     "Backfill: WARNING ${rejected.size} record frame(s) decoded to 0 rows " +
                         "(trim=$trim) — archiving raw bytes before ack (CRC/unmapped layout)",
                 )
-                // #91: a hex sample in the strap log so an unmapped firmware's record layout can be
-                // mapped from a shared log — now guaranteed to be actual record frames, not console text.
-                rejected.take(3).forEachIndexed { i, f ->
-                    val hex = f.take(64).joinToString("") { "%02x".format(it) }
-                    log("Backfill: rejected frame[$i] ${f.size}B: $hex${if (f.size > 64) "…" else ""}")
+                // #91 / #30: a hex sample in the strap log so an unmapped firmware's record layout can
+                // be mapped from a shared log. Dump the FULL frame (not a 64-byte prefix — v25/v26
+                // records run ~84 B and the truncated tail is exactly where the unmapped motion/HR
+                // fields sit), and sample a few more so one log carries enough records to triangulate
+                // offsets. These only ever fire for unmapped firmware.
+                rejected.take(8).forEachIndexed { i, f ->
+                    val hex = f.joinToString("") { "%02x".format(it) }
+                    log("Backfill: rejected frame[$i] ${f.size}B: $hex")
                 }
                 // Archive must be durable BEFORE the ack. A false return means a genuine write failure
                 // (NOT the archive-full case, which returns true) — hold the cursor/ack so the strap
@@ -204,8 +253,14 @@ class Backfiller(
                 }
             }
             try {
-                repository.insert(decoded, deviceId) // DECODED FIRST (durable)
+                val counts = repository.insert(decoded, deviceId) // DECODED FIRST (durable)
                 committed = decoded
+                // Success-side observability (#150): tally what actually persisted so the session can emit
+                // "persisted N rows (M with motion) across K night(s)" — the win-rate signal we never logged.
+                val (rows, motion, nights) = chunkTally(counts, decoded.gravity.map { it.ts } + decoded.hr.map { it.ts })
+                sessionRowsPersisted += rows
+                sessionMotionRows += motion
+                sessionNightKeys.addAll(nights)
             } catch (t: Throwable) {
                 return // do NOT advance/ack — chunk was never durably committed
             }
@@ -252,6 +307,27 @@ class Backfiller(
             if (frame.size < start + 8) return null
             return frame.copyOfRange(start, start + 8)
         }
+
+        /**
+         * Pure per-chunk persistence tally (#150). [rows] = biometric rows inserted (HR, R-R, SpO2,
+         * skin-temp, resp, gravity — battery/events/steps are housekeeping, NOT biometric history, so
+         * they must not inflate the count; matches the Swift tuple, which has no steps). [motion] =
+         * gravity rows (the sleep-critical signal). nights = distinct day-keys (ts / 86400). Summed
+         * across a session by [finishChunk] to drive the success summary line.
+         */
+        fun chunkTally(counts: InsertCounts, timestamps: List<Long>): Triple<Int, Int, Set<Long>> {
+            val rows = counts.hr + counts.rr + counts.spo2 + counts.skinTemp + counts.resp + counts.gravity
+            return Triple(rows, counts.gravity, timestamps.map { it / 86400L }.toSet())
+        }
+
+        /**
+         * The one-line session success summary (#150) — the success-side log that never existed. Null
+         * when nothing persisted, so a console-only / caught-up session stays quiet and the existing
+         * empty-banking diagnostics speak instead.
+         */
+        fun sessionSummaryLine(rows: Int, motion: Int, nights: Int): String? =
+            if (rows <= 0) null
+            else "Backfill: session persisted $rows rows ($motion with motion) across $nights night(s)."
     }
 }
 

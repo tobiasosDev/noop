@@ -61,8 +61,9 @@ A few principles run through the whole codebase. Internalize them before opening
 
 The codebase is split into reusable, cross-platform Swift packages plus a thin platform-specific app
 layer. The **macOS app is the reference implementation**; **Android ships as a full app** under
-`android/`, and **iOS is an experimental, build-from-source community port** (see
-[PR #42](../../../pull/42)). All reuse the same packages where they can.
+`android/`, and **iOS was folded into `main` in v1.94** and is a **build-from-source-only target**
+(`NOOPiOS` / `NOOPiOSWidgets`) — no App Store/TestFlight, to keep the project anonymous (see
+[`IOS.md`](IOS.md)). All reuse the same packages where they can.
 
 ```
 Strand/
@@ -484,6 +485,21 @@ Schema lives in `Packages/WhoopStore/Sources/WhoopStore/Database.swift` as a **v
 
 ---
 
+## Versioning
+
+NOOP follows [Semantic Versioning](https://semver.org) — `MAJOR.MINOR.PATCH`:
+
+- **PATCH** (e.g. `2.0.1`) — bug fixes, diagnostics, small tweaks.
+- **MINOR** (e.g. `2.1.0`) — a new, backwards-compatible feature.
+- **MAJOR** (e.g. `3.0.0`) — a milestone, redesign, or a change that breaks an existing setup or data.
+
+The three parts are independent counters, **not** decimals: `2.0.10` follows `2.0.9`, and there's no
+"next number after `1.99`" — a new feature line is `2.1.0`, not `1.100`. The marketing version lives
+in `project.yml` (`MARKETING_VERSION`) and `android/app/build.gradle.kts` (`versionName`); the build
+numbers (`CFBundleVersion` / `versionCode`) increment independently on every release.
+
+---
+
 ## Roadmap
 
 NOOP's logic already lives in cross-platform packages, so most platform work is app-layer wiring
@@ -502,13 +518,16 @@ Contributions toward these are welcome — open an issue to coordinate first.
   on-device, and imports WHOOP / Apple Health / Health Connect. Pre-built APKs are in
   [Releases](../../../releases). Continued real-hardware testing across more devices is always welcome
   (an emulator can't reach a physical strap).
-- **iOS (experimental community port).** An experimental, build-from-source port lives in
-  [PR #42](../../../pull/42) — an app target plus widgets, a Live Activity, and HealthKit that builds
-  for the iOS simulator. It is **build-it-yourself only, not officially maintained or distributed:**
-  iOS has no anonymous distribution path (the App Store and TestFlight both require a real Apple
-  Developer identity), which is at odds with NOOP staying anonymous. Every package already declares
-  `.iOS(.v16)` and guards UI-framework code with `#if canImport(UIKit)/AppKit`, so the non-UI core
-  compiles for iOS today; [`IOS.md`](IOS.md) is the detailed port plan.
+- **iOS (build-from-source target on `main`).** iOS was folded into `main` in v1.94 as a first-class
+  build-from-source target — the `NOOPiOS` and `NOOPiOSWidgets` schemes (app target plus widgets, a
+  Live Activity, and HealthKit), built against current code in Xcode, with CI compiling both macOS and
+  iOS on every change. It is **build-it-yourself only, intentionally not shipped:** iOS has no
+  anonymous distribution path (the App Store and TestFlight both require a real Apple Developer
+  identity), which is at odds with NOOP staying anonymous, so there are no pre-built downloads. Every
+  package declares `.iOS(.v16)` and guards UI-framework code with `#if canImport(UIKit)/AppKit`, so
+  the shared core and analytics run unmodified — results match macOS. It is newer and less
+  battle-tested than macOS/Android (live BLE on a real iPhone isn't fully validated yet), so
+  on-hardware testing is especially welcome; [`IOS.md`](IOS.md) is the detailed guide.
 
 ### Deferred ideas
 
@@ -523,10 +542,6 @@ These are scoped but intentionally not built yet. They're listed so contributors
 - **Notification-watcher helper.** A small, opt-in helper to mirror selected macOS notifications to a
   haptic cue on the strap. Strictly local, off by default, and bounded — no general-purpose
   notification scraping.
-- **Local AI coach.** An **on-device**, offline assistant that reasons over your own series (recovery
-  / strain / sleep / HRV trends) to produce plain-language guidance. Hard requirement: it must stay
-  local and offline — no cloud inference, no data leaving the device — consistent with NOOP's
-  offline-by-design principle. Any output remains an approximation and is not medical advice.
 
 > Roadmap items don't change the ground rules. Everything above still holds: offline-only, no
 > destructive BLE commands, CRC-gated, design-system-only UI, transparent and clearly-non-clinical

@@ -1,7 +1,5 @@
 import Foundation
 import CoreImage.CIFilterBuiltins
-import CoreGraphics
-
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -24,8 +22,6 @@ enum QRCode {
         return NSImage(cgImage: cg, size: NSSize(width: output.extent.width, height: output.extent.height))
         #elseif canImport(UIKit)
         return UIImage(cgImage: cg)
-        #else
-        return nil
         #endif
     }
 }

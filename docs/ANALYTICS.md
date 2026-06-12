@@ -8,15 +8,15 @@ All analytics live in the cross-platform `StrandAnalytics` Swift package. Every 
 
 - Package: `Packages/StrandAnalytics/Sources/StrandAnalytics/`
 - Top-level index: `StrandAnalytics.swift` (`StrandAnalytics.version == "0.1.0"`)
-- App reference implementation: `Strand/` (macOS SwiftUI)
+- App reference implementation: `Strand/` (SwiftUI, macOS + iOS). The same `StrandAnalytics` code backs both Swift app targets, and Android (Room/Kotlin) runs equivalent analytics — the number-crunching is shared, so results match across platforms.
 
 ---
 
 ## What is actually wired into the app
 
-The package contains more analytics than the app currently calls. This section is the honest map of **library-only** vs **live**, verified against the app sources.
+The package contains more analytics than the app currently surfaces. This section is the honest map of **library-only** vs **live**, verified against the app sources. The status below is shared across the Swift targets (macOS + iOS); Android runs the equivalent code through its own Kotlin/Room layer.
 
-| Engine | File | Status in the macOS app |
+| Engine | File | Status in the app |
 |---|---|---|
 | `HRVAnalyzer` | `HRVAnalyzer.swift` | **Library-only** as a type. The app computes RMSSD inline via `AppModel.rmssd(_:)` (same Task-Force formula) for the live stress nudge. |
 | `RecoveryScorer` | `RecoveryScorer.swift` | **Live.** Runs inside `AnalyticsEngine.analyzeDay` via `Strand/Data/IntelligenceEngine.swift`; computed recoveries are persisted under the `"<deviceId>-noop"` source and merged **under** any imported `recovery_score_pct` (imports always win). APPROXIMATE. |
@@ -393,7 +393,7 @@ Source: `ComparisonEngine.swift`. Period-over-period comparison of one daily met
 
 ## The library orchestrator: `AnalyticsEngine`
 
-Source: `AnalyticsEngine.swift`. A pure function that ties the recompute engines together for one day. **Implemented and tested, but not yet wired into the import/store pipeline** — the importers currently copy WHOOP's own per-day recovery/strain/sleep numbers from your export.
+Source: `AnalyticsEngine.swift`. A pure function that ties the recompute engines together for one day. **Live:** `analyzeDay` is wired in via `Strand/Data/IntelligenceEngine.swift` — it runs every ~15 minutes while connected and on demand from the Intelligence screen, persisting the computed recovery/strain/sleep/workouts under the `"<deviceId>-noop"` source and **merged under** imports. Where a WHOOP export covers a day, its own per-day recovery/strain/sleep numbers still win; the recompute fills in the days the strap offloaded but no export covers.
 
 `analyzeDay(day:hr:rr:resp:gravity:profile:baselines:maxHROverride:)` runs, in order:
 
@@ -420,10 +420,11 @@ Apple Health XML ──┘                                         │
                                                              │
                           ┌──────────────────────────────────┤
                           ▼                                   ▼
-   AnalyticsEngine.analyzeDay (recompute path,        Repository.days ─► TodayView,
-   library-only today: HRV/recovery/strain/sleep      InsightsView (CorrelationEngine,
-   from raw streams)                                   BehaviorInsights), CompareView,
-                                                       MetricExplorerView (ComparisonEngine)
+   IntelligenceEngine ─► AnalyticsEngine.analyzeDay   Repository.days ─► TodayView,
+   (live recompute: HRV/recovery/strain/sleep/        InsightsView (CorrelationEngine,
+   workouts from raw streams, every ~15 min +         BehaviorInsights), CompareView,
+   Intelligence screen; persisted under the           MetricExplorerView (ComparisonEngine)
+   "<deviceId>-noop" source, merged UNDER imports)
 
    live BLE stream ─► AppModel: HR smoothing · RMSSD · zone coaching ·
                        illness early-warning · resting-stress nudge

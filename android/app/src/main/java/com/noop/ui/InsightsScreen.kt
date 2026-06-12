@@ -158,6 +158,7 @@ fun InsightsScreen(vm: AppViewModel) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var customQuestions by remember { mutableStateOf(loadCustomJournalQuestions(ctx)) }
+    var hiddenQuestions by remember { mutableStateOf(loadHiddenJournalQuestions(ctx)) }
 
     androidx.compose.runtime.LaunchedEffect(journalSeq, dayOffset) {
         val imported = vm.repo.journal("my-whoop", "0000-01-01", "9999-12-31")
@@ -190,7 +191,7 @@ fun InsightsScreen(vm: AppViewModel) {
 
         // --- Native journal logging (always reachable — the account-free way in) ---
         JournalLogCard(
-            catalog = mergeJournalCatalog(importedQuestions, customQuestions),
+            catalog = mergeJournalCatalog(importedQuestions, customQuestions, hiddenQuestions),
             answers = dayAnswers,
             dayOffset = dayOffset,
             onDayOffset = { dayOffset = it },
@@ -212,6 +213,25 @@ fun InsightsScreen(vm: AppViewModel) {
                 val next = customQuestions + q
                 saveCustomJournalQuestions(ctx, next)
                 customQuestions = next
+            },
+            customQuestions = customQuestions,
+            hidden = hiddenQuestions,
+            onRemoveQuestion = { q ->
+                // A custom question is deleted outright; a built-in/imported one is hidden (restorable).
+                if (customQuestions.any { it.trim().equals(q.trim(), ignoreCase = true) }) {
+                    val next = customQuestions.filterNot { it.trim().equals(q.trim(), ignoreCase = true) }
+                    saveCustomJournalQuestions(ctx, next)
+                    customQuestions = next
+                } else if (hiddenQuestions.none { it.trim().equals(q.trim(), ignoreCase = true) }) {
+                    val next = hiddenQuestions + q.trim()
+                    saveHiddenJournalQuestions(ctx, next)
+                    hiddenQuestions = next
+                }
+            },
+            onRestoreQuestion = { q ->
+                val next = hiddenQuestions.filterNot { it.trim().equals(q.trim(), ignoreCase = true) }
+                saveHiddenJournalQuestions(ctx, next)
+                hiddenQuestions = next
             },
         )
 

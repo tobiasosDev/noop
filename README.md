@@ -51,7 +51,7 @@ Donations are **crypto-only**, on purpose: staying anonymous (for the project *a
 
 Each address also has a scan-to-donate **QR code** in the app under **Support** (and they're listed in [`docs/DONATIONS.md`](docs/DONATIONS.md)). *Always copy the full address and double-check the first and last characters; crypto transactions are irreversible, and only ever send a coin to its own network.*
 
-**Can't or would rather not?** Also genuinely valued: **⭐ star this repo**, file a good bug report, share a strap log, test on hardware you own, or just tell another WHOOP user. That moves NOOP forward too.
+**Can't or would rather not?** Also genuinely valued: **⭐ star this repo**, file a good bug report, share a strap log, test on hardware you own, or just tell another WHOOP user. That moves NOOP forward too. **Want to help directly? → [Roadmap & help wanted](https://github.com/NoopApp/noop/issues/132)** lists exactly what we need — some of NOOP's biggest blockers are data only your strap can provide (a single raw frame capture can unlock a feature for everyone on that firmware).
 
 ---
 
@@ -61,10 +61,10 @@ Pre-built apps you can run right now:
 
 | Platform | Build | Notes |
 |---|---|---|
-| **macOS** | `NOOP.app` (see [Releases](../../releases)) | Apple Silicon + Intel. Drag to Applications. Not notarized — see **First launch on macOS** below. |
+| **macOS** | `NOOP.app` (see [Releases](../../releases)) or `brew install --cask noopapp/noop/noop` | Apple Silicon + Intel. Drag to Applications. Not notarized — see **First launch on macOS** below. Homebrew needs a one-time `brew trust noopapp/noop` first (Homebrew 6.0+) — see [Homebrew docs](docs/HOMEBREW.md). |
 | **Android** | `NOOP-full.apk` (see [Releases](../../releases)) | The full app. `minSdk 26` (Android 8+). Sideload — enable "install unknown apps". Blocked by Play Protect? See **Installing on Android** below. |
 | **Android (demo)** | `NOOP-demo.apk` | Preloaded with sample data so you can explore every screen with no strap. Installs alongside the full app. |
-| **iOS** | Build from source — see [PR #42](../../pull/42) | An experimental community port (app + widgets + HealthKit). **Not distributed as a download:** iOS has no anonymous install path — the App Store and TestFlight both require a real Apple Developer identity — so it's build-it-yourself in Xcode, not officially maintained. |
+| **iOS** | `NOOP-vX-ios.ipa` (see [Releases](../../releases)) — sideload with AltStore/SideStore | Now a **direct download**. The `.ipa` is unsigned; **you** sign it on your iPhone with your own free Apple ID (no App Store, no developer account — NOOP stays anonymous). Re-signs every 7 days (AltStore automates it); Apple Health + Live Activity widgets may be limited under a free signing identity. See [docs/IOS.md](docs/IOS.md). Or build from source in Xcode. |
 
 > **First launch on macOS.** NOOP is **not notarized** by Apple — notarization needs a paid Apple
 > Developer ID tied to a real identity, which doesn't fit an anonymous, free project. The app *is*
@@ -166,7 +166,8 @@ that premise:
 
 The macOS reference app organizes everything behind a single sidebar
 (`Strand/App/RootView.swift`). Each item below is a real screen in
-`Strand/Screens/`.
+`Strand/Screens/`. The same feature set ships on macOS, Android, and iOS via the
+shared cross-platform code.
 
 | Screen | What it does |
 |---|---|
@@ -187,7 +188,7 @@ The macOS reference app organizes everything behind a single sidebar
 | **Data Sources** | One-tap import of a WHOOP CSV export or an Apple Health export, plus live-strap status. "Bring your history in once, then it's yours." |
 | **Notifications** | Configure local notifications and thresholds (`Strand/Data/NotificationSettingsStore.swift`). |
 | **Automations** | Turn the strap's physical inputs and live biometrics into Mac actions — all on-device (see below). |
-| **Coach** | An optional **AI Coach** you can ask about your data in plain language. It's the one feature that ever uses the network: off until you add your own OpenAI/Anthropic key, and it sends only a short text summary of recent metrics plus your question — never raw streams or identifiers. On the sandboxed macOS build it's blocked by the App Sandbox (no network entitlement); it works on Android. See [`docs/PRIVACY_SECURITY.md`](docs/PRIVACY_SECURITY.md). |
+| **Coach** | An optional **AI Coach** you can ask about your data in plain language. It's the one feature that can ever use the network: off until you add your own key — Anthropic, OpenAI, or any OpenAI-compatible endpoint including a local/self-hosted model (Ollama, LM Studio) — and it sends only a short text summary of recent metrics plus your question, never raw streams or identifiers. With a local model the conversation never leaves your machine. Available on macOS, Android, and iOS. See [`docs/PRIVACY_SECURITY.md`](docs/PRIVACY_SECURITY.md). |
 | **Settings** | Profile, preferences, the in-app **What's new** changelog, and an opt-in **Experimental** section (WHOOP 5/MG protocol probes). |
 | **Support** | Attribution + **optional** crypto donations. The whole app works without them. |
 
@@ -225,7 +226,7 @@ import required.
 |---|---|
 | **macOS** | ✅ Full app (`Strand/`, SwiftUI, macOS 13+). Pairs over BLE, offloads the strap's history, and scores recovery / strain / sleep on-device. The complete feature set above runs here. |
 | **Android** | ✅ Full app (`android/`, Jetpack Compose, Android 8+). Pairs over BLE, persists and scores on-device, and imports WHOOP / Apple Health / Health Connect. Grab the APK from [Releases](../../releases). |
-| **iOS** | 🧪 Experimental community port in [PR #42](../../pull/42) — app target + widgets + Live Activity + HealthKit, builds for the iOS simulator. **Build-from-source only, not officially maintained or distributed:** iOS has no anonymous distribution path (App Store and TestFlight both require a real Apple Developer identity), which is fundamentally at odds with this project staying anonymous. The shared packages already declare `.iOS(.v16)` and UI-framework code is guarded with `#if canImport(UIKit)` / `AppKit`. |
+| **iOS** | 📲 **Direct download** (v1.96): an unsigned `.ipa` you sideload with AltStore/SideStore — it signs on your iPhone with your *own* free Apple ID, so there's an anonymous install path with no App Store / developer account (see [docs/IOS.md](docs/IOS.md)). Also still builds from source in Xcode. Shares the cross-platform Swift packages, so scoring matches macOS. Newer and less battle-tested than macOS/Android — live BLE on a real iPhone is still being validated; Apple Health + Live Activity widgets can be limited under a free signing identity. |
 
 ### Strap support
 
@@ -233,7 +234,7 @@ NOOP is an independent, **experimental** project — capable, but a work in prog
 
 | Strap | Status |
 |---|---|
-| **WHOOP 4.0** | ✅ The tested, supported path. Live HR, recovery, strain, sleep, history offload — the full experience. |
+| **WHOOP 4.0** | ✅ The tested, supported path. Live HR, recovery, strain, sleep, history offload — the full experience. (v1.95 also unlocked sleep + recovery on the newer "v25" 4.0 firmware layout that earlier versions could only read live HR from.) |
 | **WHOOP 5.0 / MG** | 🧪 **Live heart rate works** (confirmed on real hardware). Pick "WHOOP 5.0 / MG" before connecting — and see the pairing note below, because you can't just scan for it. Deeper 5/MG metrics (recovery, strain, sleep) are still being reverse-engineered; there's an opt-in **Settings → Experimental** toggle for 5/MG owners who want to help map the protocol. |
 
 > ### Pairing a WHOOP 5.0 / MG — read this first

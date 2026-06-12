@@ -71,6 +71,11 @@ public final class LiveState: ObservableObject {
     /// Undecodable record frames the archive could NOT preserve this session (the ~5 MB cap was
     /// reached). Kept separate so the sync status never claims "saved" for bytes that were not.
     @Published public var rejectedFramesUnarchived: Int = 0
+    /// Per-session chunk tallies that separate an EMPTY completed sync (the strap handed over only
+    /// console/diagnostic frames — it isn't banking to flash, #77 family) from a clean one. Reset at
+    /// session start. `decodedChunks == 0` with `consoleChunks` high ⇒ the strap's clock has lost sync.
+    @Published public var decodedChunksThisSession: Int = 0
+    @Published public var consoleChunksThisSession: Int = 0
 
     /// Optional hook invoked on every battery update (wired by LiveViewModel to the alert monitor).
     /// Kept as a closure so LiveState stays a plain observable snapshot with no alert dependency.

@@ -2,6 +2,7 @@ package com.noop.ui
 
 import com.noop.data.JournalEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import java.time.LocalDate
 
@@ -53,6 +54,20 @@ class JournalLogTest {
         assertEquals(STARTER_JOURNAL_QUESTIONS, cat.take(STARTER_JOURNAL_QUESTIONS.size))
         assertEquals("Did you nap?", cat.last())
         assertEquals(STARTER_JOURNAL_QUESTIONS.size + 1, cat.size)
+    }
+
+    @Test
+    fun hiddenQuestionsAreFilteredOutCaseInsensitively() {
+        // Hide one starter (different casing) + one custom; both must drop from the merged catalog.
+        val cat = mergeJournalCatalog(
+            imported = emptyList(),
+            custom = listOf("Did you nap?"),
+            hidden = listOf("did you drink any alcohol?", "DID YOU NAP?"),
+        )
+        assertFalse(cat.any { it.equals("Did you drink any alcohol?", ignoreCase = true) })
+        assertFalse(cat.any { it.equals("Did you nap?", ignoreCase = true) })
+        // The other 9 starters survive.
+        assertEquals(STARTER_JOURNAL_QUESTIONS.size - 1, cat.size)
     }
 
     @Test

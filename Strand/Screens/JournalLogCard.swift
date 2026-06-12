@@ -22,6 +22,8 @@ struct JournalLogCard: View {
     let onChanged: () -> Void              // parent re-runs load() after a write
 
     @State private var customDraft = ""
+    /// Edit mode: swaps the Yes/No chips for a Remove control and reveals the hidden-questions list.
+    @State private var editing = false
 
     private var dayKey: String {
         Repository.localDayKey(
@@ -33,25 +35,52 @@ struct JournalLogCard: View {
             HStack(alignment: .center) {
                 SectionHeader("Journal", overline: "Log")
                 Spacer()
-                dayPill("Today", offset: 0)
-                dayPill("Yesterday", offset: 1)
+                if editing {
+                    pillButton("Done", selected: true) { editing = false }
+                } else {
+                    pillButton("Edit", selected: false) { editing = true }
+                    dayPill("Today", offset: 0)
+                    dayPill("Yesterday", offset: 1)
+                }
             }
             NoopCard {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Answers are about the night and day leading into this morning — the same attribution a WHOOP export uses, so logged and imported days line up.")
+                    Text(editing
+                         ? "Remove a question to tidy your list. Custom questions are deleted; the built-in ones are hidden and can be restored below."
+                         : "Answers are about the night and day leading into this morning — the same attribution a WHOOP export uses, so logged and imported days line up.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(JournalCatalogStore.mergeCatalog(imported: importedQuestions,
-                                                             custom: catalog.customQuestions),
+                                                             custom: catalog.customQuestions,
+                                                             hidden: catalog.hiddenQuestions),
                             id: \.self) { q in
                         HStack {
                             Text(verbatim: q)   // data, not a UI literal — stays out of the catalog
                                 .font(StrandFont.body)
                                 .foregroundStyle(StrandPalette.textPrimary)
                             Spacer()
-                            answerPill("Yes", q: q, value: true)
-                            answerPill("No", q: q, value: false)
+                            if editing {
+                                removeButton(q: q)
+                            } else {
+                                answerPill("Yes", q: q, value: true)
+                                answerPill("No", q: q, value: false)
+                            }
+                        }
+                    }
+                    // Hidden built-in questions — only shown while editing, with a restore action.
+                    if editing, !catalog.hiddenQuestions.isEmpty {
+                        Divider().overlay(StrandPalette.hairline)
+                        Text("Hidden")
+                            .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+                        ForEach(catalog.hiddenQuestions, id: \.self) { q in
+                            HStack {
+                                Text(verbatim: q)
+                                    .font(StrandFont.body)
+                                    .foregroundStyle(StrandPalette.textTertiary)
+                                Spacer()
+                                pillButton("Restore", selected: false) { catalog.restore(q) }
+                            }
                         }
                     }
                     Divider().overlay(StrandPalette.hairline)
@@ -93,6 +122,18 @@ struct JournalLogCard: View {
                 onChanged()
             }
         }
+    }
+
+    /// Edit-mode control: delete a custom question / hide a built-in one. Tinted red to read as removal.
+    private func removeButton(q: String) -> some View {
+        Button { catalog.remove(q) } label: {
+            Image(systemName: "minus.circle.fill")
+                .font(StrandFont.body)
+                .foregroundStyle(StrandPalette.statusCritical)
+        }
+        .buttonStyle(.plain)
+        .help(catalog.isCustom(q) ? "Delete this custom question" : "Hide this question")
+        .accessibilityLabel(catalog.isCustom(q) ? "Delete \(q)" : "Hide \(q)")
     }
 
     private func pillButton(_ label: LocalizedStringKey, selected: Bool,

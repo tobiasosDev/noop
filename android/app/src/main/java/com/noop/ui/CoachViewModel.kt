@@ -77,6 +77,22 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     /** Explicit permission for the coach to read & send the user's data. Off by default. */
     val consent: StateFlow<Boolean> = _consent.asStateFlow()
 
+    // MARK: - Custom (local LLM) provider settings
+
+    private val _customBaseUrl = MutableStateFlow(AiKeyStore.readCustomBaseUrl(app.applicationContext))
+    /** Base URL for the Custom (OpenAI-compatible) provider, e.g. http://localhost:11434/v1. */
+    val customBaseUrl: StateFlow<String> = _customBaseUrl.asStateFlow()
+
+    private val _customConnected = MutableStateFlow(AiKeyStore.readCustomConnected(app.applicationContext))
+    /** True once the user has committed the Custom provider (entered a URL and tapped Connect). */
+    val customConnected: StateFlow<Boolean> = _customConnected.asStateFlow()
+
+    /** Update (and persist) the Custom provider's base URL as the user types. */
+    fun setCustomBaseUrl(ctx: Context, url: String) {
+        _customBaseUrl.value = url
+        AiKeyStore.saveCustomBaseUrl(ctx, url)
+    }
+
     /** Grant or revoke data access; persisted. */
     fun setConsent(ctx: Context, value: Boolean) {
         _consent.value = value
@@ -92,6 +108,13 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
 
     /** True when a non-blank API key is stored. The UI shows the chat only when this is true. */
     fun hasKey(ctx: Context): Boolean = AiKeyStore.hasKey(ctx)
+
+    /**
+     * True once the coach can actually send: a stored key for the cloud providers, or — for the
+     * Custom (local) provider — a committed base URL (a key is optional there). Gates setup vs. chat.
+     */
+    fun isConfigured(ctx: Context): Boolean =
+        if (_provider.value == AiProvider.CUSTOM) _customConnected.value else hasKey(ctx)
 
     // MARK: - Selection mutators
 
@@ -134,13 +157,18 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         if (_refreshingModels.value) return
         val appCtx = ctx.applicationContext
         val p = _provider.value
+        val url = _customBaseUrl.value
         _refreshingModels.value = true
         viewModelScope.launch {
             try {
-                val live = aiCoach.fetchModels(appCtx, p)
+                val live = aiCoach.fetchModels(appCtx, p, url)
                 if (p == _provider.value) {
                     val merged = (_availableModels.value + live).distinct()
                     _availableModels.value = merged
+                    // For Custom there's no curated/default model — adopt the first the server lists.
+                    if (p == AiProvider.CUSTOM && _model.value.isBlank() && merged.isNotEmpty()) {
+                        selectModel(appCtx, merged.first())
+                    }
                 }
             } catch (_: Exception) {
                 // Best-effort — keep whatever list we already have.
@@ -148,6 +176,19 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
                 _refreshingModels.value = false
             }
         }
+    }
+
+    /**
+     * Commit the Custom (local) provider once a server URL is entered: persist the committed flag
+     * (so the chat unlocks without a key) and pull the server's model list, adopting the first.
+     */
+    fun connectCustom(ctx: Context) {
+        if (_customBaseUrl.value.isBlank()) return
+        val appCtx = ctx.applicationContext
+        _customConnected.value = true
+        AiKeyStore.saveCustomConnected(appCtx, true)
+        _error.value = null
+        refreshModels(appCtx)
     }
 
     // MARK: - Key management
@@ -164,6 +205,19 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     /** Clear the stored key and reset the transcript back to the setup screen. */
     fun clearKey(ctx: Context) {
         AiKeyStore.clear(ctx)
+        _messages.value = emptyList()
+        _error.value = null
+        _keyVersion.value += 1
+    }
+
+    /**
+     * Disconnect entirely: forget any stored key AND un-commit the Custom provider, returning to
+     * the setup screen. The Custom base URL is kept so reconnecting pre-fills it.
+     */
+    fun disconnect(ctx: Context) {
+        AiKeyStore.clear(ctx)
+        _customConnected.value = false
+        AiKeyStore.saveCustomConnected(ctx, false)
         _messages.value = emptyList()
         _error.value = null
         _keyVersion.value += 1
@@ -192,6 +246,7 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
                     provider = _provider.value,
                     model = _model.value,
                     consent = _consent.value,
+                    customBaseUrl = _customBaseUrl.value,
                 )
                 _messages.value = _messages.value + ChatMsg(role = "assistant", text = reply)
             } catch (e: Exception) {
@@ -212,8 +267,10 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
          * Initial model list for [provider]: its curated ids, plus [selected] appended if it's a
          * custom id not already in that list (so a previously-saved custom model still shows).
          */
-        private fun seedModels(provider: AiProvider, selected: String): List<String> =
-            if (provider.models.contains(selected)) provider.models
-            else provider.models + selected
+        private fun seedModels(provider: AiProvider, selected: String): List<String> = when {
+            selected.isBlank() -> provider.models          // Custom has no default — start empty
+            provider.models.contains(selected) -> provider.models
+            else -> provider.models + selected
+        }
     }
 }

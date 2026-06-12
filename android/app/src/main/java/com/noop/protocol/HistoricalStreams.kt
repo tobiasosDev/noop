@@ -140,6 +140,32 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
     if (frame[4].toInt() and 0xFF != PacketType.HISTORICAL_DATA.rawValue) return null
 
     val version = frame[5].toInt() and 0xFF
+
+    // WHOOP 4.0 **v25** historical layout (issue #30). RE'd from 45 real records on v1.92+ full dumps
+    // (faklei / FrankdeJong / tchoucker15): an 84-byte record with `unix` @11 (u32 LE) and the DSP
+    // gravity vector @73/75/77 as 3×i16 LE / 16384 — |gravity| ≈ 1 g on 45/45 records. Bytes 23-72 are
+    // the optical PPG waveform; per-second HR is NOT stored in v25 (PPG-derived), so this yields motion
+    // + timestamp — exactly what the sleep stager gates on. Additive + version-gated; v18/v24/v26
+    // untouched. Mirrors Swift PostHooks "historical_data" v25 case.
+    if (version == 25 && frame.size >= 79) {
+        val out = LinkedHashMap<String, Any?>()
+        out["hist_version"] = version
+        frame.histU32(11)?.let { out["unix"] = it.toInt() }
+        fun grav(off: Int): Double? {
+            val u = frame.histU16(off) ?: return null
+            return (if (u >= 32768) u - 65536 else u).toDouble() / 16384.0   // i16 LE, ±2 g full-scale
+        }
+        val gx = grav(73); val gy = grav(75); val gz = grav(77)
+        if (gx != null && gy != null && gz != null) {
+            val mag = Math.sqrt(gx * gx + gy * gy + gz * gz)
+            if (mag in 0.5..1.5) {   // a real DSP orientation vector is ~1 g; reject garbage
+                out["gravity_x"] = gx; out["gravity_y"] = gy; out["gravity_z"] = gz
+            }
+        }
+        out["rr_intervals"] = ArrayList<Int>()
+        return out
+    }
+
     // Unmapped firmware version: instead of dropping the whole record (→ no HR/R-R/gravity → no sleep,
     // and on Android this previously meant ZERO data for a strap on newer firmware — the macOS
     // issue-#30 fix that never reached Android; the likely cause of #77 on some WHOOP 4 straps), fall

@@ -4,8 +4,11 @@ NOOP is a standalone, fully **offline** companion app for WHOOP straps (4.0 and 
 directly with the strap over Bluetooth Low Energy — **no WHOOP account, no
 cloud** — stores everything on-device in SQLite, imports your WHOOP and Apple Health exports,
 and computes recovery, strain, HRV and sleep locally. The macOS app (in `Strand/`) is the
-reference implementation; Android (in `android/`) is a full, shipped app, and iOS is an
-experimental, build-from-source community port ([PR #42](../../../pull/42)).
+reference implementation; Android (in `android/`) is a full, shipped app, and iOS is a
+build-from-source-only target (build it yourself in Xcode — see [docs/IOS.md](IOS.md); not on the
+App Store/TestFlight to stay anonymous). It shares NOOP's analysis code, so its results match
+macOS; it is newer and less battle-tested, with live BLE on a physical iPhone not yet fully
+validated.
 
 > **Not affiliated with WHOOP.** NOOP is independent interoperability software for *your own*
 > device and *your own* data. "WHOOP" is used only to identify the hardware NOOP talks to.
@@ -94,7 +97,10 @@ The home dashboard (`TodayView.swift`, titled "Control Center"). A tight, gaples
   a plain-English read-out ("Recovery is strong and sleep was consistent.") and a recovery state
   word (Depleted / Low / Steady / Primed / Peak).
 - **Key Metrics** — a uniform tile grid, each with a 14-day sparkline: Recovery, Day Strain
-  (of 21), Sleep (hours + efficiency), HRV, Resting HR, Blood Oxygen, Respiratory, Steps,
+  (of 21), Sleep (hours + efficiency), HRV, Resting HR, Blood Oxygen, Respiratory,
+  Steps (on-device only for WHOOP 5/MG; on a 4.0, NOOP shows your imported Apple Health /
+  Health Connect steps, because it can't yet read steps off the 4.0 strap over Bluetooth —
+  the 4.0 itself does count steps in the official WHOOP app — and approximate),
   Weight, Calories. WHOOP metrics come from the `my-whoop` source; Steps/Weight/Calories/
   Respiratory pull from `apple-health`. Sparse series (e.g. weight) fall back to all history so
   a tile never shows empty when data exists.
@@ -478,7 +484,7 @@ feed, refresh battery, scan/reconnect, or disconnect.
 - **Built on** — credit to the community reverse-engineering projects NOOP stands on.
 - **Donate (optional)** — never a paywall; the whole app works without it. Copy-to-clipboard
   crypto addresses (Bitcoin, Cardano, Ethereum, XRP) for anyone who wants to chip in toward
-  future work (Windows, the iOS port, new features). The app never asks again.
+  future work (Windows, deeper iOS hardware validation, new features). The app never asks again.
 - A reminder: **not affiliated with WHOOP; interoperability software for your own device and
   data; not a medical device.**
 

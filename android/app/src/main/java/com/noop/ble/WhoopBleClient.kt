@@ -185,6 +185,10 @@ class WhoopBleClient(
         /** Cap on the in-app strap-log ring buffer (for the "Share strap log" diagnostics export). */
         private const val LOG_BUFFER_MAX = 2000
 
+        /** Bump whenever a historical layout is added/changed so the reject archive re-decodes once more
+         *  (#151). 2 = the WHOOP 4.0 v25 layout (v1.95). Matches the Swift BLEManager constant. */
+        private const val REJECT_REPLAY_DECODER_VERSION = 2
+
         // MARK: GATT UUIDs (authoritative, from BLEManager.swift / FINDINGS.md).
         //
         // WHOOP 4.0 custom service + its four characteristics. The shared contract also lists a
@@ -459,6 +463,20 @@ class WhoopBleClient(
      */
     private val rawHistoryArchive = RawHistoryArchive(context)
 
+    init {
+        // Retro-decode (#151): when the decoder gains a historical layout (WHOOP 4.0 v25), re-run every
+        // archived undecodable frame through it ONCE and insert whatever now decodes — the only path by
+        // which already-acked, strap-freed history backfills after an update. Version-gated so it runs
+        // once per decoder version; idempotent if it re-runs (offloaded rows dedupe by ts). Mirrors the
+        // Swift BLEManager gate. (This client is a process singleton, so init runs once per process.)
+        ioScope.launch {
+            val rows = rawHistoryArchive.replayIfNeeded(repository, deviceId, REJECT_REPLAY_DECODER_VERSION)
+            if (rows > 0) {
+                log("Backfill: retro-decoded $rows record(s) from the reject archive after a decoder update.")
+            }
+        }
+    }
+
     /** The offload state machine. Ack callback writes HISTORICAL_DATA_RESULT (with response). */
     private val backfiller = Backfiller(
         repository = repository,
@@ -466,6 +484,7 @@ class WhoopBleClient(
         cursorStore = cursorStore,
         ackTrim = { trim, endData -> ackHistoricalChunk(trim, endData) },
         onChunkCommitted = { batch -> onBackfillChunkCommitted(batch) },
+        onConsoleChunk = { consoleChunksThisSession += 1 },
         // #77/#91: archive undecodable frames before the ack. append() returns ok=true (written, or
         // archive-full → still safe to ack) and THROWS only on a genuine write failure → return false
         // so finishChunk holds the cursor/ack and the strap re-sends. The throw is mapped to the
@@ -491,6 +510,7 @@ class WhoopBleClient(
      * foreground service alive). Mirrors the AppViewModel loop's profile + writeback behaviour. (#78 fork)
      */
     private fun onBackfillChunkCommitted(batch: StreamBatch) {
+        decodedChunksThisSession += 1   // invoked once per non-empty decoded chunk (#77 family tally)
         if (!analyzeAfterBackfillScheduled.compareAndSet(false, true)) return
         ioScope.launch {
             try {
@@ -533,6 +553,13 @@ class WhoopBleClient(
     /** Chunks acked this offload session — feeds LiveState.syncChunksThisSession (throttled). Only
      *  touched on the serial backfill drain coroutine + the begin/exit lifecycle. */
     private var ackedChunksThisSession = 0
+    /** #77 family: per-session chunk tallies to tell an EMPTY completed sync (strap handed over only
+     *  console/diagnostic output — not banking to flash) from a clean one. Reset at session start. */
+    private var decodedChunksThisSession = 0
+    private var consoleChunksThisSession = 0
+    /** #126 false-alarm guard: CONSECUTIVE console-only completed syncs, so the "clock has lost sync"
+     *  banner only fires on sustained emptiness, not a single transient empty cycle on a healthy strap. */
+    private val emptySyncTracker = EmptySyncTracker()
     /** Genuine offload frames seen this session — zero at timeout means the strap never answered
      *  the history request at all (5/MG retry trigger, #78 fork). Main-looper only. */
     private var offloadFramesThisSession = 0
@@ -1963,6 +1990,8 @@ class WhoopBleClient(
         backfiller.begin(connectedFamily)   // family drives the +4 puffin offset for 5/MG (#78)
         backfilling = true
         ackedChunksThisSession = 0
+        decodedChunksThisSession = 0
+        consoleChunksThisSession = 0
         offloadFramesThisSession = 0
         historicalKickSent = false
         _state.value = _state.value.copy(backfilling = true, syncChunksThisSession = 0)
@@ -2109,12 +2138,32 @@ class WhoopBleClient(
         // non-silent error. A plain disconnect mid-sync leaves both as-is (not a failure — the next
         // connect re-offloads). The freshly-published count is preserved as the progress read. (PR #85)
         val nowSec = System.currentTimeMillis() / 1000L
+        // #77 family: a sync that COMPLETED but banked no sensor records across many console-only
+        // chunks ⇒ the strap isn't saving to flash (its RTC lost sync). Surface the actionable fix
+        // instead of a silent "synced". A caught-up strap (few/no console chunks) doesn't trip this.
+        val emptyBanking = reason == "HISTORY_COMPLETE" &&
+            decodedChunksThisSession == 0 && consoleChunksThisSession >= 3
+        // #126: only escalate to the clock-lost banner once emptiness is SUSTAINED. A banking cycle (any
+        // decoded records) clears the streak, so a single transient empty cycle on a healthy strap stays
+        // silent. Track on every completed sync so banking cycles reset it.
+        val sustainedEmpty = if (reason == "HISTORY_COMPLETE")
+            emptySyncTracker.recordCompletedSync(
+                bankedSensorRecords = decodedChunksThisSession > 0,
+                consoleOnly = decodedChunksThisSession == 0 && consoleChunksThisSession >= 3,
+            ) else false
+        if (emptyBanking) log(
+            "Backfill: completed but the strap banked no sensor history (console-only across " +
+                "$consoleChunksThisSession chunks); consecutive empty syncs = " +
+                "${emptySyncTracker.consecutiveEmptySyncs}.",
+        )
         _state.value = when (reason) {
             "HISTORY_COMPLETE" -> _state.value.copy(
                 backfilling = false,
                 syncChunksThisSession = ackedChunksThisSession,
                 lastSyncAt = nowSec,
-                lastSyncError = null,
+                lastSyncError = if (emptyBanking && sustainedEmpty)
+                    "Synced, but your strap had no stored history to hand over — only its diagnostic output. This usually means its clock has lost sync, so it isn't saving data to flash. Fully charge it to 100%, then reconnect, and it should start banking again."
+                else null,
             )
             "timeout" -> _state.value.copy(
                 backfilling = false,
@@ -2130,6 +2179,13 @@ class WhoopBleClient(
         backfillFrameQueue.clear()
         closeWhoop5BackfillCapture(flushSummary = true)
         log("Backfill: session ended — reason=$reason")
+        // Success-side summary (#150 forensics): we logged failures (decoded-to-0) but never successes,
+        // so a strap log couldn't tell a banking strap from a broken one. Emit the per-session persistence
+        // tally whenever anything actually landed — the win-rate signal a log previously lacked. Mirrors
+        // the Swift exitBackfilling.
+        Backfiller.sessionSummaryLine(
+            backfiller.sessionRowsPersisted, backfiller.sessionMotionRows, backfiller.sessionNights,
+        )?.let { log(it) }
     }
 
     /**

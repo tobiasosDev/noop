@@ -22,6 +22,8 @@ object AiKeyStore {
     private const val KEY_API = "api_key"
     private const val KEY_PROVIDER = "provider"
     private const val KEY_CONSENT = "data_consent"
+    private const val KEY_CUSTOM_URL = "custom_base_url"
+    private const val KEY_CUSTOM_CONNECTED = "custom_connected"
 
     /** Per-provider model preference key, so each provider remembers its own last model. */
     private fun modelKey(provider: AiProvider) = "model_${provider.name}"
@@ -104,4 +106,27 @@ object AiKeyStore {
 
     /** Read the data-access consent flag (default false — privacy-safe; no metrics sent until on). */
     fun readConsent(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_CONSENT, false)
+
+    // --- Custom (OpenAI-compatible / local LLM) provider settings ---
+
+    /** Persist the Custom provider's base URL (e.g. http://localhost:11434/v1). */
+    fun saveCustomBaseUrl(ctx: Context, url: String) {
+        prefs(ctx).edit().putString(KEY_CUSTOM_URL, url.trim()).apply()
+    }
+
+    /** Read the Custom provider's base URL, or empty string if unset. */
+    fun readCustomBaseUrl(ctx: Context): String =
+        prefs(ctx).getString(KEY_CUSTOM_URL, null)?.trim().orEmpty()
+
+    /**
+     * Persist whether the user has committed the Custom provider (entered a URL and tapped
+     * Connect). Lets the keyless local path reach the chat without a stored API key.
+     */
+    fun saveCustomConnected(ctx: Context, connected: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_CUSTOM_CONNECTED, connected).apply()
+    }
+
+    /** Read the Custom-provider committed flag (default false). */
+    fun readCustomConnected(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_CUSTOM_CONNECTED, false)
 }

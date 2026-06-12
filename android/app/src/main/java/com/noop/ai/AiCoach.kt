@@ -53,9 +53,17 @@ class AiCoach(private val repo: WhoopRepository) {
         provider: AiProvider,
         model: String,
         consent: Boolean = false,
+        customBaseUrl: String = "",
     ): String = withContext(Dispatchers.IO) {
+        // Local (Custom) servers usually need no key; the cloud providers always do.
         val key = AiKeyStore.read(ctx)
-            ?: throw Exception("No API key set. Add your ${provider.displayName} key to use the coach.")
+        if (key == null && provider != AiProvider.CUSTOM) {
+            throw Exception("No API key set. Add your ${provider.displayName} key to use the coach.")
+        }
+        if (provider == AiProvider.CUSTOM) {
+            require(customBaseUrl.isNotBlank()) { "Set your server URL first." }
+            require(model.isNotBlank()) { "Pick a model your server serves." }
+        }
 
         require(history.isNotEmpty()) { "Ask a question first." }
         require(history.last().role == "user") { "The last message must be your question." }
@@ -69,8 +77,12 @@ class AiCoach(private val repo: WhoopRepository) {
         }
 
         when (provider) {
-            AiProvider.OPENAI -> callOpenAi(provider, model, key, grounded)
-            AiProvider.ANTHROPIC -> callAnthropic(provider, model, key, grounded)
+            AiProvider.OPENAI ->
+                callOpenAiCompatible(provider, provider.endpoint, model, key, grounded)
+            AiProvider.ANTHROPIC ->
+                callAnthropic(provider, model, key!!, grounded)
+            AiProvider.CUSTOM ->
+                callOpenAiCompatible(provider, customChatUrl(customBaseUrl), model, key, grounded)
         }
     }
 
@@ -88,25 +100,36 @@ class AiCoach(private val repo: WhoopRepository) {
     suspend fun fetchModels(
         ctx: Context,
         provider: AiProvider,
+        customBaseUrl: String = "",
     ): List<String> = withContext(Dispatchers.IO) {
-        val key = AiKeyStore.read(ctx) ?: return@withContext emptyList()
+        val key = AiKeyStore.read(ctx)
+        // Cloud providers need a key to list models; a local Custom server usually doesn't.
+        if (key == null && provider != AiProvider.CUSTOM) return@withContext emptyList()
 
-        val builder = Request.Builder()
-            .url(provider.modelsEndpoint)
-            .get()
+        val url = when (provider) {
+            AiProvider.CUSTOM -> {
+                if (customBaseUrl.isBlank()) return@withContext emptyList()
+                customModelsUrl(customBaseUrl)
+            }
+            else -> provider.modelsEndpoint
+        }
+
+        val builder = Request.Builder().url(url).get()
         when (provider) {
-            AiProvider.OPENAI -> builder.addHeader("Authorization", "Bearer $key")
+            // key is non-null here: the early return above only spares the Custom provider.
+            AiProvider.OPENAI -> builder.addHeader("Authorization", "Bearer ${key!!}")
             AiProvider.ANTHROPIC -> {
-                builder.addHeader("x-api-key", key)
+                builder.addHeader("x-api-key", key!!)
                 builder.addHeader("anthropic-version", "2023-06-01")
             }
+            AiProvider.CUSTOM -> if (!key.isNullOrBlank()) builder.addHeader("Authorization", "Bearer $key")
         }
 
         runCatching {
             val (code, text) = execute(builder.build())
             if (code !in 200..299) return@runCatching emptyList<String>()
 
-            // Both providers return {"data": [ { "id": "..." }, ... ]}.
+            // OpenAI-shaped providers (incl. Custom) return {"data": [ { "id": "..." }, ... ]}.
             val data = JSONObject(text).optJSONArray("data") ?: return@runCatching emptyList<String>()
             val ids = ArrayList<String>(data.length())
             for (i in 0 until data.length()) {
@@ -114,7 +137,8 @@ class AiCoach(private val repo: WhoopRepository) {
                 if (id.isEmpty()) continue
                 val keep = when (provider) {
                     AiProvider.OPENAI -> id.startsWith("gpt") || id.startsWith("o")
-                    AiProvider.ANTHROPIC -> true
+                    // Anthropic + a local server name models freely → keep all.
+                    AiProvider.ANTHROPIC, AiProvider.CUSTOM -> true
                 }
                 if (keep) ids.add(id)
             }
@@ -214,13 +238,16 @@ class AiCoach(private val repo: WhoopRepository) {
     }
 
     // ---------------------------------------------------------------------------------------
-    // OpenAI — POST /v1/chat/completions
+    // OpenAI-compatible — POST {base}/chat/completions
+    //   Used for OpenAI itself and the Custom (local LLM) provider. [key] may be null/blank for a
+    //   local server that needs no auth — the Authorization header is then omitted.
     // ---------------------------------------------------------------------------------------
 
-    private fun callOpenAi(
+    private fun callOpenAiCompatible(
         provider: AiProvider,
+        url: String,
         model: String,
-        key: String,
+        key: String?,
         history: List<ChatMsg>,
     ): String {
         val messages = JSONArray()
@@ -237,14 +264,13 @@ class AiCoach(private val repo: WhoopRepository) {
             .put("max_tokens", 900)
             .toString()
 
-        val request = Request.Builder()
-            .url(provider.endpoint)
-            .addHeader("Authorization", "Bearer $key")
+        val builder = Request.Builder()
+            .url(url)
             .addHeader("Content-Type", "application/json")
             .post(body.toRequestBody(JSON))
-            .build()
+        if (!key.isNullOrBlank()) builder.addHeader("Authorization", "Bearer $key")
 
-        val (code, text) = execute(request)
+        val (code, text) = execute(builder.build())
         if (code !in 200..299) throw httpError(provider, code, text)
 
         val json = parse(text)
@@ -257,6 +283,11 @@ class AiCoach(private val repo: WhoopRepository) {
         if (content.isNullOrEmpty()) throw Exception("The provider returned an empty reply. Please try again.")
         return content
     }
+
+    /** Base for the Custom provider — the user's URL with any trailing slashes trimmed. */
+    private fun customBase(url: String): String = url.trim().trimEnd('/')
+    private fun customChatUrl(url: String): String = customBase(url) + "/chat/completions"
+    private fun customModelsUrl(url: String): String = customBase(url) + "/models"
 
     // ---------------------------------------------------------------------------------------
     // Anthropic — POST /v1/messages
@@ -392,7 +423,10 @@ class AiCoach(private val repo: WhoopRepository) {
                 "biggest recovery lever. Always cite the user's ACTUAL numbers, give a concrete plan " +
                 "(today and the week), and be specific, punchy and motivating. If no data is " +
                 "provided, coach generally and invite them to enable data access. You are NOT a " +
-                "doctor — never diagnose; suggest a professional for genuine health concerns."
+                "doctor — never diagnose; suggest a professional for genuine health concerns. " +
+                "Format replies in simple Markdown, chat-sized: short paragraphs, **bold** for key " +
+                "numbers, bullet or numbered lists for plans, and ### headings only when structure " +
+                "genuinely helps. No tables or code blocks."
 
         /** Used in place of the metrics context when the user has not granted data access. */
         const val NO_CONSENT_NOTE =

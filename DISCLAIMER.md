@@ -39,9 +39,9 @@ author's own observation of traffic to and from a device the author owns.
 
 ## 3. Nature of the work: interoperability & security research
 
-The purpose of this project is to allow a person who **owns a WHOOP 4.0 device** to read **their
-own biometric data** from **their own device** in an interoperable way, and to study the device
-for educational and security-research purposes.
+The purpose of this project is to allow a person who **owns a WHOOP 4.0 or 5.0/MG device** to read
+**their own biometric data** from **their own device** in an interoperable way, and to study the
+device for educational and security-research purposes.
 
 - It operates only with the **user's own device** and the **user's own data**.
 - It does **not** circumvent any technological protection measure protecting a copyrighted work,

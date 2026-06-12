@@ -250,7 +250,7 @@ struct SupportModalOverlay: View {
                 .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 14)
         }
         #if os(macOS)
-        .onExitCommand { isPresented = false }
+        .onExitCommand { isPresented = false }   // Esc-to-close is a macOS-only command
         #endif
         .transition(.opacity)
     }

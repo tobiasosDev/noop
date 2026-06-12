@@ -60,7 +60,7 @@ struct TermsGateView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     #if os(macOS)
-                    .toggleStyle(.checkbox)   // checkbox is macOS-only; iOS keeps the default switch
+                    .toggleStyle(.checkbox)   // iOS falls back to the default switch toggle
                     #endif
 
                     Button(action: onAccept) {

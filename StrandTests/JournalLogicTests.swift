@@ -47,4 +47,16 @@ final class JournalLogicTests: XCTestCase {
         XCTAssertEqual(cat.last, "Did you nap?")
         XCTAssertEqual(cat.count, JournalCatalogStore.starterQuestions.count + 1)
     }
+
+    @MainActor
+    func testHiddenQuestionsFilteredOutCaseInsensitively() {
+        // Hide one starter (different casing) + one custom; both must drop from the merged catalog.
+        let cat = JournalCatalogStore.mergeCatalog(
+            imported: [],
+            custom: ["Did you nap?"],
+            hidden: ["did you drink any alcohol?", "DID YOU NAP?"])
+        XCTAssertFalse(cat.contains { $0.caseInsensitiveCompare("Did you drink any alcohol?") == .orderedSame })
+        XCTAssertFalse(cat.contains { $0.caseInsensitiveCompare("Did you nap?") == .orderedSame })
+        XCTAssertEqual(cat.count, JournalCatalogStore.starterQuestions.count - 1)
+    }
 }

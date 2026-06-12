@@ -298,6 +298,11 @@ final class IntelligenceEngine: ObservableObject {
                                             from: windowStart, to: now)
         if !workoutRows.isEmpty { _ = try? await store.upsertWorkouts(workoutRows, deviceId: computedId) }
 
+        // #137: a manually-started workout is scored from sparse live HR at save time — near-zero
+        // calories/strain on a 5/MG. Now that offloaded HR may cover the window, re-score the
+        // under-sampled ones from that denser data.
+        await rescoreManualWorkouts(store: store, profile: up)
+
         // Advance the incremental frontier only after a fully-successful pass, so a thrown/partial
         // run never marks unseen data as analysed. The skin-mean memo is seeded by the same pass.
         try? await store.setCursor("intel_hr_frontier", latestHrTs)
@@ -315,6 +320,34 @@ final class IntelligenceEngine: ObservableObject {
 
         // Reload the dashboard caches so the freshly computed scores show up immediately.
         if !dailies.isEmpty { await repo.refresh() }
+    }
+
+    /// #137: re-score under-sampled manual workouts. A `manual` workout is scored from the live HR
+    /// captured during the session; on a 5/MG that stream is sparse, so calories/strain land near zero.
+    /// The strap banks its own HR and offloads it on sync — once that denser HR covers the workout's
+    /// window, recompute from it. Conservative + idempotent: only `manual` rows that look under-scored
+    /// (negligible calories), and only when the recompute is a genuine improvement — so a well-scored
+    /// 4.0 workout is never touched and a still-sparse window is a no-op.
+    private func rescoreManualWorkouts(store: WhoopStore, profile up: UserProfile) async {
+        let now = Int(Date().timeIntervalSince1970)
+        let since = now - 14 * 86_400
+        guard let rows = try? await store.workouts(deviceId: deviceId, from: since, to: now, limit: 200)
+        else { return }
+        let hrMax = Double(profile.hrMax)
+        var updated: [WorkoutRow] = []
+        for row in rows where row.source == "manual"
+            && ManualWorkoutRescore.looksUnderScored(currentKcal: row.energyKcal) {
+            guard let samples = try? await store.hrSamples(deviceId: deviceId, from: row.startTs,
+                                                           to: row.endTs, limit: 20_000),
+                  let s = ManualWorkoutRescore.scored(windowSamples: samples, profile: up, hrMax: hrMax),
+                  ManualWorkoutRescore.improves(s, over: row.energyKcal)
+            else { continue }
+            updated.append(WorkoutRow(
+                startTs: row.startTs, endTs: row.endTs, sport: row.sport, source: row.source,
+                durationS: row.durationS, energyKcal: s.kcal, avgHr: s.avgHr, maxHr: s.maxHr,
+                strain: s.strain, distanceM: row.distanceM, zonesJSON: row.zonesJSON, notes: row.notes))
+        }
+        if !updated.isEmpty { _ = try? await store.upsertWorkouts(updated, deviceId: deviceId) }
     }
 
     /// Re-score ONLY the recovery composite for a day against a (re-seeded) baseline. Every other field

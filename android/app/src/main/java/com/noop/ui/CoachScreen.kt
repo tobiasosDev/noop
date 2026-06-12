@@ -66,14 +66,16 @@ import com.noop.ai.ChatMsg
 fun CoachScreen(vm: CoachViewModel = viewModel()) {
     val context = LocalContext.current
     val keyVersion by vm.keyVersion.collectAsStateWithLifecycle()
-    // Re-read the key gate whenever the stored key changes.
-    val hasKey = remember(keyVersion) { vm.hasKey(context) }
+    val provider by vm.provider.collectAsStateWithLifecycle()
+    val customConnected by vm.customConnected.collectAsStateWithLifecycle()
+    // Re-evaluate the gate whenever the stored key, provider, or custom-connect state changes.
+    val configured = remember(keyVersion, provider, customConnected) { vm.isConfigured(context) }
 
     ScreenScaffold(
         title = "Coach",
         subtitle = "Ask about your recovery, strain, sleep and HRV — grounded in your own numbers.",
     ) {
-        if (!hasKey) {
+        if (!configured) {
             CoachSetup(vm = vm)
         } else {
             CoachChat(vm = vm)
@@ -90,7 +92,9 @@ private fun CoachSetup(vm: CoachViewModel) {
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
+    val customBaseUrl by vm.customBaseUrl.collectAsStateWithLifecycle()
     var keyInput by remember { mutableStateOf("") }
+    val isCustom = provider == AiProvider.CUSTOM
 
     NoopCard(padding = 20.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -99,8 +103,12 @@ private fun CoachSetup(vm: CoachViewModel) {
                 Text("Connect a provider", style = NoopType.headline, color = Palette.textPrimary)
             }
             Text(
-                "Bring your own API key. It is stored encrypted on this device and only used to " +
-                    "send your question plus a short summary of your metrics to the provider you pick.",
+                if (isCustom)
+                    "Point the coach at any OpenAI-compatible server — a local model (Ollama, LM " +
+                        "Studio, llama.cpp) keeps everything on your device; an API key is optional."
+                else
+                    "Bring your own API key. It is stored encrypted on this device and only used to " +
+                        "send your question plus a short summary of your metrics to the provider you pick.",
                 style = NoopType.subhead, color = Palette.textSecondary,
             )
 
@@ -115,6 +123,26 @@ private fun CoachSetup(vm: CoachViewModel) {
                 )
             }
 
+            // Server URL — Custom (local LLM) only.
+            if (isCustom) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Overline("Server URL")
+                    OutlinedTextField(
+                        value = customBaseUrl,
+                        onValueChange = { vm.setCustomBaseUrl(context, it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Server URL" },
+                        placeholder = { Text("http://localhost:11434/v1", style = NoopType.body, color = Palette.textTertiary) },
+                        textStyle = NoopType.mono(13f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = coachFieldColors(),
+                        shape = RoundedCornerShape(14.dp),
+                    )
+                }
+            }
+
             // Model dropdown + live-list refresh.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,8 +150,8 @@ private fun CoachSetup(vm: CoachViewModel) {
                     Spacer(Modifier.weight(1f))
                     RefreshModelsButton(
                         refreshing = refreshingModels,
-                        // Live fetch needs a saved key; a key typed but not yet saved can't be used.
-                        enabled = vm.hasKey(context),
+                        // Cloud providers need a saved key to fetch; a local server just needs a URL.
+                        enabled = if (isCustom) customBaseUrl.isNotBlank() else vm.hasKey(context),
                         onClick = { vm.refreshModels(context) },
                     )
                 }
@@ -134,25 +162,37 @@ private fun CoachSetup(vm: CoachViewModel) {
                 )
             }
 
-            // Masked key field.
+            // Masked key field — optional for a local Custom server.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Overline("API Key")
+                Overline(if (isCustom) "API Key (optional)" else "API Key")
                 CoachKeyField(
                     value = keyInput,
                     onValueChange = { keyInput = it },
-                    placeholder = "Paste your ${provider.displayName} key",
+                    placeholder = if (isCustom) "Only if your server requires one"
+                                  else "Paste your ${provider.displayName} key",
                 )
             }
 
-            // Save.
-            CoachPrimaryButton(
-                label = "Save key",
-                enabled = keyInput.isNotBlank(),
-                onClick = { vm.saveKey(context, keyInput) },
-            )
+            // Connect (Custom) / Save key (cloud).
+            if (isCustom) {
+                CoachPrimaryButton(
+                    label = "Connect",
+                    enabled = customBaseUrl.isNotBlank(),
+                    onClick = {
+                        if (keyInput.isNotBlank()) vm.saveKey(context, keyInput)
+                        vm.connectCustom(context)
+                    },
+                )
+            } else {
+                CoachPrimaryButton(
+                    label = "Save key",
+                    enabled = keyInput.isNotBlank(),
+                    onClick = { vm.saveKey(context, keyInput) },
+                )
+            }
 
             // Privacy note — one line, always visible.
-            PrivacyNote()
+            PrivacyNote(local = isCustom)
         }
     }
 }
@@ -177,14 +217,14 @@ private fun CoachChat(vm: CoachViewModel) {
                 StatePill(title = "${provider.displayName} · $model", tone = StrandTone.Accent, showsDot = true)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "Reset key",
+                    "Disconnect",
                     style = NoopType.caption,
                     color = Palette.textSecondary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .clickable { vm.clearKey(context) }
+                        .clickable { vm.disconnect(context) }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
-                        .semantics { contentDescription = "Reset API key" },
+                        .semantics { contentDescription = "Disconnect provider" },
                 )
             }
         }
@@ -268,7 +308,7 @@ private fun CoachChat(vm: CoachViewModel) {
         }
 
         // Privacy note repeated under the input so it's always on screen.
-        PrivacyNote()
+        PrivacyNote(local = provider == AiProvider.CUSTOM)
     }
 }
 
@@ -299,7 +339,12 @@ private fun ChatBubble(msg: ChatMsg) {
                     if (isUser) "You" else "Coach",
                     color = if (isUser) Palette.accentHover else Palette.textTertiary,
                 )
-                Text(msg.text, style = NoopType.body, color = Palette.textPrimary)
+                if (isUser) {
+                    Text(msg.text, style = NoopType.body, color = Palette.textPrimary)
+                } else {
+                    // Render the Coach's Markdown (bold/lists/headings) instead of raw symbols (#149).
+                    CoachMarkdown(msg.text, color = Palette.textPrimary)
+                }
             }
         }
     }
@@ -593,7 +638,7 @@ private fun SendButton(enabled: Boolean, sending: Boolean, onClick: () -> Unit) 
 // MARK: - Privacy note (one line)
 
 @Composable
-private fun PrivacyNote() {
+private fun PrivacyNote(local: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -601,8 +646,12 @@ private fun PrivacyNote() {
     ) {
         Icon(Icons.Filled.Lock, contentDescription = null, tint = Palette.textTertiary, modifier = Modifier.size(13.dp))
         Text(
-            "Private by default — only your question and a short metrics summary are sent, " +
-                "and only after you set a key.",
+            if (local)
+                "The coach talks only to the server URL you set — point it at a local model to " +
+                    "keep everything on your device. Nothing is sent until you ask."
+            else
+                "Private by default — only your question and a short metrics summary are sent, " +
+                    "and only after you set a key.",
             style = NoopType.footnote,
             color = Palette.textTertiary,
         )

@@ -12,120 +12,11 @@ import WhoopStore
 // transmit the small text context built in `buildContext()` + the running chat — no raw streams.
 //
 // Pure macOS: Foundation + URLSession + Security (Keychain). Compiles on macOS 13, Swift 5.
+// Provider wire formats live in Providers/: OpenAI.swift, Anthropic.swift, Gemini.swift.
 
 /// One-line privacy note the UI should display verbatim near the composer / settings.
 public let aiCoachPrivacyNote =
     "Private by default: nothing is sent until you add your own key and ask a question — only a short text summary of your metrics goes to the provider you pick."
-
-// MARK: - Provider
-
-/// The remote provider the user opts into. Anonymous: only the provider's own name is shown; no
-/// other vendor/author branding. Wire formats are pinned per provider in `AICoachEngine`.
-enum AIProvider: String, CaseIterable, Identifiable {
-    case openAI
-    case anthropic
-    case gemini
-
-    var id: String { rawValue }
-
-    /// Plain provider name shown in the picker (no extra branding).
-    var displayName: String {
-        switch self {
-        case .openAI:    return "OpenAI"
-        case .anthropic: return "Anthropic"
-        case .gemini:    return "Google Gemini"
-        }
-    }
-
-    /// Model selected by default when this provider is first chosen.
-    var defaultModel: String {
-        switch self {
-        case .openAI:    return "gpt-4o-mini"
-        case .anthropic: return "claude-sonnet-4-6"
-        case .gemini:    return "gemini-2.5-flash"
-        }
-    }
-
-    /// Models offered in the model picker for this provider. A free-text "Custom…" path in the UI
-    /// lets the user pick any id beyond these, and `refreshModels()` can merge the provider's live list.
-    var modelOptions: [String] {
-        switch self {
-        case .openAI:
-            return [
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4.1",
-                "gpt-4.1-mini",
-                "gpt-4.1-nano"
-            ]
-        case .anthropic:
-            return [
-                "claude-opus-4-8",
-                "claude-sonnet-4-6",
-                "claude-haiku-4-5-20251001",
-                "claude-3-7-sonnet-latest",
-                "claude-3-5-sonnet-latest",
-                "claude-3-5-haiku-latest",
-                "claude-3-opus-latest"
-            ]
-        case .gemini:
-            return [
-                "gemini-2.5-pro",
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.0-flash"
-            ]
-        }
-    }
-
-    /// The HTTPS endpoint this provider's chat request is POSTed to. Gemini's chat URL is
-    /// per-model, so its case is the models BASE — `sendGemini` appends
-    /// "/{model}:generateContent" at request time.
-    var endpoint: URL {
-        switch self {
-        case .openAI:    return URL(string: "https://api.openai.com/v1/chat/completions")!
-        case .anthropic: return URL(string: "https://api.anthropic.com/v1/messages")!
-        case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
-        }
-    }
-
-    /// The HTTPS endpoint that lists the provider's available models (GET, authenticated).
-    var modelsEndpoint: URL {
-        switch self {
-        case .openAI:    return URL(string: "https://api.openai.com/v1/models")!
-        case .anthropic: return URL(string: "https://api.anthropic.com/v1/models")!
-        case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
-        }
-    }
-
-    /// Parse the provider's model-list response body into chat-capable model ids.
-    ///
-    /// OpenAI/Anthropic return `{"data":[{"id":…}]}`; Gemini returns
-    /// `{"models":[{"name":"models/gemini-…"}]}` — its ids carry a `models/` prefix and the list
-    /// includes non-chat entries (embeddings, AQA) we must drop. Pure (no network) so it can be
-    /// unit tested directly off a decoded body.
-    func parseModelList(_ obj: [String: Any]) -> [String] {
-        let listKey = (self == .gemini) ? "models" : "data"
-        guard let list = obj[listKey] as? [[String: Any]] else { return [] }
-        return list.compactMap { row in
-            switch self {
-            case .openAI:
-                guard let id = row["id"] as? String, !id.isEmpty else { return nil }
-                return (id.hasPrefix("gpt") || id.hasPrefix("o")) ? id : nil
-            case .anthropic:
-                guard let id = row["id"] as? String, !id.isEmpty else { return nil }
-                return id
-            case .gemini:
-                guard let name = row["name"] as? String, !name.isEmpty else { return nil }
-                let id = name.hasPrefix("models/") ? String(name.dropFirst("models/".count)) : name
-                // Keep only chat-capable gemini-* ids; exclude embeddings/AQA and the like.
-                guard id.hasPrefix("gemini"),
-                      !id.contains("embedding"), !id.contains("aqa") else { return nil }
-                return id
-            }
-        }
-    }
-}
 
 // MARK: - Chat model
 
@@ -263,6 +154,16 @@ final class AICoachEngine: ObservableObject {
     @Published var dataConsent: Bool {
         didSet { UserDefaults.standard.set(dataConsent, forKey: Self.consentKey) }
     }
+    /// Base URL for the Custom (OpenAI-compatible) provider, e.g. `http://localhost:11434/v1` for a
+    /// local LLM server. Only used when `provider == .custom`. Persisted so it survives relaunch.
+    @Published var customBaseURL: String {
+        didSet { UserDefaults.standard.set(customBaseURL, forKey: AIProvider.customBaseURLKey) }
+    }
+    /// Whether the user has committed the Custom provider (tapped Connect with a base URL). Lets the
+    /// keyless local path reach the chat without a stored key, while avoiding a flip mid-typing.
+    @Published var customConnected: Bool {
+        didSet { UserDefaults.standard.set(customConnected, forKey: Self.customConnectedKey) }
+    }
 
     private let repo: Repository
     private let session: URLSession
@@ -270,6 +171,7 @@ final class AICoachEngine: ObservableObject {
     private static let providerKey = "ai.provider"
     private static let modelKey = "ai.model"
     private static let consentKey = "ai.dataConsent"
+    private static let customConnectedKey = "ai.customConnected"
 
     /// The system prompt that frames every request. Anonymous — frames the assistant only as a coach.
     private let systemPrompt = """
@@ -285,6 +187,9 @@ final class AICoachEngine: ObservableObject {
     be specific, punchy and motivating — like a coach who knows them.
     If no data is provided, coach generally and invite them to turn on data access for personalised \
     advice. You are NOT a doctor — never diagnose; suggest a professional for genuine health concerns.
+    Format replies in simple Markdown, chat-sized: short paragraphs, **bold** for key numbers, \
+    bullet or numbered lists for plans, ### headings only when structure genuinely helps, and a \
+    small table only for a week-ahead plan. No code blocks.
     """
 
     /// Used in place of the metrics context when the user has NOT granted data access.
@@ -318,12 +223,51 @@ final class AICoachEngine: ObservableObject {
         self.availableModels = seeded
 
         self.dataConsent = UserDefaults.standard.bool(forKey: Self.consentKey)
+        self.customBaseURL = UserDefaults.standard.string(forKey: AIProvider.customBaseURLKey) ?? ""
+        self.customConnected = UserDefaults.standard.bool(forKey: Self.customConnectedKey)
     }
 
     // MARK: Key management
 
     /// True when a key is present in the Keychain.
     var hasKey: Bool { AIKeyStore.read() != nil }
+
+    /// True once the coach can actually send: a stored key for the cloud providers, or — for the
+    /// Custom (local) provider — a committed base URL (a key is optional there, as local servers
+    /// usually need none). Gates the setup card vs. the live chat.
+    var isConfigured: Bool { provider == .custom ? customConnected : hasKey }
+
+    /// The key to send with a request: the stored key, or an empty string for the keyless Custom
+    /// provider. `nil` means "not configured" — the caller surfaces `.noKey`.
+    private var resolvedKey: String? {
+        if let k = AIKeyStore.read() { return k }
+        return provider == .custom ? "" : nil
+    }
+
+    /// Commit the Custom (local) provider once the user has entered a server URL. Optionally stores a
+    /// key first if they pasted one. Pulls the server's live model list so the picker isn't empty.
+    func connectCustom() {
+        let url = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return }
+        errorText = nil
+        customConnected = true
+        // Pull the server's model list; if the user hasn't picked one yet, default to the first.
+        Task {
+            await refreshModels()
+            if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let first = availableModels.first {
+                model = first
+            }
+        }
+    }
+
+    /// Disconnect entirely: forget any stored key and un-commit the Custom provider. The base URL is
+    /// kept so reconnecting pre-fills it.
+    func disconnect() {
+        AIKeyStore.clear()
+        customConnected = false
+        objectWillChange.send()
+    }
 
     /// Store the user's pasted key securely. Clears any prior error.
     func setKey(_ key: String) {
@@ -356,72 +300,30 @@ final class AICoachEngine: ObservableObject {
     /// returned ids into `availableModels`. Never crashes; failures land in `errorText` and leave
     /// the existing list intact. Requires a saved key.
     func refreshModels() async {
-        guard let key = AIKeyStore.read() else {
+        guard let key = resolvedKey else {
             errorText = AICoachError.noKey.errorDescription
             return
         }
         errorText = nil
 
-        var req = URLRequest(url: provider.modelsEndpoint)
-        req.httpMethod = "GET"
-        switch provider {
-        case .openAI:
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        case .anthropic:
-            req.setValue(key, forHTTPHeaderField: "x-api-key")
-            req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        case .gemini:
-            req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        }
-
-        let data: Data
-        let response: URLResponse
         do {
-            (data, response) = try await session.data(for: req)
+            let ids = try await provider.client.fetchModels(key: key, session: session)
+            guard !ids.isEmpty else {
+                errorText = AICoachError.decode.errorDescription
+                return
+            }
+
+            // Merge: keep the built-in options on top, append any newly-discovered ids (sorted), and
+            // preserve a current custom selection if it isn't otherwise present.
+            let builtin = provider.modelOptions
+            let discovered = Set(ids).subtracting(builtin).sorted()
+            var merged = builtin + discovered
+            if !merged.contains(model) { merged.insert(model, at: 0) }
+            availableModels = merged
         } catch {
             errorText = AICoachError.network(error.localizedDescription).errorDescription
             return
         }
-
-        guard let http = response as? HTTPURLResponse else {
-            errorText = AICoachError.network("no HTTP response").errorDescription
-            return
-        }
-        switch http.statusCode {
-        case 200...299:
-            break
-        case 401, 403:
-            errorText = AICoachError.badKey.errorDescription
-            return
-        case 429:
-            errorText = AICoachError.rateLimited.errorDescription
-            return
-        default:
-            errorText = AICoachError.server(http.statusCode, providerErrorMessage(from: data)).errorDescription
-            return
-        }
-
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            errorText = AICoachError.decode.errorDescription
-            return
-        }
-
-        // Decode + light per-provider filter so the list stays relevant (see parseModelList).
-        let ids = provider.parseModelList(obj)
-        guard !ids.isEmpty else {
-            errorText = AICoachError.decode.errorDescription
-            return
-        }
-
-        // Merge: keep the built-in options on top, append any newly-discovered ids (sorted), and
-        // preserve a current custom selection if it isn't otherwise present.
-        let builtIn = provider.modelOptions
-        let discovered = Set(ids).subtracting(builtIn).sorted()
-        var merged = builtIn + discovered
-        if !merged.contains(model) {
-            merged.insert(model, at: 0)
-        }
-        availableModels = merged
     }
 
     // MARK: Sending
@@ -432,7 +334,7 @@ final class AICoachEngine: ObservableObject {
     func send(_ userText: String) async {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { errorText = AICoachError.emptyQuestion.errorDescription; return }
-        guard let key = AIKeyStore.read() else { errorText = AICoachError.noKey.errorDescription; return }
+        guard let key = resolvedKey else { errorText = AICoachError.noKey.errorDescription; return }
 
         errorText = nil
         messages.append(ChatMessage(role: .user, text: trimmed))
@@ -460,8 +362,8 @@ final class AICoachEngine: ObservableObject {
     /// Proactively generate "Today's brief" the first time the Coach opens — readiness + a training
     /// prescription + one recovery tip — without the user typing. Requires a key + data consent.
     func startBriefIfNeeded() async {
-        guard hasKey, dataConsent, messages.isEmpty, !sending else { return }
-        guard let key = AIKeyStore.read() else { return }
+        guard isConfigured, dataConsent, messages.isEmpty, !sending else { return }
+        guard let key = resolvedKey else { return }
         errorText = nil
         sending = true
         defer { sending = false }
@@ -494,14 +396,16 @@ final class AICoachEngine: ObservableObject {
         return ctx
     }
 
-    /// Dispatch to the user's chosen provider.
+    /// Dispatch to the user's chosen provider client.
     private func callProvider(key: String,
                               messages: [(role: ChatMessage.Role, content: String)]) async throws -> String {
-        switch provider {
-        case .openAI:    return try await sendOpenAI(key: key, messages: messages)
-        case .anthropic: return try await sendAnthropic(key: key, messages: messages)
-        case .gemini:    return try await sendGemini(key: key, messages: messages)
-        }
+        try await provider.client.send(
+            key: key,
+            model: model,
+            systemPrompt: systemPrompt,
+            messages: messages,
+            session: session
+        )
     }
 
     /// The chat as `(role, content)` pairs, with the metrics context prepended to the first user turn.
@@ -517,169 +421,6 @@ final class AICoachEngine: ObservableObject {
             }
         }
         return out
-    }
-
-    // MARK: Provider calls
-
-    /// OpenAI Chat Completions. System prompt is a leading system message.
-    private func sendOpenAI(key: String,
-                            messages: [(role: ChatMessage.Role, content: String)]) async throws -> String {
-        var wire: [[String: Any]] = [["role": "system", "content": systemPrompt]]
-        for m in messages { wire.append(["role": m.role.rawValue, "content": m.content]) }
-
-        // Standard params first (gpt-4 family). Newer/reasoning models reject `temperature` and want
-        // `max_completion_tokens`; if the provider 400s about either, retry with the modern shape.
-        do {
-            return try await openAIChat(key: key, wire: wire, modernParams: false)
-        } catch let AICoachError.server(code, detail) where code == 400 {
-            let d = detail.lowercased()
-            if d.contains("max_completion_tokens") || d.contains("max_tokens")
-                || d.contains("temperature") || d.contains("unsupported") {
-                return try await openAIChat(key: key, wire: wire, modernParams: true)
-            }
-            throw AICoachError.server(code, detail)
-        }
-    }
-
-    /// One OpenAI chat request. `modernParams` uses `max_completion_tokens` and drops the custom
-    /// temperature — what newer/reasoning models require.
-    private func openAIChat(key: String, wire: [[String: Any]], modernParams: Bool) async throws -> String {
-        var body: [String: Any] = ["model": model, "messages": wire]
-        if modernParams {
-            body["max_completion_tokens"] = 900
-        } else {
-            body["temperature"] = 0.6
-            body["max_tokens"] = 900
-        }
-
-        var req = URLRequest(url: AIProvider.openAI.endpoint)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let json = try await perform(req)
-        guard let choices = json["choices"] as? [[String: Any]],
-              let first = choices.first,
-              let message = first["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw AICoachError.decode
-        }
-        return content
-    }
-
-    /// Anthropic Messages. No system role inside `messages` — the system prompt is a top-level field
-    /// and messages strictly alternate user/assistant.
-    private func sendAnthropic(key: String,
-                               messages: [(role: ChatMessage.Role, content: String)]) async throws -> String {
-        var wire: [[String: Any]] = []
-        for m in messages { wire.append(["role": m.role.rawValue, "content": m.content]) }
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 900,
-            "system": systemPrompt,
-            "messages": wire
-        ]
-
-        var req = URLRequest(url: AIProvider.anthropic.endpoint)
-        req.httpMethod = "POST"
-        req.setValue(key, forHTTPHeaderField: "x-api-key")
-        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.setValue("application/json", forHTTPHeaderField: "content-type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let json = try await perform(req)
-        guard let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
-            throw AICoachError.decode
-        }
-        return text
-    }
-
-    /// Google Gemini generateContent. No system role inside `contents` — the system prompt is a
-    /// top-level `system_instruction`. Turns use "user" / "model" (our "assistant" maps to "model").
-    /// The URL is per-model: `{modelsBase}/{model}:generateContent` (see `AIProvider.endpoint`).
-    private func sendGemini(key: String,
-                            messages: [(role: ChatMessage.Role, content: String)]) async throws -> String {
-        var contents: [[String: Any]] = []
-        for m in messages {
-            contents.append([
-                "role": m.role == .assistant ? "model" : "user",
-                "parts": [["text": m.content]]
-            ])
-        }
-
-        let body: [String: Any] = [
-            "system_instruction": ["parts": [["text": systemPrompt]]],
-            "contents": contents,
-            // Gemini 2.5 counts THINKING tokens against maxOutputTokens; the other providers'
-            // visible-reply cap (900) starves the thinking models into empty replies (finishReason
-            // MAX_TOKENS, no text parts). 4096 leaves room for both — the system prompt keeps the
-            // visible reply short.
-            "generationConfig": ["temperature": 0.6, "maxOutputTokens": 4096]
-        ]
-
-        // Built via URL(string:): appendingPathComponent percent-encodes the ":" in
-        // ":generateContent" on some Foundation versions and the API rejects %3A.
-        guard let url = URL(string: "\(AIProvider.gemini.endpoint.absoluteString)/\(model):generateContent") else {
-            throw AICoachError.network("invalid model id")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let json = try await perform(req)
-        // The reply text can span several parts; join them (thinking models may emit more than one).
-        guard let candidates = json["candidates"] as? [[String: Any]],
-              let first = candidates.first,
-              let content = first["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else {
-            throw AICoachError.decode
-        }
-        let text = parts.compactMap { $0["text"] as? String }.joined()
-        guard !text.isEmpty else { throw AICoachError.decode }
-        return text
-    }
-
-    /// Shared HTTP execution + status mapping. Returns the decoded top-level JSON object on success.
-    private func perform(_ req: URLRequest) async throws -> [String: Any] {
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: req)
-        } catch {
-            throw AICoachError.network(error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw AICoachError.network("no HTTP response")
-        }
-
-        switch http.statusCode {
-        case 200...299:
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw AICoachError.decode
-            }
-            return obj
-        case 401, 403:
-            throw AICoachError.badKey
-        case 429:
-            throw AICoachError.rateLimited
-        default:
-            throw AICoachError.server(http.statusCode, providerErrorMessage(from: data))
-        }
-    }
-
-    /// Best-effort extraction of a human message from a provider error body (shape differs per provider).
-    private func providerErrorMessage(from data: Data) -> String {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
-        if let err = obj["error"] as? [String: Any], let msg = err["message"] as? String { return msg }
-        if let msg = obj["message"] as? String { return msg }
-        return ""
     }
 
     // MARK: - Context builder

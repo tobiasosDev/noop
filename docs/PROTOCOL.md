@@ -18,7 +18,9 @@ involved in any of the exchanges described here.
 
 The protocol decoder is platform-pure Swift in the `WhoopProtocol` package
 (`Packages/WhoopProtocol/`); it never imports CoreBluetooth, so it runs unchanged in tests and
-CLI tools. The CoreBluetooth transport lives in the macOS app target under `Strand/BLE/`.
+CLI tools. The CoreBluetooth transport lives under `Strand/BLE/` and is shared by both the
+macOS and iOS app targets (the platform-pure `WhoopProtocol` package above stays
+CoreBluetooth-free for tests and CLI tools).
 
 This work builds on two community reverse-engineering efforts:
 
@@ -40,7 +42,8 @@ event/data channels; the standard services work even before bonding.
 ### WHOOP 4.0 — service `61080001-…`
 
 Defined in `BLEManager.swift` (the on-device, authoritative UUIDs) and mirrored as plain
-strings in `DeviceFamily.swift`.
+strings in `DeviceFamily.swift`. The same `Strand/BLE/` sources (`BLEManager`,
+`StandardHeartRate`, `FrameRouter`) back both Apple-platform targets — macOS and iOS.
 
 | Role | UUID | Direction |
 |------|------|-----------|

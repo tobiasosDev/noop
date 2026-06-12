@@ -49,6 +49,21 @@ enum class AiProvider(
         ),
         endpoint = "https://api.anthropic.com/v1/messages",
         modelsEndpoint = "https://api.anthropic.com/v1/models",
+    ),
+
+    /**
+     * A generic OpenAI-compatible server the user points at — typically a LOCAL LLM such as
+     * Ollama, LM Studio or llama.cpp (`http://localhost:11434/v1`), or any self-hosted gateway.
+     * The endpoints here are placeholders: the real chat/models URLs are built at call time from
+     * the user-set base URL (see [AiCoach] / [AiKeyStore.readCustomBaseUrl]). The API key is
+     * optional — local servers usually need none.
+     */
+    CUSTOM(
+        displayName = "Custom (OpenAI-compatible)",
+        defaultModel = "",
+        models = emptyList(),
+        endpoint = "",
+        modelsEndpoint = "",
     );
 
     companion object {

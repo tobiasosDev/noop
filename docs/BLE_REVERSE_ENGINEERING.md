@@ -35,8 +35,8 @@ on-device verification notes embedded in `Resources/whoop_protocol.json`).
 
 ## Where the code lives
 
-The reverse-engineering logic is split between a platform-pure Swift package and the macOS app's BLE
-engine:
+The reverse-engineering logic is split between a platform-pure Swift package and the app's Apple-platform
+(macOS + iOS) CoreBluetooth engine:
 
 | File | Role |
 |---|---|
@@ -52,7 +52,9 @@ engine:
 
 The `WhoopProtocol` package never imports CoreBluetooth — it exposes UUIDs as plain strings so the
 protocol code runs unchanged in tests and CLI tools. Only `BLEManager` turns those strings into
-`CBUUID`s.
+`CBUUID`s. The `Strand/` tree (including `Strand/BLE/`) compiles into **both** Apple targets — the
+macOS app and the `NOOPiOS` iOS target (`project.yml`) — so this CoreBluetooth layer is shared across
+macOS and iOS, not macOS-only.
 
 ---
 
@@ -222,7 +224,7 @@ Bluetooth menu; for interoperability with a strap **you own**, an OS-level just-
 nonetheless sufficient — no app-side step is required. (The strap holds one central at a time, so the
 phone must be disconnected first; the firmware logs a `BLE Bond failure` for a contended attempt.)
 
-**How NOOP's macOS app triggers it (v1.5):** it writes `CLIENT_HELLO` to `fd4b0002` *with response*.
+**How NOOP's Apple app (macOS/iOS) triggers it (v1.5):** it writes `CLIENT_HELLO` to `fd4b0002` *with response*.
 That single confirmed write makes CoreBluetooth bring up the just-works bond *before* the puffin notify
 subscriptions are attempted — without it those subscriptions are rejected with *"Authentication is
 insufficient"* and the handshake hangs at "Finishing the secure pairing handshake…" forever (issue #17).
@@ -357,7 +359,9 @@ record's **version is the `seq` byte** (`frame[5]`); the schema resolves it via 
 | 82 | `signal_quality` (u16) | DSP quality. |
 
 Versions 5/7/9 are generic HR/R-R-only records with no DSP sensor block; version 12 shares the v24
-layout. `extractHistoricalStreams` (`HistoricalStreams.swift`) turns these into the typed rows
+layout; **version 25** is a different WHOOP 4.0 firmware layout (84-byte, timestamp + gravity/motion,
+decoded in v1.95 — see "The WHOOP 4.0 type-47 record (version 25)" below).
+`extractHistoricalStreams` (`HistoricalStreams.swift`) turns these into the typed rows
 (`HRSample`, `SpO2Sample`, `SkinTempSample`, `RespSample`, `GravitySample`, …). The raw ADCs are kept
 as-is (`unit: "raw_adc"`) — SpO₂ %, skin temperature in °C, and respiratory rate are derived later in
 `StrandAnalytics`, on-device, never on a server.
@@ -501,7 +505,27 @@ high-entropy `23–26` and the footer are left raw (no internal ground truth). R
 > capture from the device in hand — do not assume one generation's documented layout transfers to
 > another, even within the same generation.
 
-### WHOOP 4 firmware-drift check — still v24 (hardware-verified)
+### The WHOOP 4.0 type-47 record (version 25) — different firmware layout
+
+WHOOP 4.0 firmware is **not** universally v24. A different firmware layout emits an **84-byte type-47
+record with version byte 25** (`frame[5] == 25`, issue #30), and as of v1.95 it is decoded by the
+`historical_data` post-hook in `PostHooks.swift` (the `v25` layout in `whoop_protocol.json`). Before
+v1.95 only live HR worked on these straps; the v25 decode is the WHOOP 4.0 **sleep + recovery unlock**,
+because the record carries the **motion vector** the sleep stager gates on. The fields were read off 45
+real 84-byte records at their absolute offsets and cross-checked physiologically, never assumed:
+
+| Offset | Field | Sensor / meaning |
+|---|---|---|
+| 11 | `unix` (u32 LE) | Real unix seconds — no clock offset needed. |
+| 23–72 | optical PPG region | Raw AC-coupled optical ADCs. |
+| 73 / 75 / 77 | `gravity_x/y/z` (3× i16 LE) | Accel-derived gravity, scaled `/16384` ≈ 1 g; \|g\| ≈ 1.0 on real records. |
+
+Note there is **no per-second HR field** in this record: WHOOP 4.0 HR is PPG-derived, not stored — so
+the v25 win is the recovered **timestamp + motion**, which is exactly what the sleep stager (and hence
+recovery) needs. The decoded gravity/motion vector feeds `extractHistoricalStreams` unchanged, the same
+path the v24 record uses.
+
+### WHOOP 4 firmware-drift check — this device showed no drift (hardware-verified)
 
 The v18 surprise prompted the obvious question: does a *different* device on *different* firmware still
 emit the documented record? Tested on a real WHOOP 4 (firmware **41.17.6.0**) with the tool's WHOOP 4
@@ -511,13 +535,16 @@ image of the 5.0 one with the envelope shift removed: `meta_type` at `frame[6]`,
 (`build_history_ack_whoop4` / `history_end_data_whoop4`). The cursor walked (`22303 → 22395 …`) exactly
 as on 5.0.
 
-**Result: no drift.** All **1704** type-47 frames pulled were **version 24** (`frame[5] == 24`),
-CRC-valid, and decoded cleanly through the *existing* documented v24 decoder — HR equalled
-`60000 / mean(R-R)` to ~1 bpm and \|gravity\| ≈ 1 g. So the documented v24 layout is confirmed on a
-second device and generation, and the v18 record is specific to the WHOOP 5's firmware, not a sign the
-v24 documentation was wrong. Real-frame parity test: `Whoop4HistoricalV24HardwareTests.swift`
-(`HistoricalV24Tests` covers the same layout synthetically). The offload streamed the same way as 4.0's
-realtime path, so its HR/HRV/gravity feed `extractHistoricalStreams` unchanged.
+**Result on this device: no drift.** All **1704** type-47 frames pulled were **version 24**
+(`frame[5] == 24`), CRC-valid, and decoded cleanly through the *existing* documented v24 decoder — HR
+equalled `60000 / mean(R-R)` to ~1 bpm and \|gravity\| ≈ 1 g. So the documented v24 layout is confirmed
+on a second device and generation. But this is **not** a guarantee that all WHOOP 4.0 firmware is v24:
+other WHOOP 4.0 firmware emits the 84-byte **version-25** layout documented just above (issue #30, the
+gravity@73/75/77 i16/16384 record, decoded in v1.95). Always key the decode on the version byte — within
+the WHOOP 4.0 generation you can meet v5/7/9/12, v24, **or** v25 depending on the strap's firmware.
+Real-frame parity test: `Whoop4HistoricalV24HardwareTests.swift` (`HistoricalV24Tests` covers the same
+layout synthetically). The offload streamed the same way as 4.0's realtime path, so its HR/HRV/gravity
+feed `extractHistoricalStreams` unchanged.
 
 ### WHOOP 5.0 COMMAND_RESPONSE (type 36)
 

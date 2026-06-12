@@ -18,6 +18,7 @@ struct StrandiOSApp: App {
     private let journalReminder = JournalReminderScheduler()
 
     init() {
+        WidgetSnapshot.assertGroupProvisioned()
         let model = AppModel()
         _model = StateObject(wrappedValue: model)
         _health = StateObject(wrappedValue: HealthKitBridge(

@@ -62,6 +62,37 @@ struct MarginalRadioDetector {
     }
 }
 
+/// Decides when a completed sync that handed over only the strap's console/diagnostic output (no sensor
+/// records) is sustained enough to warn that the strap's clock has lost sync and it isn't banking to flash
+/// (#77 / #91 / #120). A SINGLE empty cycle is common on a perfectly healthy strap — the strap can hand
+/// back a console-only window, especially under heavy live-HR polling — so warning on one cycle
+/// false-alarms users whose clock is fine (#126). We require CONSECUTIVE empty cycles; any cycle that banks
+/// real sensor records clears the streak. Pure value type → unit-testable without a CoreBluetooth seam.
+struct EmptySyncTracker {
+    /// Consecutive console-only completed syncs before the clock-lost banner shows. 3 (not 1): a genuinely
+    /// un-banking strap is console-only on EVERY cycle, so 3 is reached within minutes, while a transient
+    /// empty cycle amid healthy ones never accumulates.
+    let threshold: Int
+    private(set) var consecutiveEmptySyncs = 0
+
+    init(threshold: Int = 3) { self.threshold = threshold }
+
+    /// Record a COMPLETED (HISTORY_COMPLETE) offload. `bankedSensorRecords` = the strap handed over real
+    /// sensor records this cycle (decoded, or undecodable-but-archived — either way the clock is banking).
+    /// `consoleOnly` = it handed over only diagnostic frames and no sensor records. Returns true only once
+    /// emptiness is SUSTAINED (≥ threshold consecutive console-only cycles) — the caller shows the
+    /// "clock has lost sync" banner only then. Any banking cycle, or a caught-up cycle with nothing to
+    /// offload, clears the streak.
+    mutating func recordCompletedSync(bankedSensorRecords: Bool, consoleOnly: Bool) -> Bool {
+        guard consoleOnly, !bankedSensorRecords else {
+            consecutiveEmptySyncs = 0
+            return false
+        }
+        consecutiveEmptySyncs += 1
+        return consecutiveEmptySyncs >= threshold
+    }
+}
+
 /// CoreBluetooth engine for the WHOOP 4.0: scan-by-service → connect → discover →
 /// BOND (one confirmed write) → subscribe → reassemble char-05 frames → FrameRouter.
 /// Cannot run in the simulator; verified manually on-device (Task C6).
@@ -155,6 +186,9 @@ public final class BLEManager: NSObject, ObservableObject {
     /// #80 marginal-radio fallback: tracks consecutive arm-then-quick-timeout cycles. When it trips,
     /// `standardHRFallback` goes true and the next connect skips arming R10/R11 (relies on 0x2A37).
     private var marginalRadio = MarginalRadioDetector()
+    /// #126 false-alarm guard: tracks CONSECUTIVE console-only completed syncs so the "clock has lost
+    /// sync" banner only fires on sustained emptiness, not a single transient empty cycle on a healthy strap.
+    private var emptySyncTracker = EmptySyncTracker()
     /// When true, SKIP arming the R10/R11 raw realtime stream on connect — the radio couldn't sustain
     /// it (see MarginalRadioDetector). Live HR then comes only from the already-subscribed low-bandwidth
     /// 0x2A37 standard-HR profile. Per-session: set by the detector, cleared on a clean reconnect (a
@@ -303,8 +337,24 @@ public final class BLEManager: NSObject, ObservableObject {
                                 log: { [weak self] s in self?.log(s) },
                                 rejectedSink: { [weak self] frames, trim, family in
                                     self?.archiveRejectedFrames(frames, trim: trim, family: family) ?? true
+                                },
+                                onChunk: { [weak self] decoded, console in
+                                    if decoded { self?.state.decodedChunksThisSession += 1 }
+                                    if console { self?.state.consoleChunksThisSession += 1 }
                                 })
         // Strand: no server uploader/sync — all data stays on-device.
+
+        // Retro-decode: when the decoder gains a historical layout (e.g. WHOOP 4.0 v25), re-run every
+        // archived undecodable frame through it and insert whatever now decodes — the only path by
+        // which already-acked banked history backfills after an update. Gated so it runs ONCE per
+        // decoder version, not every launch; idempotent if it somehow re-runs (rows dedupe by ts).
+        // Note: the archive carries no deviceId, so replayed rows attribute to the current strap.
+        let decoderVersion = 2   // bump whenever a historical layout is added/changed (v25 = 2)
+        if UserDefaults.standard.integer(forKey: "rejectArchiveReplayedVersion") < decoderVersion {
+            let rows = await rejectedHistoryArchive.replay(into: store, deviceId: deviceId)
+            if rows > 0 { log("Backfill: retro-decoded \(rows) record(s) from the reject archive after a decoder update.") }
+            UserDefaults.standard.set(decoderVersion, forKey: "rejectArchiveReplayedVersion")
+        }
     }
 
     /// Designated initializer for testing and preview use: accepts a pre-built Collector.
@@ -592,6 +642,8 @@ public final class BLEManager: NSObject, ObservableObject {
         state.syncChunksThisSession = 0
         state.rejectedFramesThisSession = 0
         state.rejectedFramesUnarchived = 0
+        state.decodedChunksThisSession = 0
+        state.consoleChunksThisSession = 0
         historicalAckLogCounter = 0
         // Payload MUST be [0x00], NOT empty: verified on-device that this strap serves type-47 only with
         // [0x00] (empty → 0 frames on a clean stable link with ~2k records pending); the Mac ground-truth
@@ -689,6 +741,13 @@ public final class BLEManager: NSObject, ObservableObject {
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
         log("Backfill: session ended — reason=\(reason)")
+        // Success-side summary (#150 forensics): we logged failures (decoded-to-0) but never successes,
+        // so a strap log couldn't tell a banking strap from a broken one. Emit the per-session persistence
+        // tally whenever anything actually landed — the win-rate signal a log previously lacked.
+        if let bf = backfiller,
+           let summary = Backfiller.sessionSummaryLine(rows: bf.sessionRowsPersisted, motion: bf.sessionMotionRows, nights: bf.sessionNights) {
+            log(summary)
+        }
         // Honest sync outcome for a cloud-free user (mirrors Android exitBackfilling, ed6a31d):
         // HISTORY_COMPLETE stamps lastSyncedAt + clears any error; the idle-watchdog timeout surfaces
         // a non-silent error. A disconnect mid-sync bypasses this path (didDisconnectPeripheral resets
@@ -700,10 +759,27 @@ public final class BLEManager: NSObject, ObservableObject {
             // full archive could not preserve, so "saved" is never claimed falsely.
             let archived = state.rejectedFramesThisSession
             let unarchived = state.rejectedFramesUnarchived
+            // A cycle that handed over any real sensor records (decoded, or undecodable-but-archived)
+            // proves the strap's clock is banking; a console-only cycle (no sensor records, ≥3 diagnostic
+            // chunks) is the #77 empty-banking signal. Track CONSECUTIVE empties so a single transient
+            // empty cycle (common under heavy live-HR polling) doesn't false-alarm a healthy strap (#126).
+            let bankedSensorRecords = state.decodedChunksThisSession > 0 || archived > 0 || unarchived > 0
+            let consoleOnly = !bankedSensorRecords && state.consoleChunksThisSession >= 3
+            let sustainedEmpty = emptySyncTracker.recordCompletedSync(
+                bankedSensorRecords: bankedSensorRecords, consoleOnly: consoleOnly)
             if unarchived > 0 {
                 state.lastSyncError = "Synced, but \(archived + unarchived) record(s) couldn't be decoded (unrecognised strap firmware layout), and the on-device archive is full — the \(unarchived) newest weren't preserved. Please share a strap log so the layout can be mapped."
             } else if archived > 0 {
                 state.lastSyncError = "Synced, but \(archived) record(s) couldn't be decoded (unrecognised strap firmware layout). The raw bytes were saved on this Mac — please share a strap log so the layout can be mapped."
+            } else if consoleOnly {
+                // #77 family: the offload COMPLETED but the strap handed over only console/diagnostic
+                // output across many chunks — no sensor records at all — i.e. it isn't banking history
+                // to flash (its RTC has lost sync). Only escalate to the actionable banner once emptiness
+                // is SUSTAINED (#126): a single empty cycle on an otherwise-banking strap stays silent.
+                log("Backfill: completed but the strap banked no sensor history (console-only across \(state.consoleChunksThisSession) chunks); consecutive empty syncs = \(emptySyncTracker.consecutiveEmptySyncs).")
+                state.lastSyncError = sustainedEmpty
+                    ? "Synced, but your strap had no stored history to hand over — only its diagnostic output. This usually means its clock has lost sync, so it isn't saving data to flash. Fully charge it to 100%, then reconnect, and it should start banking again."
+                    : nil
             } else {
                 state.lastSyncError = nil
             }
@@ -1279,6 +1355,8 @@ extension BLEManager: CBCentralManagerDelegate {
         // otherwise a stale non-zero count survives until the next beginBackfill. (#77/#91)
         state.rejectedFramesThisSession = 0
         state.rejectedFramesUnarchived = 0
+        state.decodedChunksThisSession = 0
+        state.consoleChunksThisSession = 0
         backfillTimeout?.cancel()
         backfillTimeout = nil
         backfillFrameQueue.removeAll()

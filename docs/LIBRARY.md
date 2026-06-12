@@ -65,8 +65,10 @@ StrandDesign   (standalone — SwiftUI only, no internal deps)
 
 The reference app target (`Strand/`, macOS SwiftUI) is the integration layer: it
 owns the CoreBluetooth transport, wraps the protocol library's UUID *strings* in
-`CBUUID`, and wires the pure packages together. iOS and Android apps are
-planned; the pure packages are already iOS-ready.
+`CBUUID`, and wires the pure packages together. The macOS and iOS reference apps
+(the iOS target is build-from-source only) consume these packages directly, and
+an Android app ships alongside them; the pure packages run unchanged across macOS
+and iOS.
 
 ---
 

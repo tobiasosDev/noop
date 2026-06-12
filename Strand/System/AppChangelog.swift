@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.89"
+    static let currentVersion = "2.0"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,87 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "2.0",
+            title: "Clearer answers when your strap isn't banking history",
+            date: "June 2026",
+            items: [
+                "Improved (Mac, iOS and Android): your strap log now records what a sync SAVED, not only what failed — a \"persisted N rows (M with motion) across K night(s)\" line on every successful offload. NOOP previously logged only failures, so a shared log couldn't show whether history was actually banking; now it can. (#150)",
+                "Improved (Mac, iOS and Android): when the strap reports it has no stored history to hand over (its \"no flash cursor\" state), NOOP now names the real cause plainly — the strap's clock has lost sync and it isn't saving to flash, a charge/clock state on the strap, NOT a NOOP decode bug. The Troubleshooting and FAQ guides now lead with this, the most common reason recovery and sleep don't appear, with the fix: fully charge to 100% and reconnect. (#150)",
+            ]),
+        Release(
+            version: "1.99",
+            title: "Your imported steps now show on the Today screen (Android)",
+            date: "June 2026",
+            items: [
+                "New (Android): the Today screen's Steps tile now shows the steps from your Apple Health / Health Connect import when the strap didn't bank an on-device count — so a WHOOP 4.0, which NOOP can't yet read steps off over Bluetooth, shows your imported steps instead of \"No Data\" (Mac and iOS already did this). Worth saying plainly: the WHOOP 4.0 does count steps in the official WHOOP app — the only gap was that NOOP couldn't surface them yet. (#150)",
+            ]),
+        Release(
+            version: "1.98",
+            title: "The archived-sleep recovery now reaches Android too",
+            date: "June 2026",
+            items: [
+                "Recovered (Android): the reject-archive retro-decode that landed on Mac & iOS in v1.97 now runs on **Android** as well. If your WHOOP 4.0 on Android synced \"v25\" firmware records before v1.95 — when NOOP couldn't read that layout — that sleep and recovery were saved but left dark; on update NOOP now re-runs them through the current decoder and backfills those nights. (#151)",
+            ]),
+        Release(
+            version: "1.97",
+            title: "Sleep that was stuck in the archive comes back",
+            date: "June 2026",
+            items: [
+                "Recovered (Mac, iOS and Android): if your WHOOP 4.0 synced \"v25\" firmware records *before* v1.95 — when NOOP couldn't read that layout yet — those records were saved to NOOP's on-device archive but left dark, and the strap had already freed them. NOOP now re-runs that archive through the current decoder on update, so your sleep and recovery from those nights backfill. It happens once per decoder upgrade, automatically. (#151)",
+                "Fixed (Mac, iOS and Android): the AI Coach now formats its replies properly — **bold**, bullet/numbered lists and headings render, instead of showing as raw Markdown symbols. (#149)",
+            ]),
+        Release(
+            version: "1.96",
+            title: "iOS is now a direct download — no Mac or Xcode needed",
+            date: "June 2026",
+            items: [
+                "New: the iOS app is now a **direct download** you install with AltStore or SideStore — it signs on your own iPhone with your own free Apple ID, so there's no App Store, no developer account, and NOOP stays anonymous. You no longer need a Mac and Xcode to run it. (Two notes, stated plainly: a free Apple ID re-signs the app every 7 days — AltStore automates that — and some Apple-only integrations like Apple Health and Live Activity widgets can be limited under a free signing identity.)",
+                "Fixed (Mac, iOS and Android): the \"your strap's clock has lost sync\" warning no longer appears after a single quiet sync. It now waits for several empty syncs in a row before warning, so a healthy strap that simply had nothing new to hand over one cycle doesn't get a false alarm. (#126)",
+                "Fixed (Android): Health Connect import now respects partial permissions — switch off the data types you don't want NOOP to read, and it imports the rest instead of refusing the whole import. (#150)",
+            ]),
+        Release(
+            version: "1.95",
+            title: "Sleep and recovery for WHOOP 4.0 straps on the firmware we couldn't read",
+            date: "June 2026",
+            items: [
+                "New (Mac and Android): some WHOOP 4.0 straps run a firmware whose offloaded history NOOP couldn't decode for motion — so sleep and recovery never built from the strap, even though live heart rate worked. NOOP now reads that firmware's motion (the accelerometer gravity vector) and per-second timestamps, which is exactly what the sleep engine needs. Once your strap banks a night, sleep staging and recovery can finally build from it. Heart rate in this layout is derived from the optical sensor rather than stored second-by-second, so this unlock is specifically the motion data. (#30)",
+            ]),
+        Release(
+            version: "1.94",
+            title: "Manual workouts on WHOOP 5.0/MG get their calories and strain back",
+            date: "June 2026",
+            items: [
+                "Fixed (Mac and Android): a workout you start yourself now fills in its calories, average heart rate and strain even on a WHOOP 5.0/MG. The live heart-rate stream on 5/MG is sparse, so a manual session was often saved showing ~1 kcal and no strain — now, once your strap offloads the heart rate it banked during the session, NOOP re-scores that workout from the fuller data. Well-scored workouts are left untouched. (#137)",
+            ]),
+        Release(
+            version: "1.93",
+            title: "Tidy your journal — remove and hide questions",
+            date: "June 2026",
+            items: [
+                "New (Mac and Android): the Journal now has an Edit mode (tap Edit on the Journal card) to curate your questions. Delete custom questions you've added, and hide any built-in ones you don't use — hidden questions are listed under the card and can be restored anytime. (#140)",
+            ]),
+        Release(
+            version: "1.92",
+            title: "Better diagnostics for newer strap firmware — so we can decode it",
+            date: "June 2026",
+            items: [
+                "Improved (Mac and Android): when your strap's historical records use a firmware layout NOOP can't decode yet — newer WHOOP 5.0/MG units, and some WHOOP 4.0 straps, which is why sleep, recovery and steps can be missing (see #30, #136) — the strap log now includes the full record bytes (it previously cut them off after 64) plus a few more sample records. That's exactly what we need to map the new layout, so a single fresh strap log from an affected device now carries everything required for us to add support.",
+            ]),
+        Release(
+            version: "1.91",
+            title: "Run the AI Coach on your own model — including fully local",
+            date: "June 2026",
+            items: [
+                "New (Mac and Android): the AI Coach can now talk to any OpenAI-compatible server — including a model running locally on your own machine (Ollama, LM Studio, llama.cpp). Pick \"Custom (OpenAI-compatible)\", point it at your server URL (e.g. http://localhost:11434/v1) and choose a model; an API key is optional. With a local model, your coaching conversation and metrics never leave your device. (#131)",
+            ]),
+        Release(
+            version: "1.90",
+            title: "NOOP now tells you when your strap isn't saving history — and how to fix it",
+            date: "June 2026",
+            items: [
+                "Improved (Mac and Android): when a sync completes but your strap handed over only its diagnostic output and no stored history — which means its clock has lost sync and it isn't saving data to flash — NOOP now says so, with the fix (fully charge the strap to 100%, then reconnect), instead of silently reporting \"synced.\" It's the single most common reason recovery, sleep and strain stop appearing on a WHOOP 4.0, and it's now told apart from a normal caught-up sync. (#77, #91, #120)",
+            ]),
         Release(
             version: "1.89",
             title: "Live heart rate lands on today's chart even when the strap's clock is off (Android)",

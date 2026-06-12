@@ -322,7 +322,41 @@ object IntelligenceEngine {
         repo.deleteComputedWorkouts(computedId, "detected", windowStart, nowSeconds)
         if (workoutRows.isNotEmpty()) repo.upsertWorkouts(workoutRows)
 
+        // #137: a manually-started workout is scored from sparse live HR at save time — near-zero
+        // calories/strain on a 5/MG. Now that offloaded HR may cover the window, re-score the
+        // under-sampled ones from that denser data.
+        rescoreManualWorkouts(repo, profile, importedDeviceId, maxHROverride, nowSeconds)
+
         return out
+    }
+
+    /**
+     * #137: re-score under-sampled manual workouts. Conservative + idempotent: only `manual` rows that
+     * look under-scored (negligible calories), and only when the recompute from the now-denser HR
+     * window is a genuine improvement — so a well-scored 4.0 workout is never touched and a still-sparse
+     * window is a no-op. Manual workouts + live/offloaded HR both live under [deviceId] ("my-whoop").
+     */
+    private suspend fun rescoreManualWorkouts(
+        repo: WhoopRepository,
+        profile: UserProfile,
+        deviceId: String,
+        maxHROverride: Double?,
+        nowSeconds: Long,
+    ) {
+        val since = nowSeconds - 14L * 86_400L
+        val rows = runCatching { repo.workouts(deviceId, since, nowSeconds) }.getOrNull() ?: return
+        val hrMax = maxHROverride ?: (208.0 - 0.7 * profile.age)   // Tanaka, matching endWorkout
+        val updated = ArrayList<WorkoutRow>()
+        for (row in rows) {
+            if (row.source != "manual") continue
+            if (!ManualWorkoutRescore.looksUnderScored(row.energyKcal)) continue
+            val samples = runCatching { repo.hrSamples(deviceId, row.startTs, row.endTs, 20_000) }
+                .getOrNull() ?: continue
+            val s = ManualWorkoutRescore.scored(samples, profile, hrMax) ?: continue
+            if (!ManualWorkoutRescore.improves(s, row.energyKcal)) continue
+            updated.add(row.copy(energyKcal = s.kcal, avgHr = s.avgHr, maxHr = s.maxHr, strain = s.strain))
+        }
+        if (updated.isNotEmpty()) repo.upsertWorkouts(updated)
     }
 
     /**

@@ -26,9 +26,12 @@ public func rejectedHistoricalRecords(_ rawFrames: [[UInt8]], family: DeviceFami
         let p = parseFrame(f, family: family)
         // Envelope/CRC reject: parse failed outright or the CRC32 trailer mismatched.
         if !p.ok || p.crcOK == false { return true }
-        // Unmapped layout: the envelope parsed but no usable biometrics decoded — exactly the rows
-        // extractHistoricalStreams skips (it requires both `unix` and a non-startup `heart_rate`).
-        return p.parsed["unix"]?.intValue == nil || p.parsed["heart_rate"]?.intValue == nil
+        // Unmapped layout: the envelope parsed but no usable biometrics decoded. A record is genuinely
+        // undecodable only if it has no timestamp, or NEITHER heart rate NOR motion. v25 (issue #30)
+        // carries gravity but no per-second HR (PPG-derived), so a gravity-bearing record is real data
+        // the sleep stager uses — keep it. Only HR-less AND gravity-less type-47 records are rejected.
+        return p.parsed["unix"]?.intValue == nil
+            || (p.parsed["heart_rate"]?.intValue == nil && p.parsed["gravity_x"]?.doubleValue == nil)
     }
 }
 

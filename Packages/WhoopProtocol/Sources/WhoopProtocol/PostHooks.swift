@@ -299,6 +299,39 @@ func registerPostHooks() {
         let spec = schema.packet(forType: Int(frame[4]))
         let version = Int(frame[5])
         fb.parsed["hist_version"] = .int(version)
+
+        // WHOOP 4.0 **v25** historical layout (issue #30). Reverse-engineered from 45 real records on
+        // v1.92+ full dumps (faklei / FrankdeJong / tchoucker15): an 84-byte record with `unix` @11
+        // (u32 LE) and the DSP gravity vector at @73/75/77 as 3×i16 LE / 16384 — |gravity| ≈ 1 g on
+        // 45/45 records (resting 0.94–0.99 g). Bytes 23–72 are the optical PPG waveform; per-second HR
+        // is NOT stored in v25 (it's PPG-derived), so this yields **motion + timestamp** — exactly what
+        // the sleep stager gates on (it returns no stages without gravity). Additive + version-gated,
+        // so v18/v24/v26 straps are untouched.
+        if version == 25, frame.count >= 79 {
+            if let unix = u32(frame, 11) {
+                fb.add(11, 4, "unix", "time", value: .int(Int(unix)), note: "real unix seconds")
+                fb.parsed["unix"] = .int(Int(unix))
+            }
+            func grav(_ off: Int) -> Double? {
+                guard let u = u16(frame, off) else { return nil }
+                return Double(u >= 32768 ? u - 65536 : u) / 16384.0   // i16 LE, ±2 g full-scale
+            }
+            if let gx = grav(73), let gy = grav(75), let gz = grav(77) {
+                let mag = (gx * gx + gy * gy + gz * gz).squareRoot()
+                if (0.5...1.5).contains(mag) {   // a real DSP orientation vector is ~1 g; reject garbage
+                    fb.add(73, 2, "gravity_x", "accel", value: .double(gx), note: "g")
+                    fb.add(75, 2, "gravity_y", "accel", value: .double(gy), note: "g")
+                    fb.add(77, 2, "gravity_z", "accel", value: .double(gz), note: "g")
+                    fb.parsed["gravity_x"] = .double(gx)
+                    fb.parsed["gravity_y"] = .double(gy)
+                    fb.parsed["gravity_z"] = .double(gz)
+                }
+            }
+            fb.parsed["rr_intervals"] = .intArray([])
+            fb.region(23, 73, "PPG waveform (optical)", "ppg")
+            return
+        }
+
         let mapped = spec.flatMap { schema.resolveVersion($0.versions, version) }
         // Unmapped firmware version: instead of dropping the whole record (→ no HR/R-R/GRAVITY → sleep
         // can never compute from the strap, issue #30), fall back to the canonical v24 DSP layout —

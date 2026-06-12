@@ -42,10 +42,14 @@ traffic of any kind.
 The biometric pipeline and all five Swift packages
 (`WhoopProtocol`, `WhoopStore`, `StrandAnalytics`, `StrandImport`, `StrandDesign`)
 contain **no** use of `URLSession`, `URLRequest`, `NWConnection`, `dataTask`, or any
-other networking API. The **only** networking anywhere in the app is the AI Coach
-(`Strand/AI/AICoach.swift` on macOS, `com.noop.ai.AiCoach` on Android), described in
-§1.1a. The package manifests reference dependency *download* URLs that Swift Package
-Manager resolves at build time, never at runtime:
+other networking API. These Swift packages are **shared by the macOS and iOS apps**
+(iOS is build-from-source only — no App Store / TestFlight — and was folded into the
+main tree in v1.94), so the Swift-side privacy behaviour described here applies equally
+to both. Android is a separate codebase using Room for storage and Kotlin for the BLE /
+import / Coach paths. The **only** networking anywhere in the app is the AI Coach
+(`Strand/AI/AICoach.swift` on the Swift side — macOS and iOS — `com.noop.ai.AiCoach` on
+Android), described in §1.1a. The package manifests reference dependency *download* URLs
+that Swift Package Manager resolves at build time, never at runtime:
 
 ```
 Packages/WhoopStore/Package.swift   → https://github.com/groue/GRDB.swift.git
@@ -61,11 +65,14 @@ The AI Coach lets you ask questions about your data in plain language. It is the
 feature that uses the network, and only on your terms:
 
 - **Off until you enable it.** You enter your own API key for the provider you choose
-  (OpenAI or Anthropic). No key, no network calls, ever.
+  (Anthropic, OpenAI, or a local / self-hosted OpenAI-compatible LLM such as Ollama or
+  LM Studio). No key, no network calls, ever.
 - **What is sent.** When you ask a question, NOOP builds a compact **text** summary of
   your recent metrics (recovery, strain, sleep, HRV, resting HR over ~14 days, plus
   30-day averages and recent workouts) and sends it, with your question, directly to
-  that provider's API (`api.openai.com` / `api.anthropic.com`).
+  your chosen endpoint (e.g. `api.anthropic.com` / `api.openai.com` for the hosted
+  providers). If you point the Coach at a local / self-hosted LLM, that endpoint is on
+  your own machine and the request never leaves it.
 - **What is NOT sent.** No raw biometric streams, no Bluetooth data, no account or
   device identifiers — only the summary text and your question.
 - **Your key, your relationship.** The request goes from your device straight to the
@@ -102,9 +109,11 @@ Notably **absent**:
   sandbox will refuse any socket the app tries to open, **including the AI Coach's**. So
   on the sandboxed macOS build the AI Coach cannot reach the network as currently
   shipped — the whole macOS app, Coach included, is offline. (Android has no equivalent
-  sandbox restriction, so the AI Coach's call works there with your own key.) Turning the
-  macOS Coach on would mean adding this entitlement; until that's a deliberate choice, it
-  stays out and macOS stays fully offline.
+  sandbox restriction, so the AI Coach's call works there with your own key. The iOS app
+  shares the same Swift Coach code; whether its Coach can reach the network depends on
+  that build's own entitlements.) Turning the macOS Coach on would mean adding this
+  entitlement; until that's a deliberate choice, it stays out and macOS stays fully
+  offline.
 - `com.apple.security.network.server` — no inbound listener.
 - No `files.downloads`, `files.documents`, or any broad filesystem entitlement —
   the app cannot wander the disk; it sees only what the user hands it through the
@@ -124,8 +133,8 @@ property is enforced by the OS, not merely by convention.
 
 ### 2.1 Where the data lives
 
-All durable data is stored in a single GRDB/SQLite database. The macOS reference app
-opens it at (`Strand/Collect/StorePaths.swift`):
+All durable data is stored in a single GRDB/SQLite database. The Swift apps (macOS and
+iOS, which share the `WhoopStore` package) open it at (`Strand/Collect/StorePaths.swift`):
 
 ```
 <Application Support>/OpenWhoop/whoop.sqlite
@@ -133,7 +142,9 @@ opens it at (`Strand/Collect/StorePaths.swift`):
 
 Because the app is sandboxed, `<Application Support>` resolves **inside the app's
 sandbox container**, not the user's global `~/Library/Application Support`. Other
-apps cannot read it through normal filesystem access.
+apps cannot read it through normal filesystem access. (On Android the equivalent store
+is a Room/SQLite database in the app's private storage; the rest of this section
+describes the GRDB/SQLite store shared by the macOS and iOS apps.)
 
 The schema is defined by a versioned `DatabaseMigrator` in
 `Packages/WhoopStore/Sources/WhoopStore/Database.swift` (currently schema version 9).
@@ -158,9 +169,11 @@ The SQLite file is **not encrypted at rest by NOOP itself.** Confidentiality of 
 data on disk relies on the platform:
 
 - **FileVault** (full-disk encryption, on by default on modern Macs) protects the
-  database whenever the disk is at rest / the machine is powered off.
-- The **sandbox container** keeps other user-space apps from reading the file
-  directly.
+  database whenever the disk is at rest / the machine is powered off. On iOS and
+  Android the equivalent is the platform's on-by-default device encryption / data
+  protection, which guards the file while the device is locked.
+- The **sandbox container** (app container on macOS/iOS, private app storage on
+  Android) keeps other user-space apps from reading the file directly.
 
 What this does **not** protect against: an attacker with your unlocked, logged-in
 session, or a backup/Time Machine copy of the container made while FileVault is
@@ -197,7 +210,8 @@ log doubles as the primary tool for **debugging and protocol development** (see
 `ANDROID.md` → "Debugging the strap connection").
 
 **What it is.** The BLE client (`android/.../ble/WhoopBleClient.kt`,
-`Strand/BLE/BLEManager.swift` on macOS) keeps an **in-memory ring buffer** — the last
+`Strand/BLE/BLEManager.swift` on the Swift side — macOS and iOS) keeps an **in-memory
+ring buffer** — the last
 2000 log lines on Android — of the connection's control flow: scan results (strap
 advertised name + RSSI), the bond/handshake state machine, command names with their
 outbound payload **hex**, and offload progress (trim cursors, chunk acks). It is held
@@ -400,7 +414,7 @@ bundle of CSV files, but the same defensive posture applies.
 
 | Surface | Risk | Mitigation | Where |
 |---------|------|------------|-------|
-| Process | Data exfiltration / network egress | Only the opt-in AI Coach networks (your key, to your chosen provider, a text summary — §1.1a), on both macOS and Android — nothing else makes a network call, and nothing is sent until you ask | `Strand/AI/AICoach.swift`, `android/.../ai/AiCoach.kt` |
+| Process | Data exfiltration / network egress | Only the opt-in AI Coach networks (your key, to your chosen provider, a text summary — §1.1a) — nothing else makes a network call, and nothing is sent until you ask. The Coach's call works on Android (and on iOS if that build's entitlements allow it), but is **blocked by the macOS App Sandbox as shipped** (no `network.client` entitlement — §1.2), so macOS stays fully offline | `Strand/AI/AICoach.swift`, `android/.../ai/AiCoach.kt` |
 | Filesystem | Broad disk access | Only `files.user-selected.read-write`; data stays in the sandbox container | `Strand.entitlements`, `Strand/Collect/StorePaths.swift` |
 | BLE frames | Malformed / adversarial packets | CRC8 + CRC32 (+ CRC16 for v5) gating; reject on failure | `WhoopProtocol/Framing.swift`, `Strand/BLE/FrameRouter.swift` |
 | BLE frames | Out-of-bounds reads from short/lying length | `nil`-returning bounds-checked readers; slice clamping; min-length guards | `WhoopProtocol/Interpreter.swift` |
