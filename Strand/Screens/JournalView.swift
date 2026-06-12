@@ -37,6 +37,14 @@ struct JournalView: View {
     @State private var dirty = false
     @State private var loaded = false
     @State private var appeared = false
+    /// Hide/restore curation for imported questions (upstream #140, absorbed here so the Journal
+    /// screen is the single journal UI). UserDefaults keys are upstream's verbatim, so a list
+    /// curated on 1.93+ carries over.
+    @StateObject private var catalog = JournalCatalogStore()
+    /// Edit mode (imports only): rows swap their Yes/No/— controls for a Hide action and the
+    /// hidden questions appear below with a Restore action. Settings → Journal stays the curation
+    /// surface for the fresh-install catalog mode.
+    @State private var editing = false
 
     var body: some View {
         ScreenScaffold(title: "Journal", subtitle: "Log what you did. See what it does.") {
@@ -69,7 +77,8 @@ struct JournalView: View {
             HStack(alignment: .firstTextBaseline) {
                 SectionHeader("Log", overline: "What did you do")
                 Spacer()
-                dayStepper
+                if hasImports { editPill }
+                if !editing { dayStepper }
             }
 
             if hasImports {
@@ -78,6 +87,7 @@ struct JournalView: View {
                 ForEach(groupedImports, id: \.0) { group in
                     importedCategoryCard(group.0, group.1)
                 }
+                if editing, !catalog.hiddenQuestions.isEmpty { hiddenCard }
             } else if journal.trackedBehaviors.isEmpty {
                 NoopCard {
                     Text("No behaviours tracked yet. Choose what to log in Settings → Journal.")
@@ -120,7 +130,10 @@ struct JournalView: View {
     private var dedupedImportedQuestions: [String] {
         var repForID: [String: String] = [:]   // behaviour id → chosen representative question
         var standalone: [String] = []           // unresolved questions (kept verbatim, as-is)
-        for q in importedQuestions {
+        // Hidden questions drop out before dedup — matched by behaviour id, so hiding any language
+        // variant hides them all. They also leave `loggableQuestions`, which keeps the hidden rows
+        // out of progress AND out of save()'s reconcile sets (hiding never deletes stored history).
+        for q in importedQuestions where !catalog.isHidden(q) {
             guard let id = JournalCatalog.byQuestion(q)?.id else { standalone.append(q); continue }
             if let cur = repForID[id] {
                 if (questionCounts[q] ?? 0) > (questionCounts[cur] ?? 0) { repForID[id] = q }
@@ -200,6 +213,82 @@ struct JournalView: View {
         entryRow(question: b.question, label: b.localizedShortLabel, icon: b.icon, goodWhenYes: b.goodWhenYes)
     }
 
+    // MARK: - Curation (hide / restore imported questions)
+
+    /// Toggles edit mode. Shown only in imports mode — the fresh-install catalog is curated via
+    /// Settings → Journal, so a second toggle UI there would be the duplication this replaces.
+    private var editPill: some View {
+        Button { withAnimation(StrandMotion.fade) { editing.toggle() } } label: {
+            Text(editing ? "Done" : "Edit")
+                .font(StrandFont.captionNumber)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(editing ? StrandPalette.accent.opacity(0.16) : StrandPalette.surfaceInset)
+                .foregroundStyle(editing ? StrandPalette.accent : StrandPalette.textTertiary)
+                .overlay(Capsule().stroke(editing ? StrandPalette.accent.opacity(0.5) : .clear, lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    /// Edit-mode row control: hide this question (restorable below). Red to read as removal.
+    private func hideButton(_ q: String) -> some View {
+        Button { withAnimation(StrandMotion.fade) { catalog.remove(q) } } label: {
+            Image(systemName: "minus.circle.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(StrandPalette.statusCritical)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .help("Hide this question")
+        .accessibilityLabel(Text("Hide \(importedLabel(q))"))
+    }
+
+    /// Hidden questions, shown only in edit mode, each restorable. Labels resolve through the
+    /// catalog like every other row, so a hidden German variant reads "Alcohol", not raw text.
+    private var hiddenCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(localized: "Hidden").uppercased())
+                .font(StrandFont.overline)
+                .tracking(StrandFont.overlineTracking)
+                .foregroundStyle(StrandPalette.textTertiary)
+            NoopCard {
+                VStack(spacing: 0) {
+                    ForEach(Array(catalog.hiddenQuestions.enumerated()), id: \.element) { idx, q in
+                        HStack(spacing: NoopMetrics.gap) {
+                            Image(systemName: JournalCatalog.byQuestion(q)?.icon ?? "questionmark.circle")
+                                .font(.system(size: 15))
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .frame(width: 24)
+                            Text(importedLabel(q))
+                                .font(StrandFont.body)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                            Spacer(minLength: NoopMetrics.gap)
+                            Button { withAnimation(StrandMotion.fade) { catalog.restore(q) } } label: {
+                                Text("Restore")
+                                    .font(StrandFont.captionNumber)
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(StrandPalette.surfaceInset)
+                                    .foregroundStyle(StrandPalette.accent)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .padding(.vertical, 12)
+                        if idx < catalog.hiddenQuestions.count - 1 {
+                            Divider().overlay(StrandPalette.hairline)
+                        }
+                    }
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
     /// A single loggable row, keyed by its verbatim question. Used for both catalog behaviours and
     /// absorbed imported questions (which carry no catalog metadata).
     private func entryRow(question: String, label: String, icon: String, goodWhenYes: Bool?) -> some View {
@@ -215,7 +304,11 @@ struct JournalView: View {
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
                 Spacer(minLength: NoopMetrics.gap)
-                triState(question, tint: tint)
+                if editing && hasImports {
+                    hideButton(question)
+                } else {
+                    triState(question, tint: tint)
+                }
             }
             if expandedNote == question || !(notes[question] ?? "").isEmpty {
                 TextField("Add a note (optional)", text: noteBinding(question))
@@ -272,7 +365,9 @@ struct JournalView: View {
     /// indicator. Hidden until there's something loggable / loaded.
     @ViewBuilder
     private var stickySaveBar: some View {
-        if loaded && !loggableQuestions.isEmpty {
+        // Hidden while curating: Save acts on answers, and the reconcile sets shouldn't shift
+        // mid-edit under the user's finger.
+        if loaded && !editing && !loggableQuestions.isEmpty {
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [StrandPalette.surfaceBase.opacity(0), StrandPalette.surfaceBase],

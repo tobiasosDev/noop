@@ -28,6 +28,9 @@ import WhoopStore
 
 struct InsightsView: View {
     @EnvironmentObject var repo: Repository
+    /// Routes the log CTA to the Journal sheet — the single journal UI (the inline logging card
+    /// this screen once hosted was a second, duplicate journal and is gone).
+    @EnvironmentObject var model: AppModel
 
     // MARK: Selected outcome (segmented)
 
@@ -102,30 +105,18 @@ struct InsightsView: View {
 
     private let outcomeKeys = ["recovery", "hrv", "sleep_performance", "rhr"]
 
-    // MARK: Native-logging state for the journal card
-
-    /// Distinct imported question strings, so the card adopts the export's exact wording.
-    @State private var importedQuestions: [String] = []
-    /// The selected day's native answers (question → answeredYes) — drives the chip state.
-    @State private var dayAnswers: [String: Bool] = [:]
-    /// 0 = today, 1 = yesterday (late logging).
-    @State private var journalDayOffset = 0
-
     var body: some View {
         ScreenScaffold(title: "Insights", subtitle: "Interrogate what affects what.") {
             if !loaded {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {
                 VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    // Native logging — always reachable: the account-free way into Insights.
-                    JournalLogCard(importedQuestions: importedQuestions,
-                                   answers: dayAnswers,
-                                   dayOffset: $journalDayOffset,
-                                   onChanged: { Task { await load() } })
+                    // Logging lives in the Journal screen (the one journal UI); this card routes there.
+                    journalCTA
                     if behaviours.isEmpty {
                         // No journal yet — explain, without dead-ending on a paid export.
                         NoopCard {
-                            Text("Log behaviours above — after a few days of answers, NOOP ranks how each one moves your recovery, HRV and sleep. Importing a WHOOP export (which includes its journal) backfills history instantly.")
+                            Text("Insights read your journal and outcomes. Log behaviours in Journal — or import your WHOOP export, which includes your journal, in Data Sources — to unlock them.")
                                 .font(StrandFont.subhead)
                                 .foregroundStyle(StrandPalette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -145,6 +136,30 @@ struct InsightsView: View {
         // (behaviours / outcomeByKey change only at load, which calls
         //  recomputeRanked() directly, so keying on `outcome` is sufficient.)
         .onChange(of: outcome) { _ in expandedEffect = nil; recomputeRanked() }
+    }
+
+    /// Route to the Journal screen — mirror of JournalView's `insightsLink`, pointing back here.
+    /// Opens the same sheet the Today morning card uses, defaulted to yesterday (the completed cycle).
+    private var journalCTA: some View {
+        Button { model.journalRoute = JournalRoute(day: JournalView.yesterdayKey()) } label: {
+            NoopCard {
+                HStack(spacing: NoopMetrics.gap) {
+                    Image(systemName: "book.pages.fill")
+                        .foregroundStyle(StrandPalette.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Log your journal")
+                            .font(StrandFont.body)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("Yes/no answers feed these rankings — log in the Journal.")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.right").foregroundStyle(StrandPalette.accent)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Load
@@ -170,15 +185,6 @@ struct InsightsView: View {
             byBehaviour[key, default: []].insert(e.day)
         }
 
-        // The logging card's inputs: the export's exact question strings (so logged days join
-        // imported history) and the selected day's native chip state — a targeted read, since the
-        // merged list carries no deviceId to filter on.
-        let imported = await repo.importedJournalEntries()
-        let importedQs = NSOrderedSet(array: imported.map(\.question)).array as? [String] ?? []
-        let selectedDayKey = Repository.localDayKey(
-            Calendar.current.date(byAdding: .day, value: -journalDayOffset, to: Date()) ?? Date())
-        let nativeAnswers = await repo.nativeJournalAnswers(day: selectedDayKey)
-
         // Daily metrics for the strap-only outcome fallback (merged, imported-wins). The view is
         // MainActor-isolated, so reading the published cache here is on the right actor.
         let mergedDays = repo.days
@@ -202,8 +208,6 @@ struct InsightsView: View {
 
         await MainActor.run {
             self.behaviours = byBehaviour
-            self.importedQuestions = importedQs
-            self.dayAnswers = nativeAnswers
             self.outcomeByKey = byKey
             self.seriesByKey = seriesMap
             self.loaded = true

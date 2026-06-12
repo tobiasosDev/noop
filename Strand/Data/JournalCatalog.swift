@@ -171,7 +171,7 @@ enum JournalCatalog {
 ///
 /// Complements `JournalCatalog` above: the enum is the curated, WHOOP-verbatim behaviour
 /// dictionary (resolution, grouping, localized display); this store carries the *user-editable*
-/// question list that drives the native journal log card (`JournalLogCard`).
+/// hide/restore list that curates the Journal screen's imported-question rows.
 @MainActor
 final class JournalCatalogStore: ObservableObject {
 
@@ -249,4 +249,15 @@ final class JournalCatalogStore: ObservableObject {
         let key = Self.norm(q)
         hiddenQuestions.removeAll { Self.norm($0) == key }
     }
+
+    /// True when `q` is hidden — matched verbatim (normalized) OR by resolved behaviour id, so
+    /// hiding one language variant ("Alkohol konsumiert?") hides every variant of the behaviour
+    /// ("Did you drink any alcohol?"). Unresolved questions fall back to verbatim matching only.
+    nonisolated static func isHidden(_ q: String, hidden: [String]) -> Bool {
+        if hidden.contains(where: { norm($0) == norm(q) }) { return true }
+        guard let id = JournalCatalog.byQuestion(q)?.id else { return false }
+        return hidden.contains { JournalCatalog.byQuestion($0)?.id == id }
+    }
+
+    func isHidden(_ q: String) -> Bool { Self.isHidden(q, hidden: hiddenQuestions) }
 }

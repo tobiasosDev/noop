@@ -59,4 +59,27 @@ final class JournalLogicTests: XCTestCase {
         XCTAssertFalse(cat.contains { $0.caseInsensitiveCompare("Did you nap?") == .orderedSame })
         XCTAssertEqual(cat.count, JournalCatalogStore.starterQuestions.count - 1)
     }
+
+    // MARK: - Behaviour-id-aware hiding (Journal screen curation)
+
+    func testIsHiddenMatchesAcrossLanguageVariants() {
+        // Hiding either language variant hides the whole behaviour: both strings resolve to the
+        // "alcohol" behaviour id via the alias-aware catalog, so the German WHOOP export string
+        // and the English canonical question hide together — never one visible orphan row.
+        XCTAssertTrue(JournalCatalogStore.isHidden("Did you drink any alcohol?",
+                                                   hidden: ["Alkohol konsumiert?"]))
+        XCTAssertTrue(JournalCatalogStore.isHidden("Alkohol konsumiert?",
+                                                   hidden: ["Did you drink any alcohol?"]))
+        // A different behaviour stays visible.
+        XCTAssertFalse(JournalCatalogStore.isHidden("Did you have any caffeine?",
+                                                    hidden: ["Alkohol konsumiert?"]))
+    }
+
+    func testIsHiddenVerbatimFallbackForUnresolvedQuestions() {
+        // Questions outside the catalog hide by normalized (trimmed, case-insensitive) match only.
+        XCTAssertTrue(JournalCatalogStore.isHidden("My custom question?",
+                                                   hidden: ["  MY CUSTOM QUESTION?  "]))
+        XCTAssertFalse(JournalCatalogStore.isHidden("My custom question?",
+                                                    hidden: ["Another custom question?"]))
+    }
 }

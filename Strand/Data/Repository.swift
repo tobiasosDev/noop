@@ -212,31 +212,10 @@ final class Repository: ObservableObject {
         return Self.mergeJournal(imported: imported, native: native)
     }
 
-    /// Imported journal rows only (used by the logging card to adopt the export's exact question
-    /// strings into the catalog, so logged and imported days group under one behaviour).
-    func importedJournalEntries(days: Int = 4000) async -> [JournalEntry] {
-        guard let store = await ensureStore() else { return [] }
-        let now = Date()
-        return (try? await store.journalEntries(
-            deviceId: deviceId,
-            from: Self.dayString(now.addingTimeInterval(-Double(days) * 86_400)),
-            to: Self.dayString(now.addingTimeInterval(86_400)))) ?? []
-    }
-
-    /// Persist natively-logged journal answers (batch, from the Journal screen) under the dedicated
-    /// native source `journalDeviceId` — the SAME source the single-answer chip card writes to — so
-    /// in-app answers from either UI unify per (day, question), win the imported∪native merge, and
-    /// survive a CSV re-import. Refreshes the dashboard caches so Insights/history reload.
-    func saveJournal(_ rows: [JournalEntry]) async {
-        guard let store = await ensureStore(), !rows.isEmpty else { return }
-        _ = try? await store.upsertJournal(rows, deviceId: Self.journalDeviceId)
-        await refresh()
-    }
-
     /// Reconcile a single day's journal (Journal screen save): upsert the answered `write` rows
     /// under the native source (so they win the merge and survive re-imports) and delete the
-    /// `delete` question keys from BOTH sources — native (an answer the user cleared, possibly
-    /// logged via the chip card; the merge gives native rows priority, so leaving one behind would
+    /// `delete` question keys from BOTH sources — native (an answer the user cleared; the merge
+    /// gives native rows priority, so leaving one behind would
     /// silently resurrect it) and imported (duplicate question variants the Journal collapsed onto
     /// a single representative). Refreshes caches once.
     func reconcileJournalDay(_ day: String, write: [JournalEntry], delete: [String]) async {
@@ -258,15 +237,6 @@ final class Repository: ObservableObject {
         return out
     }
 
-    /// One day's native answers (question → answeredYes) for the logging card's chip state. A
-    /// targeted read — the merged list carries no deviceId, so it can't distinguish native rows.
-    func nativeJournalAnswers(day: String) async -> [String: Bool] {
-        guard let store = await ensureStore() else { return [:] }
-        let rows = (try? await store.journalEntries(deviceId: Self.journalDeviceId,
-                                                    from: day, to: day)) ?? []
-        return Dictionary(rows.map { ($0.question, $0.answeredYes) },
-                          uniquingKeysWith: { _, last in last })
-    }
 
     /// Union; the NATIVE row wins per (day, question) — the in-app answer is the user's most recent
     /// explicit action and stays editable, unlike the immutable imported history.
@@ -277,19 +247,6 @@ final class Repository: ObservableObject {
         return byKey.values.sorted { ($0.day, $0.question) < ($1.day, $1.question) }
     }
 
-    /// Write one native answer (day per the importer's wake-day convention).
-    func saveJournalAnswer(day: String, question: String, answeredYes: Bool, notes: String? = nil) async {
-        guard let store = await ensureStore() else { return }
-        _ = try? await store.upsertJournal(
-            [JournalEntry(day: day, question: question, answeredYes: answeredYes, notes: notes)],
-            deviceId: Self.journalDeviceId)
-    }
-
-    /// Clear one native answer (never touches imported rows — scoped to the dedicated source id).
-    func clearJournalAnswer(day: String, question: String) async {
-        guard let store = await ensureStore() else { return }
-        _ = try? await store.deleteJournal(deviceId: Self.journalDeviceId, day: day, question: question)
-    }
 
     /// All workouts (Whoop + Apple Health + on-device detected bouts), newest first.
     ///

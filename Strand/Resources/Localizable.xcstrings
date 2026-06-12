@@ -221,6 +221,66 @@
         }
       }
     },
+    "Done": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fertig"
+          }
+        }
+      }
+    },
+    "Edit": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bearbeiten"
+          }
+        }
+      }
+    },
+    "Hidden": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgeblendet"
+          }
+        }
+      }
+    },
+    "Hide %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ausblenden"
+          }
+        }
+      }
+    },
+    "Hide this question": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Frage ausblenden"
+          }
+        }
+      }
+    },
+    "Log your journal": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trag dein Journal ein"
+          }
+        }
+      }
+    },
     "Per night, trailing 30 days": {
       "extractionState": "manual",
       "localizations": {
@@ -7522,6 +7582,16 @@
         }
       }
     },
+    "Restore": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiederherstellen"
+          }
+        }
+      }
+    },
     "RHR": {
       "extractionState": "manual",
       "localizations": {
@@ -10927,6 +10997,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Wrist delivery isn't live yet — it needs a small on-device watcher (coming in an update) to read macOS notifications. Everything stays on this Mac. Your choices are saved now and will apply automatically once delivery ships."
+          }
+        }
+      }
+    },
+    "Yes/no answers feed these rankings — log in the Journal.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ja/Nein-Antworten speisen diese Auswertung — geloggt wird im Journal."
           }
         }
       }
