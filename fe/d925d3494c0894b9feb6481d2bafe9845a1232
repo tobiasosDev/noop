@@ -1,0 +1,38 @@
+Strand/Screens/JournalView.swift
+  s_f8c36e20a4835b::t_8af42b683e9076 307-311
+  s_f8c36e20a4835b::t_3255c3e31f6f45 368-370
+  s_f8c36e20a4835b::t_7ab38d1b15c562 40-47
+  s_f8c36e20a4835b::t_05a4fb82baccc3 80-81,90
+  s_f8c36e20a4835b::t_08e2540cf36394 216-291
+  s_f8c36e20a4835b::t_0236115760358f 133-136
+Strand/Data/Repository.swift
+  s_f8c36e20a4835b::t_6f414c26d4c001 217-218
+StrandTests/JournalLogicTests.swift
+  s_f8c36e20a4835b::t_b921c069754968 62-84
+Strand/Screens/InsightsView.swift
+  s_f8c36e20a4835b::t_5f9e392924b693 119
+  s_f8c36e20a4835b::t_ebc8c792130d76 114-115
+  s_f8c36e20a4835b::t_e453d0b47800f2 31-33
+  s_f8c36e20a4835b::t_f8ce27617ef2cb 141-164
+Strand/Resources/Localizable.xcstrings
+  s_f8c36e20a4835b::t_680c5e36d84e9b 224-283,7585-7594,11004-11009
+Strand/Data/JournalCatalog.swift
+  s_f8c36e20a4835b::t_101eedbc0e222c 174
+  s_f8c36e20a4835b::t_7d9228fc2b34b3 252-262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "fed925d3494c0894b9feb6481d2bafe9845a1232",
+  "prompts": {},
+  "sessions": {
+    "s_f8c36e20a4835b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8f3fa8f2-aaec-4532-bb36-a265e06d10d3",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
