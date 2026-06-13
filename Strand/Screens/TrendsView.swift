@@ -237,7 +237,7 @@ struct TrendsView: View {
             footerItems.append(("Days", "\(pts.count)"))
         }
         return ChartCard(
-            title: "Recovery",
+            title: "Charge",
             subtitle: recovery.caption,
             trailing: avg.map { "\(Int($0.rounded()))" },
             height: NoopMetrics.chartHeight,
@@ -286,11 +286,11 @@ struct TrendsView: View {
                     fmt: { "\(Int($0.rounded()))" }
                 )
                 metricChart(
-                    title: "Day strain", unit: "/ 21",
+                    title: "Effort", unit: "/ 100",
                     points: strainPts,
                     subtitle: strain.caption,
                     gradient: StrandPalette.strainGradient,
-                    range: valueRange(strainPts, fallback: 0...21),
+                    range: valueRange(strainPts, fallback: 0...100),
                     fmt: { String(format: "%.1f", $0) }
                 )
             }
@@ -344,7 +344,7 @@ struct TrendsView: View {
             guard let dt = date(d.day) else { return nil }
             return RecoveryDay(date: dt, score: d.recovery)
         }
-        let title = (range == .all && repo.days.count > 365) ? "Recovery — all history" : "Recovery — past year"
+        let title = (range == .all && repo.days.count > 365) ? "Charge — all history" : "Charge — past year"
         return NoopCard {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeader("\(title)", overline: "Calendar", trailing: "\(recoveryDays.filter { $0.score != nil }.count) days")

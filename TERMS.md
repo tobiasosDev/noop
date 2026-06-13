@@ -1,6 +1,6 @@
 # NOOP — Terms of Use & Acknowledgment
 
-**Version 1.0**
+**Version 1.1**
 
 > **This is not legal advice.** This document was drafted with the help of an AI tool, not a lawyer.
 > It is offered honestly and in good faith, but the NOOP maintainers are not lawyers and nothing here
@@ -67,6 +67,22 @@ strain, sleep stages, SpO₂, respiratory rate, skin temperature, and every othe
 is for general wellness, personal interest, and educational use only. It is not intended to diagnose,
 treat, cure, or prevent any disease or condition. **Always consult a qualified healthcare
 professional**, and seek emergency care for any medical concern — do not rely on NOOP.
+
+This covers **every** feature. A few in particular:
+
+- **Mind / mood check-in.** The daily mood check-in, and any correlation NOOP draws between your
+  mood and your other metrics, is **personal self-tracking and informational only.** It is **not** a
+  mental-health assessment, diagnosis, screening, therapy, or treatment, and it is **not** a
+  substitute for professional care. **If you are struggling or in crisis, contact a qualified
+  professional or your local emergency service immediately — do not rely on NOOP.**
+- **Nutrition import.** Importing nutrition data (e.g. a Cronometer or MacroFactor CSV) only displays
+  figures **you** recorded elsewhere. It is **informational only** and is **not dietary,
+  nutritional, or medical advice.**
+- **Apple Health / "Export for Shortcuts" (iOS).** When you export metrics to Apple Health — including
+  the HealthKit-free "Export for Shortcuts" path — NOOP writes **only** the data you choose, **on your
+  own device**, and only when you trigger it. **You are responsible for the data you push into Apple
+  Health** and for whatever you, or any Shortcut you run, do with it afterwards. The values are the
+  same uncertified approximations described above.
 
 ## 6. Warranty and liability — honestly stated
 

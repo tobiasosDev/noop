@@ -177,7 +177,7 @@ struct LiveView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
                 .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
-                .help("Track a workout manually — records heart rate and strain until you end it.")
+                .help("Track a workout manually — records heart rate and effort until you end it.")
             }
             if let last = model.lastWorkout {
                 workoutSavedRow(last)
@@ -203,7 +203,7 @@ struct LiveView: View {
                     workoutStat("HR", model.bpm.map { "\($0)" } ?? "—")
                     workoutStat("Avg", w.avgHr > 0 ? "\(w.avgHr)" : "—")
                     workoutStat("Peak", w.peakHr > 0 ? "\(w.peakHr)" : "—")
-                    workoutStat("Strain", String(format: "%.1f", w.liveStrain))
+                    workoutStat("Effort", String(format: "%.1f", w.liveStrain))
                 }
                 Button(role: .destructive) { model.endWorkout() } label: {
                     Label("End workout", systemImage: "stop.circle.fill")
@@ -227,7 +227,7 @@ struct LiveView: View {
     private func workoutSavedRow(_ row: WorkoutRow) -> some View {
         let mins = Int((row.durationS ?? 0) / 60)
         let parts = ["\(mins) min", row.avgHr.map { "\($0) avg bpm" },
-                     row.strain.map { String(format: "strain %.1f", $0) }].compactMap { $0 }
+                     row.strain.map { String(format: "effort %.1f", $0) }].compactMap { $0 }
         return HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(StrandPalette.accent)
             Text("Workout saved · \(parts.joined(separator: " · "))")
@@ -371,7 +371,9 @@ struct LiveView: View {
         // where the labels would hyphenate/wrap ("Scan & Con-nect", "Dis-con-nect"), they stack
         // full-width vertically instead. Each button already uses .frame(maxWidth:.infinity), so
         // both branches expand cleanly. Buttons are factored into computed properties so the two
-        // branches stay in sync.
+        // branches stay in sync. The labels also shrink-to-fit (lineLimit(1)+minimumScaleFactor)
+        // so even when the single-row HStack wins on a tight-but-fitting width, no label wraps
+        // mid-word. (#175)
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
                 scanButton
@@ -390,6 +392,7 @@ struct LiveView: View {
         Button { model.scan(model: selectedModel) } label: {
             Label(live.connected ? "Re-scan" : "Scan & Connect",
                   systemImage: "antenna.radiowaves.left.and.right")
+                .lineLimit(1).minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity).padding(.vertical, 8)
         }
         .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
@@ -398,6 +401,7 @@ struct LiveView: View {
     private var buzzButton: some View {
         Button { model.buzz() } label: {
             Label("Buzz strap", systemImage: "waveform.path")
+                .lineLimit(1).minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity).padding(.vertical, 8)
         }
         .buttonStyle(.bordered).tint(StrandPalette.accent)
@@ -408,6 +412,7 @@ struct LiveView: View {
     private var disconnectButton: some View {
         Button(role: .destructive) { model.disconnect() } label: {
             Label("Disconnect", systemImage: "xmark.circle")
+                .lineLimit(1).minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity).padding(.vertical, 8)
         }
         .buttonStyle(.bordered)

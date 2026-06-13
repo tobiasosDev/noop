@@ -33,8 +33,25 @@ object WorkoutEditing {
         }
     }
 
-    /** Sport-cell text. The detector stores the machine token "detected"; show it as "Activity". */
-    fun displaySport(sport: String): String = if (sport == "detected") "Activity" else sport
+    /**
+     * Sport-cell text. "detected" reads as a neutral "Activity". WHOOP sport names arrive as
+     * concatenated camelCase (e.g. "TraditionalStrengthTraining"), which reads as one long
+     * unbreakable word and truncates badly — split it into words on the lower→Upper boundary so it
+     * renders "Traditional Strength Training". Already-spaced labels (manual/edited) pass through. (#175)
+     */
+    fun displaySport(sport: String): String {
+        if (sport == "detected") return "Activity"
+        if (sport.isEmpty() || sport.contains(" ")) return sport
+        val out = StringBuilder()
+        var prev: Char? = null
+        for (ch in sport) {
+            val p = prev
+            if (p != null && ch.isUpperCase() && !p.isUpperCase()) out.append(' ')
+            out.append(ch)
+            prev = ch
+        }
+        return out.toString()
+    }
 
     // MARK: - Dismissed detected bouts (durable across re-detection)
 

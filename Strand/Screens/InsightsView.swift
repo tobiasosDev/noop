@@ -42,9 +42,11 @@ struct InsightsView: View {
         /// Short segment label.
         var label: String {
             switch self {
-            case .recovery: return String(localized: "Recovery")
+            // Upstream v2.6.0 renamed the daily scores (Recovery → Charge, Sleep → Rest);
+            // keep that naming but route it through the String Catalog for German localization.
+            case .recovery: return String(localized: "Charge")
             case .hrv:      return String(localized: "HRV")
-            case .sleep:    return String(localized: "Sleep")
+            case .sleep:    return String(localized: "Rest")
             case .rhr:      return String(localized: "RHR")
             }
         }
@@ -60,9 +62,10 @@ struct InsightsView: View {
         /// The human outcome name used by BehaviorInsights.sentence.
         var outcomeName: String {
             switch self {
-            case .recovery: return String(localized: "Recovery")
+            // Charge/Rest naming (upstream v2.6.0), localized via the String Catalog.
+            case .recovery: return String(localized: "Charge")
             case .hrv:      return String(localized: "HRV")
-            case .sleep:    return String(localized: "Sleep performance")
+            case .sleep:    return String(localized: "Rest")
             case .rhr:      return String(localized: "Resting HR")
             }
         }
@@ -111,12 +114,18 @@ struct InsightsView: View {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {
                 VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    // Logging lives in the Journal screen (the one journal UI); this card routes there.
+                    // Logging lives in the Journal screen (the one journal UI, #140); this card
+                    // routes there. Upstream's inline JournalLogCard was a second, duplicate
+                    // journal and is intentionally NOT reintroduced here.
                     journalCTA
+                    // Mind — daily mood check-in + mood↔body correlations (upstream v2.2.0).
+                    // Self-contained (owns its own load/state); sits with the journal CTA so the
+                    // daily-logging surfaces read as one "log today" block above the derived insights.
+                    MindSection()
                     if behaviours.isEmpty {
                         // No journal yet — explain, without dead-ending on a paid export.
                         NoopCard {
-                            Text("Insights read your journal and outcomes. Log behaviours in Journal — or import your WHOOP export, which includes your journal, in Data Sources — to unlock them.")
+                            Text("Log behaviours in the Journal — after a few days of answers, NOOP ranks how each one moves your charge, HRV and rest. Importing a WHOOP export (which includes its journal) in Data Sources backfills history instantly.")
                                 .font(StrandFont.subhead)
                                 .foregroundStyle(StrandPalette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -331,24 +340,24 @@ struct InsightsView: View {
         if let c = CorrelationEngine.pearson(
             CorrelationEngine.alignByDay(series("sleep_performance"), series("recovery"))) {
             out.append(.init(id: "sleep-rec",
-                             title: "Sleep performance ↔ Recovery",
-                             blurb: "How closely a good night tracks next-morning recovery.",
+                             title: "Rest ↔ Charge",
+                             blurb: "How closely a good night tracks next-morning charge.",
                              corr: c))
         }
         // HRV ↔ recovery (same day).
         if let c = CorrelationEngine.pearson(
             CorrelationEngine.alignByDay(series("hrv"), series("recovery"))) {
             out.append(.init(id: "hrv-rec",
-                             title: "HRV ↔ Recovery",
-                             blurb: "Heart-rate variability as the engine behind your recovery score.",
+                             title: "HRV ↔ Charge",
+                             blurb: "Heart-rate variability as the engine behind your charge score.",
                              corr: c))
         }
         // Resting HR ↔ recovery (same day) — expected to be negative.
         if let c = CorrelationEngine.pearson(
             CorrelationEngine.alignByDay(series("rhr"), series("recovery"))) {
             out.append(.init(id: "rhr-rec",
-                             title: "Resting HR ↔ Recovery",
-                             blurb: "A lower resting heart rate usually means a higher recovery.",
+                             title: "Resting HR ↔ Charge",
+                             blurb: "A lower resting heart rate usually means a higher charge.",
                              corr: c))
         }
         // Today's recovery ↔ NEXT-day recovery (1-day lag) as a strain/carry-over proxy.
@@ -356,8 +365,8 @@ struct InsightsView: View {
         //  how much yesterday carries into today.)
         if let c = CorrelationEngine.lagged(x: series("recovery"), y: series("recovery"), lagDays: 1) {
             out.append(.init(id: "rec-lag",
-                             title: "Recovery → Next-day recovery",
-                             blurb: "How much one day's recovery carries into the next.",
+                             title: "Charge → Next-day charge",
+                             blurb: "How much one day's charge carries into the next.",
                              corr: c))
         }
 

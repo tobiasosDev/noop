@@ -43,11 +43,20 @@ object WhoopCsvExporter {
     internal fun utc(epochSeconds: Long): String =
         UTC_FMT.format(java.time.Instant.ofEpochSecond(epochSeconds))
 
-    /** RFC-4180: only quote when the field carries a comma, quote, CR or LF; escape `"` by doubling. */
+    /**
+     * RFC-4180: only quote when the field carries a comma, quote, CR or LF; escape `"` by doubling.
+     *
+     * Formula-injection guard: a free-text value starting with `=`, `+`, `-`, `@`, tab or CR is
+     * executed as a formula by Excel/Sheets/LibreOffice when the CSV is opened there (quoting alone
+     * does NOT prevent that). Neutralise with a leading apostrophe — the spreadsheet convention for
+     * "literal text". Numbers never pass through csvField (they use num()), so this only ever
+     * touches free text such as source names. Mirrors the Swift exporter's field().
+     */
     internal fun csvField(raw: String?): String {
         if (raw.isNullOrEmpty()) return ""
-        if (raw.none { it == ',' || it == '"' || it == '\n' || it == '\r' }) return raw
-        return "\"" + raw.replace("\"", "\"\"") + "\""
+        val safe = if (raw.first() in "=+-@\t\r") "'$raw" else raw
+        if (safe.none { it == ',' || it == '"' || it == '\n' || it == '\r' }) return safe
+        return "\"" + safe.replace("\"", "\"\"") + "\""
     }
 
     /** Locale-proof numbers: integral Doubles print without a trailing ".0"; Double.toString uses
@@ -165,12 +174,18 @@ object WhoopCsvExporter {
                 listOf(
                     d.day + " 00:00:00", "", "UTC+00:00",
                     num(d.recovery), num(d.restingHr), num(d.avgHrv), num(d.skinTempDevC),
-                    num(d.spo2Pct), num(d.strain),
+                    // Day Strain column is WHOOP's 0–21 scale → down-convert our 0–100 Effort so the CSV
+                    // is WHOOP-format and a NOOP→NOOP round-trip is lossless (import scales back ×100/21).
+                    num(d.spo2Pct), num(d.strain?.let { it * 21.0 / 100.0 }),
                     "", "", "",            // energy / max HR / avg HR — not on the Android daily row
                     "", "",                // sleep/wake onset live in sleeps.csv
                     num(s["sleep_performance"]), num(d.respRateBpm), num(d.totalSleepMin),
                     "",                    // in-bed not stored on the Android daily row
-                    num(d.lightMin), num(d.deepMin), num(d.remMin), num(d.disturbances),
+                    num(d.lightMin), num(d.deepMin), num(d.remMin),
+                    // "Awake duration (min)" is MINUTES — the daily row doesn't carry it, so leave
+                    // the cell empty. (Writing the disturbance COUNT here exported a wrong unit
+                    // that round-tripped on reimport — PR #97 review, tigercraft4. Swift parity.)
+                    "",
                     num(d.efficiency), num(s["sleep_consistency"]), num(s["sleep_need_min"]),
                     num(s["sleep_debt_min"]), csvField(sourceByDay[d.day]),
                 ).joinToString(","),
@@ -223,7 +238,7 @@ object WhoopCsvExporter {
             sb.append(
                 listOf(
                     utc(w.startTs), utc(w.startTs), utc(w.endTs), "UTC+00:00",
-                    csvField(w.sport), num(w.strain), num(w.energyKcal), num(w.maxHr), num(w.avgHr),
+                    csvField(w.sport), num(w.strain?.let { it * 21.0 / 100.0 }), num(w.energyKcal), num(w.maxHr), num(w.avgHr),
                     num(zones?.get(0)), num(zones?.get(1)), num(zones?.get(2)),
                     num(zones?.get(3)), num(zones?.get(4)),
                     num(w.distanceM), csvField(sourceLabel(w)),
@@ -305,7 +320,12 @@ object WhoopCsvExporter {
         val sleeps = repo.sleepSessionsMerged(deviceId, 0L, hi)
         // Workouts: imported WHOOP ∪ on-device detected (which carries the "-noop" device id). Apple
         // Health / Health Connect workouts are intentionally omitted, matching the cycles/sleep cut.
-        val workouts = repo.workouts(deviceId, 0L, hi) + repo.workouts(computedId, 0L, hi)
+        // Dedup by (startTs, sport), imported (deviceId) first so it wins — the same session can
+        // exist under both ids (e.g. a reimported export + BLE re-detection), which double-counted
+        // it in the CSV and inflated totals on reimport. (PR #97 review, tigercraft4. Swift parity.)
+        val seenWorkouts = HashSet<String>()
+        val workouts = (repo.workouts(deviceId, 0L, hi) + repo.workouts(computedId, 0L, hi))
+            .filter { seenWorkouts.add("${it.startTs}|${it.sport}") }
         // Journal lives under the imported deviceId. Native in-app journal logging (a separate
         // feature on its own device id) isn't read here, keeping the exporter self-contained; the
         // imported journal is the WHOOP-sourced history the round-trip targets.

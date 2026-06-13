@@ -346,14 +346,21 @@ public final class BLEManager: NSObject, ObservableObject {
 
         // Retro-decode: when the decoder gains a historical layout (e.g. WHOOP 4.0 v25), re-run every
         // archived undecodable frame through it and insert whatever now decodes — the only path by
-        // which already-acked banked history backfills after an update. Gated so it runs ONCE per
-        // decoder version, not every launch; idempotent if it somehow re-runs (rows dedupe by ts).
+        // which already-acked banked history backfills after an update. Run ONCE per app version (no
+        // manual decoder-version constant to forget to bump); idempotent if it re-runs (rows dedupe
+        // by ts) and the archive is small, so the once-per-update cost is negligible. (#152)
         // Note: the archive carries no deviceId, so replayed rows attribute to the current strap.
-        let decoderVersion = 2   // bump whenever a historical layout is added/changed (v25 = 2)
-        if UserDefaults.standard.integer(forKey: "rejectArchiveReplayedVersion") < decoderVersion {
-            let rows = await rejectedHistoryArchive.replay(into: store, deviceId: deviceId)
-            if rows > 0 { log("Backfill: retro-decoded \(rows) record(s) from the reject archive after a decoder update.") }
-            UserDefaults.standard.set(decoderVersion, forKey: "rejectArchiveReplayedVersion")
+        let replayKey = "rejectArchiveReplayedAppVersion"
+        if UserDefaults.standard.string(forKey: replayKey) != AppChangelog.currentVersion {
+            do {
+                let rows = try await rejectedHistoryArchive.replay(into: store, deviceId: deviceId)
+                if rows > 0 { log("Backfill: retro-decoded \(rows) record(s) from the reject archive after an update.") }
+                // Advance the gate ONLY on success — a failed insert must retry next launch, because
+                // the archive holds the only surviving copy of these records. (#152)
+                UserDefaults.standard.set(AppChangelog.currentVersion, forKey: replayKey)
+            } catch {
+                log("Backfill: reject-archive retro-decode deferred (store insert failed) — will retry next launch.")
+            }
         }
     }
 
@@ -521,7 +528,17 @@ public final class BLEManager: NSObject, ObservableObject {
                 || command == .setAlarmTime || command == .getAlarmTime
                 || command == .runAlarm || command == .disableAlarm
                 || command == .sendHistoricalData || command == .historicalDataResult
-                || command == .setClock || command == .getClock else {
+                || command == .setClock || command == .getClock
+                // SET_CONFIG (the R22 deep-stream unlock) is allowed ONLY while the deep-data
+                // experiment is opted in — it writes a persistent feature flag to the strap, so it
+                // must never fire on a default install. It's still reversible (just changes which
+                // data the strap emits) and is what the official app sends. Driven only by
+                // enableWhoop5DeepData(). (#174)
+                || (command == .setConfig && PuffinExperiment.deepDataEnabled)
+                // SET_DEVICE_CONFIG (the Broadcast-HR flag) is allowed ONLY while that opt-in is on —
+                // it writes one persistent device-config value so the strap advertises standard HR.
+                // Reversible; driven only by setBroadcastHr(_:). (#181)
+                || (command == .setDeviceConfig && PuffinExperiment.broadcastHrEnabled) else {
                 log("send(\(command.label)) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -644,6 +661,8 @@ public final class BLEManager: NSObject, ObservableObject {
         state.rejectedFramesUnarchived = 0
         state.decodedChunksThisSession = 0
         state.consoleChunksThisSession = 0
+        state.r22FlagsAccepted = 0
+        state.deepPacketsThisSession = 0
         historicalAckLogCounter = 0
         // Payload MUST be [0x00], NOT empty: verified on-device that this strap serves type-47 only with
         // [0x00] (empty → 0 frames on a clean stable link with ~2k records pending); the Mac ground-truth
@@ -873,6 +892,91 @@ public final class BLEManager: NSObject, ObservableObject {
         wantsRealtime = false
         send(.toggleRealtimeHR, payload: [0x00])
         send(.sendR10R11Realtime, payload: [0x00])
+    }
+
+    /// EXPERIMENTAL R22 telemetry (#174): give the user (and us) live proof of what the strap is doing.
+    /// (1) Every `COMMAND_RESPONSE` (type 0x24) to a `SET_CONFIG` (0x78) is the strap ACKing one
+    ///     `enable_r22_*` flag — hardware-confirmed in sebastianwoo's capture. 15 ACKs = full acceptance.
+    /// (2) A type-0x2F record arriving OUTSIDE a history offload is the R22 deep biometric stream
+    ///     actually flowing in realtime — the prize. (During an offload, type-0x2F is just banked
+    ///     history, already handled by the Backfiller, so we only count the live ones.)
+    /// Frame layout (5/MG puffin envelope): packet_type @ byte 8, the responded-to cmd @ byte 10.
+    private func noteWhoop5R22Telemetry(_ frame: [UInt8], duringOffload: Bool) {
+        guard frame.count > 10 else { return }
+        if frame[8] == 0x24, frame[10] == WhoopCommand.setConfig.rawValue {
+            state.r22FlagsAccepted += 1
+            let total = Whoop5Config.enableR22Sequence.count
+            if state.r22FlagsAccepted == total {
+                log("Deep-data: strap ACCEPTED all \(total)/\(total) R22 flags ✓ — keep it on; watching for deep packets.")
+            }
+        }
+        if frame[8] == 0x2F, !duringOffload {
+            state.deepPacketsThisSession += 1
+            if state.deepPacketsThisSession == 1 {
+                log("Deep-data: 🎯 FIRST live deep (R22, type-0x2F) packet received — this is it. Please keep wearing it and share your strap log on #174.")
+            } else if state.deepPacketsThisSession.isMultiple(of: 50) {
+                log("Deep-data: \(state.deepPacketsThisSession) live deep (type-0x2F) packets this session.")
+            }
+        }
+    }
+
+    /// EXPERIMENTAL (#174): write the official app's `enable_r22_*` SET_CONFIG sequence to a bonded
+    /// WHOOP 5/MG, to switch on the deep biometric (type-0x2F "R22") streams the strap withholds from a
+    /// fresh third-party connection. The exact 15-flag sequence + values are documented by judes.club
+    /// and Asherlc/dofek and built byte-for-byte by `Whoop5Config` (golden-frame unit-tested).
+    ///
+    /// Safety: only ever runs when the deep-data experiment is explicitly opted in AND the strap is a
+    /// bonded, worn 5/MG. The R22 stream is on-wrist gated, so an off-wrist strap is refused with a hint.
+    /// Each flag is one `.setConfig` write WITH RESPONSE, spaced ~80 ms (the official app pauses between
+    /// writes). Reversible — it only changes which data the strap emits. After it runs, the user should
+    /// wear + sync and share their strap log so we can confirm the deeper records start flowing.
+    public func enableWhoop5DeepData() {
+        guard selectedModel.deviceFamily == .whoop5 else {
+            log("Deep-data: needs a WHOOP 5.0/MG strap selected — ignored."); return
+        }
+        guard PuffinExperiment.deepDataEnabled else {
+            log("Deep-data: the deep-data experiment is off — enable it in Settings → Experimental first."); return
+        }
+        guard state.connected, state.bonded else {
+            log("Deep-data: connect and bond a 5/MG strap first — ignored."); return
+        }
+        guard state.worn else {
+            log("Deep-data: the R22 stream is on-wrist only — put the strap ON, then try again."); return
+        }
+        state.r22FlagsAccepted = 0   // fresh attempt — count this send's ACKs from zero
+        let frames = Whoop5Config.enableR22Sequence
+        log("Deep-data: sending the \(frames.count)-flag enable_r22 sequence (experimental, reversible)…")
+        for (i, flag) in frames.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80 * i)) { [weak self] in
+                guard let self else { return }
+                self.send(.setConfig,
+                          payload: [0x01] + Whoop5Config.payloadBody(name: flag.name, value: flag.value),
+                          writeType: .withResponse)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80 * frames.count + 200)) { [weak self] in
+            self?.log("Deep-data: sequence sent. Keep the strap on, let it sync, then share your strap log — we're looking for new deep records (type-0x2F) to start arriving. (#174)")
+        }
+    }
+
+    /// EXPERIMENTAL (#181): make a bonded WHOOP 5/MG advertise its heart rate as a standard BLE HR
+    /// sensor (0x180D + the live HR in its manufacturer data) by writing the device-config flag
+    /// `whoop_live_hr_in_adv_ind_pkt` = "1" (on) / "0" (off) via SET_DEVICE_CONFIG (0x77). With it on, a
+    /// Garmin (Edge/watch), Zwift or gym HR client can pair to the WHOOP directly during a workout.
+    /// Validated on real hardware (paired on a Garmin Edge 840). Opt-in, reversible; unlike R22 it is NOT
+    /// on-wrist gated. Re-applied on each 5/MG connection. iOS/Android only (macOS can't bond a 5/MG).
+    public func setBroadcastHr(_ on: Bool) {
+        guard selectedModel.deviceFamily == .whoop5 else {
+            log("Broadcast HR: needs a WHOOP 5.0/MG strap selected — ignored."); return
+        }
+        guard state.connected, state.bonded else {
+            log("Broadcast HR: connect and bond a 5/MG strap first — ignored."); return
+        }
+        let value: UInt8 = on ? 0x31 : 0x30   // ASCII '1' / '0'
+        send(.setDeviceConfig,
+             payload: [0x01] + Whoop5Config.deviceConfigBody(name: "whoop_live_hr_in_adv_ind_pkt", value: value),
+             writeType: .withResponse)
+        log("Broadcast HR: wrote whoop_live_hr_in_adv_ind_pkt=\(on ? "1" : "0")")
     }
 
     private func startKeepAlive() {
@@ -1357,6 +1461,8 @@ extension BLEManager: CBCentralManagerDelegate {
         state.rejectedFramesUnarchived = 0
         state.decodedChunksThisSession = 0
         state.consoleChunksThisSession = 0
+        state.r22FlagsAccepted = 0
+        state.deepPacketsThisSession = 0
         backfillTimeout?.cancel()
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
@@ -1596,6 +1702,8 @@ extension BLEManager: CBPeripheralDelegate {
                 whoop5SessionStarted = true
                 connectHandshakeDone = true     // unblocks beginBackfill()'s guard
                 log("WHOOP 5/MG: connect handshake done — backfill unblocked")
+                // Re-apply the Broadcast-HR device-config flag if the user opted in (#181).
+                if PuffinExperiment.broadcastHrEnabled { setBroadcastHr(true) }
                 // Clock the strap BEFORE history: an un-clocked WHOOP 5 discards sensor data ("RTC
                 // timestamp … is invalid; not saving data to flash") and history offloads "succeed"
                 // with metadata only. Same 8-byte payload as the WHOOP4 handshake, puffin-framed;
@@ -1827,7 +1935,9 @@ extension BLEManager: CBPeripheralDelegate {
             // standard 0x2A37 / 0x2A19 profiles handled above.
             if BLEManager.whoop5NotifyChars.contains(characteristic.uuid) {
                 for frame in reassembler.feed(bytes) {
-                    if backfilling, BLEManager.isOffloadFrame(frame, family: .whoop5) {
+                    let isOffload = backfilling && BLEManager.isOffloadFrame(frame, family: .whoop5)
+                    noteWhoop5R22Telemetry(frame, duringOffload: isOffload)   // #174 deep-data telemetry
+                    if isOffload {
                         // Same policy as WHOOP4: historical offload frames are bulk sync traffic.
                         // Keep them out of the live UI parser during backfill and let Backfiller
                         // preserve/order/process them in the sliced drain.

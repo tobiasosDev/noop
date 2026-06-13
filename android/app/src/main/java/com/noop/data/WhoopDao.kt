@@ -61,6 +61,10 @@ interface WhoopDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertGravity(rows: List<GravitySample>): List<Long>
 
+    /** PPG-derived HR from the v26 optical waveform. Idempotent by (deviceId, ts). (#156) */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPpgHr(rows: List<PpgHrSample>): List<Long>
+
     // MARK: - Server-derived caches (latest value wins)
 
     @Upsert
@@ -91,13 +95,31 @@ interface WhoopDao {
 
     /** Downsampled HR for charting: mean bpm per [bucketSeconds]-wide bucket over [from, to],
      *  keyed by the bucket start (floor(ts/bucket)*bucket). Aggregated in SQL so a 24h window
-     *  returns ~(to-from)/bucketSeconds rows, not every ~1 Hz sample. Mirrors macOS hrBuckets. */
+     *  returns ~(to-from)/bucketSeconds rows, not every ~1 Hz sample. Mirrors macOS hrBuckets.
+     *
+     *  COALESCE union (#156): the real sensor `hrSample` is authoritative; the v26 PPG-derived
+     *  `ppgHrSample` only contributes seconds the strap NEVER reported a bpm for (WHERE NOT EXISTS),
+     *  so derived HR fills gaps without ever overriding or double-counting a true HR sample. The two
+     *  selects are UNION ALL'd into one bpm stream, then bucket-averaged exactly as before. Matches
+     *  the Swift hrBuckets COALESCE union. */
     @Query(
-        "SELECT (ts / :bucketSeconds) * :bucketSeconds AS bucket, AVG(bpm) AS avgBpm FROM hrSample " +
+        "SELECT (ts / :bucketSeconds) * :bucketSeconds AS bucket, AVG(bpm) AS avgBpm FROM (" +
+            "SELECT ts, bpm FROM hrSample " +
             "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
-            "GROUP BY ts / :bucketSeconds ORDER BY bucket ASC"
+            "UNION ALL " +
+            "SELECT p.ts AS ts, p.bpm AS bpm FROM ppgHrSample p " +
+            "WHERE p.deviceId = :deviceId AND p.ts >= :from AND p.ts <= :to " +
+            "AND NOT EXISTS (SELECT 1 FROM hrSample h WHERE h.deviceId = p.deviceId AND h.ts = p.ts)" +
+            ") GROUP BY ts / :bucketSeconds ORDER BY bucket ASC"
     )
     suspend fun hrBuckets(deviceId: String, from: Long, to: Long, bucketSeconds: Long): List<HrBucket>
+
+    /** Raw v26 PPG-derived HR samples in [from, to] (ascending). (#156) */
+    @Query(
+        "SELECT * FROM ppgHrSample WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
+            "ORDER BY ts ASC LIMIT :limit"
+    )
+    suspend fun ppgHrSamples(deviceId: String, from: Long, to: Long, limit: Int): List<PpgHrSample>
 
     /** Aggregate HR over a window (one indexed (deviceId,ts) range scan — no row materialisation,
      *  no [hrSamples] LIMIT truncation). Backs the imported-workout HR fallback (#77). */

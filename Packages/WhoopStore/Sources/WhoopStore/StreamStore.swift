@@ -137,6 +137,19 @@ extension WhoopStore {
                     try stmt.execute(arguments: [deviceId, s.ts, s.counter])
                 }
             }
+            // PPG-derived HR from the v26 optical buffer (#156). Persist-only, same as steps — the count
+            // is not added to the 8-field return tuple (the Backfiller call site reads that tuple by name;
+            // extending it would ripple), so it is inserted without being counted. ON CONFLICT DO NOTHING
+            // keeps the FIRST estimate for a second; the measured hrSample is never touched here.
+            if !streams.ppgHr.isEmpty {
+                let stmt = try db.cachedStatement(sql: """
+                    INSERT INTO ppgHrSample (deviceId, ts, bpm, conf) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(deviceId, ts) DO NOTHING
+                    """)
+                for s in streams.ppgHr {
+                    try stmt.execute(arguments: [deviceId, s.ts, s.bpm, s.conf])
+                }
+            }
             return (hr, rr, ev, bat, spo2, skin, resp, grav)
         }
     }
@@ -165,6 +178,10 @@ extension WhoopStore {
 
     public func stepCountForTest() async throws -> Int {
         try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stepSample") ?? 0 }
+    }
+
+    public func ppgHrCountForTest() async throws -> Int {
+        try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM ppgHrSample") ?? 0 }
     }
 
     public func deviceRowForTest(id: String) async throws -> (mac: String?, name: String?)? {

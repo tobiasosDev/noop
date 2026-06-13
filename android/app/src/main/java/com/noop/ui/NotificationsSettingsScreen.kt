@@ -143,6 +143,9 @@ private val activeCategories: List<NotifCategory> =
 internal object NotifPrefs {
     private const val FILE = "noop_notif_prefs"
     const val MASTER = "notif.masterEnabled"
+    /** Catch-all: buzz for any app NOT in the curated catalog (Android can't enumerate installed
+     *  apps, so this is how a user covers BeReal/etc. that aren't listed). Opt-in, default OFF. (#168) */
+    const val ALL_OTHER = "notif.allOtherApps"
     const val WORN = "notif.onlyWhenWorn"
     const val QUIET = "notif.quietHoursEnabled"
     const val QUIET_START = "notif.quietStartMinutes"
@@ -219,6 +222,7 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
     // Header settings, seeded from prefs once and written through on change.
     var masterEnabled by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.MASTER, false)) }
     var onlyWhenWorn by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.WORN, true)) }
+    var allOtherApps by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.ALL_OTHER, false)) }
     var quietHoursEnabled by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.QUIET, false)) }
     var quietStartMinutes by remember { mutableStateOf(NotifPrefs.getInt(context, NotifPrefs.QUIET_START, 22 * 60)) }
     var quietEndMinutes by remember { mutableStateOf(NotifPrefs.getInt(context, NotifPrefs.QUIET_END, 7 * 60)) }
@@ -374,6 +378,18 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
                 onChange = {
                     onlyWhenWorn = it
                     NotifPrefs.setBool(context, NotifPrefs.WORN, it)
+                },
+            )
+            RowDivider()
+            FormToggleRow(
+                label = "All other apps",
+                help = "Also buzz for apps that aren't in the lists above (e.g. BeReal). Android " +
+                    "doesn't let NOOP see every installed app, so this is how you cover the rest. " +
+                    "Can be chatty — quiet hours and \"only when worn\" still apply.",
+                checked = allOtherApps,
+                onChange = {
+                    allOtherApps = it
+                    NotifPrefs.setBool(context, NotifPrefs.ALL_OTHER, it)
                 },
             )
             RowDivider()

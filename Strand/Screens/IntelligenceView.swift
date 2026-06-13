@@ -9,7 +9,7 @@ struct IntelligenceView: View {
 
     var body: some View {
         ScreenScaffold(title: "Intelligence",
-                       subtitle: "NOOP scores your recovery, strain and sleep itself — on-device, no cloud.") {
+                       subtitle: "NOOP scores your charge, effort and rest itself — on-device, no cloud.") {
             explainerCard
             if intelligence.computing {
                 StrandCard(padding: 20) {
@@ -33,7 +33,7 @@ struct IntelligenceView: View {
                 if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
                 DataPendingNote(
                     title: "Building from your strap",
-                    message: "This builds from the strap as it syncs. Strain and sleep appear after you have worn it and slept a night. Recovery needs about a week of nights to learn your baseline, or import your WHOOP export to skip the wait.",
+                    message: "This builds from the strap as it syncs. Effort and rest appear after you have worn it and slept a night. Charge needs about a week of nights to learn your baseline, or import your WHOOP export to skip the wait.",
                     symbol: "brain.head.profile"
                 )
             } else {
@@ -61,7 +61,7 @@ struct IntelligenceView: View {
                         .accessibilityHidden(true)
                     Text("How this works").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
                 }
-                Text("Recovery weighs your HRV against your personal baseline (~60%), resting heart rate (~20%), sleep performance (~15%) and respiration (~5%). Day strain is a 0–21 cardiovascular load from time in heart-rate zones. Sleep is staged from movement and heart rate. Everything is computed here from the strap's raw data — it works for any day NOOP collected raw streams.")
+                Text("Charge weighs your HRV against your personal baseline (~55%), resting heart rate (~20%), rest quality (~15%), respiration (~5%) and skin-temperature deviation (~5%). Effort is a 0–100 cardiovascular load from time in heart-rate zones. Rest is staged from movement and heart rate. Everything is computed here from the strap's raw data — it works for any day NOOP collected raw streams.")
                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -91,9 +91,9 @@ struct IntelligenceView: View {
 
     @ViewBuilder
     private func statRow(_ d: IntelligenceEngine.Computed) -> some View {
-        stat("Recovery", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—", recoveryColor(d.recovery))
-        stat("Strain", d.strain.map { String(format: "%.1f", $0) } ?? "—", StrandPalette.metricCyan)
-        stat("Sleep", d.sleepMin.map { "\(Int(($0 / 60).rounded()))h \(Int($0.truncatingRemainder(dividingBy: 60)))m" } ?? "—", StrandPalette.metricPurple)
+        stat("Charge", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—", recoveryColor(d.recovery))
+        stat("Effort", d.strain.map { String(format: "%.1f", $0) } ?? "—", StrandPalette.metricCyan)
+        stat("Rest", d.sleepMin.map { "\(Int(($0 / 60).rounded()))h \(Int($0.truncatingRemainder(dividingBy: 60)))m" } ?? "—", StrandPalette.metricPurple)
         stat("HRV", d.hrv.map { "\(Int($0.rounded()))" } ?? "—", StrandPalette.metricPurple)
         stat("RHR", d.rhr.map { "\($0)" } ?? "—", StrandPalette.metricRose)
     }

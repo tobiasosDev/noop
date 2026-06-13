@@ -40,8 +40,11 @@ class NoopNotificationListener : NotificationListenerService() {
         }
 
         // Master gate + per-app opt-in (both default off — nothing buzzes until the user turns it on).
+        // The "all other apps" catch-all (#168) lets anything outside the curated catalog through, since
+        // Android package-visibility limits mean we can't list every installed app for per-app opt-in.
         if (!NotifPrefs.getBool(ctx, NotifPrefs.MASTER, false)) return
-        if (!NotifPrefs.appEnabled(ctx, sbn.packageName)) return
+        if (!NotifPrefs.appEnabled(ctx, sbn.packageName) &&
+            !NotifPrefs.getBool(ctx, NotifPrefs.ALL_OTHER, false)) return
 
         // Skip noise: ongoing/foreground-service notifications and group summaries aren't user-facing alerts.
         if (sbn.isOngoing) return

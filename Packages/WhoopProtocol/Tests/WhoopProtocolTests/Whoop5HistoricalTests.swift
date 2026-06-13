@@ -60,8 +60,10 @@ final class Whoop5HistoricalTests: XCTestCase {
         // verified against this real worn frame. (Fields that did NOT decode consistently on this
         // firmware — cardiac_flags@33, state@81, perfusion@69/71 — are deliberately not decoded.)
         let p = parseFrame(bytes(historicalHex), family: .whoop5).parsed
-        // skin temperature: the raw AS6221 u16 register (scale-agnostic). °C = raw / 128 — the AS6221's
-        // native 7.8125 m°C/LSB. Raw kept in the record so the absolute scale (/128 vs /100) isn't baked in.
+        // skin temperature: raw u16, stored by the firmware in CENTIDEGREES — °C = raw / 100. This very
+        // fixture is the proof: worn 3057 / off-wrist 2247 are 30.6 °C skin and 22.5 °C room ambient under
+        // /100 (physically right on both ends) but an impossible 23.9 °C "skin" under the AS6221-native
+        // /128 once assumed here. Raw kept in the record; consumers divide by 100 (matches Android).
         XCTAssertEqual(p["skin_temp_raw"]?.intValue, 3057)
         // dynamic (gravity-removed) acceleration — small for a still wrist, gated to [0, 8] g.
         let dyn = p["dynamic_acceleration"]?.doubleValue ?? -1

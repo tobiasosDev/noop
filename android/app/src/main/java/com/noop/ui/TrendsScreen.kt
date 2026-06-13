@@ -100,10 +100,10 @@ fun TrendsScreen(vm: AppViewModel) {
             )
         }
 
-        // --- Hero — recovery over time ---
+        // --- Hero — charge over time ---
         val recAvg = recovery.values.averageOrNull()
         ChartCard(
-            title = "Recovery",
+            title = "Charge",
             subtitle = recovery.caption,
             trailing = recAvg?.let { "${it.roundToInt()}" },
             color = Palette.accent,
@@ -116,7 +116,7 @@ fun TrendsScreen(vm: AppViewModel) {
             ),
         )
 
-        // --- Small multiples — HRV / Resting HR / Day strain ---
+        // --- Small multiples — HRV / Resting HR / Effort ---
         SectionHeader("Daily signals", overline = "Trends", trailing = range.subtitle)
         MetricTrendCard(
             title = "Heart rate variability", unit = "ms",
@@ -131,7 +131,7 @@ fun TrendsScreen(vm: AppViewModel) {
             fmt = { "${it.roundToInt()}" },
         )
         MetricTrendCard(
-            title = "Day strain", unit = "/ 21",
+            title = "Effort", unit = "/ 100",
             color = Palette.strain066,
             resolved = strain,
             fmt = { String.format(Locale.US, "%.1f", it) },
@@ -340,9 +340,9 @@ private fun RecoveryHistoryCard(days: List<DailyMetric>, range: TrendsRange) {
     val window = days.takeLast(span)
     val recovery = window.mapNotNull { it.recovery }
     val title = if (range == TrendsRange.All && days.size > 365) {
-        "Recovery — all history"
+        "Charge — all history"
     } else {
-        "Recovery — past year"
+        "Charge — past year"
     }
 
     NoopCard {
@@ -359,7 +359,7 @@ private fun RecoveryHistoryCard(days: List<DailyMetric>, range: TrendsRange) {
             }
             HorizontalDivider(color = Palette.hairline)
             Text(
-                "Each bar is one day's recovery score, low to high. The 53-week calendar " +
+                "Each bar is one day's Charge score, low to high. The 53-week calendar " +
                     "heat-grid is part of the desktop app.",
                 style = NoopType.footnote,
                 color = Palette.textTertiary,

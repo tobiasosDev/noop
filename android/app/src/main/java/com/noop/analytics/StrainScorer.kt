@@ -7,12 +7,18 @@ import kotlin.math.ln
 import kotlin.math.roundToLong
 
 /*
- * StrainScorer.kt — cardiovascular load on a 0–21 logarithmic strain scale.
+ * StrainScorer.kt — cardiovascular load (NOOP "Effort") on a 0–100 logarithmic scale.
  *
  * Faithful Kotlin port of StrandAnalytics/StrainScorer.swift (verified on macOS),
  * itself ported from server/ingest/app/analysis/strain.py. INDEPENDENT implementation
  * of published exercise-physiology methods (WHOOP-*like*, not a reproduction of the
  * proprietary algorithm; not medical advice).
+ *
+ * SCALE: the internal metric key stays `strain`, but the published axis is now 0–100
+ * ("Effort"). This is a pure RESCALE — `maxStrain` went 21.0 → 100.0 while the
+ * denominator D = 7201 is UNCHANGED, so the log curve and its saturation point
+ * (TRIMP 7200 ≈ max) are preserved: a max-Effort day stays exactly as rare as a 21.0
+ * day was. trimpToStrain now returns 0–100.
  *
  * Pipeline:
  *   1. Heart-Rate Reserve (Karvonen): HRR = HRmax − RHR.
@@ -21,8 +27,8 @@ import kotlin.math.roundToLong
  *        a. Edwards 5-zone summation (default): sample contributes its zone weight
  *           (1..5 at 50/60/70/80/90 %HRR cut-offs) × duration.
  *        b. Banister exponential: sample contributes duration × x × 0.64 × e^(b·x).
- *   4. Logarithmic compression onto [0, 21]:
- *        strain = 21 × ln(TRIMP + 1) / ln(D),  D = STRAIN_DENOMINATOR.
+ *   4. Logarithmic compression onto [0, 100]:
+ *        effort = 100 × ln(TRIMP + 1) / ln(D),  D = STRAIN_DENOMINATOR.
  *
  * References: Karvonen 1957 (%HRR); Edwards 1993 (5-zone TRIMP); Banister 1991
  * (exponential TRIMP, b = 1.92 men / 1.67 women); Tanaka 2001 (HRmax = 208 − 0.7×age).
@@ -39,13 +45,15 @@ object StrainScorer {
     /** Minimum HR readings before computing strain (≈10 min at 1 Hz). */
     const val minReadings: Int = 600
 
-    /** Top of the strain scale. */
-    const val maxStrain: Double = 21.0
+    /** Top of the Effort scale (was 21.0 — rescaled to 0–100 for "Effort"). */
+    const val maxStrain: Double = 100.0
 
     /**
      * Logarithmic-map denominator D. Chosen so the Edwards daily ceiling
-     * (top zone weight 5 sustained 24 h = 7200) maps to exactly 21.0:
-     * D = 7200 + 1 = 7201 makes ln(7201)/ln(7201) = 1.
+     * (top zone weight 5 sustained 24 h = 7200) maps to exactly maxStrain:
+     * D = 7200 + 1 = 7201 makes ln(7201)/ln(7201) = 1, so the curve shape and
+     * its saturation point are independent of maxStrain (the 21→100 rescale is a
+     * pure linear scaling of the whole curve).
      */
     const val strainDenominator: Double = 7201.0
     val lnStrainDenominator: Double get() = ln(strainDenominator)
@@ -183,7 +191,7 @@ object StrainScorer {
     // ---- Logarithmic map ----
 
     /**
-     * Map accumulated TRIMP onto [0, 21] via 21 × ln(TRIMP+1) / ln(D), 2 dp.
+     * Map accumulated TRIMP onto [0, 100] via 100 × ln(TRIMP+1) / ln(D), 2 dp.
      * TRIMP ≤ 0 → 0.
      */
     fun trimpToStrain(trimp: Double, denominator: Double = strainDenominator): Double {
@@ -196,9 +204,9 @@ object StrainScorer {
 
     /**
      * Calibrate D from (TRIMP, reference_strain) pairs via the through-origin
-     * least-squares line: ln(D) = 21 × Σ(x²) / Σ(xy), x = ln(TRIMP+1).
-     * Throws [StrainException] when fewer than 2 usable pairs (TRIMP>0, strain>0)
-     * or degenerate.
+     * least-squares line: ln(D) = maxStrain × Σ(x²) / Σ(xy), x = ln(TRIMP+1).
+     * Reference strains are on the maxStrain (0–100) scale. Throws [StrainException]
+     * when fewer than 2 usable pairs (TRIMP>0, strain>0) or degenerate.
      */
     fun fitStrainDenominator(pairs: List<Pair<Double, Double>>): Double {
         val usable = pairs.filter { it.first > 0 && it.second > 0 }
@@ -217,7 +225,7 @@ object StrainScorer {
     // ---- Public API ----
 
     /**
-     * Cardiovascular strain (0–21) from an HR series. APPROXIMATE.
+     * Cardiovascular Effort (0–100) from an HR series. APPROXIMATE.
      *
      * Returns null when there are fewer than [minReadings] samples or
      * maxHR ≤ restingHR (invalid HRR).

@@ -48,6 +48,23 @@ struct SleepView: View {
     /// when it differs from the current inputs we rebuild the model.
     @State private var modelKey: SleepInputKey?
 
+    /// Which night the hero hypnogram shows: 0 = last night, N = N sleep-sessions back.
+    /// Snaps back to 0 whenever the data key changes — a stale offset would silently point
+    /// at a different session after a sync. The memoized trend `model` stays cached since
+    /// the trends are night-independent. (#160)
+    @State private var nightOffset = 0
+    /// Memoized decode of the NAVIGATED night (nil when `nightOffset == 0` — the hero reads
+    /// `model.night` then). Rebuilt only in the `nightOffset` / data-key onChange handlers;
+    /// `decodedNight` JSON-decodes, which must never run per body pass (1Hz HR ticks). (#160)
+    @State private var navNight: Night?
+
+    /// Every sleep BLOCK across both sources, UN-deduplicated (`repo.allSleepSessions`) — `repo.sleeps`
+    /// keeps one winner per night for the dashboard, collapsing split-sleep days (a nap + a main
+    /// sleep on the same day) into a single block. The hero groups these by day (`navDays`) and
+    /// merges each day into one Night, so a split day reads as one correctly-totalled night with the
+    /// gaps preserved. Oldest→newest. Falls back to `repo.sleeps` until loaded. (#170)
+    @State private var allSessions: [CachedSleepSession] = []
+
     var body: some View {
         // Resolve the memoized model for THIS render. `SleepInputKey(repo:)` is O(1)-ish
         // (counts + last-row identity), so comparing it every render is cheap. When it matches the cached key we
@@ -78,56 +95,112 @@ struct SleepView: View {
             .onChange(of: key) { newKey in
                 modelKey = newKey
                 model = resolved
+                // New data invalidates a navigated offset — the same offset would silently
+                // point at a different session. Snap back to last night. (#160)
+                nightOffset = 0
+                navNight = nil
+            }
+            // The navigated night is decoded once per ◀/▶ press, never per body pass —
+            // `decodedNight` JSON-decodes and body re-evaluates at 1Hz while HR streams. (#160)
+            .onChange(of: nightOffset) { newOffset in
+                navNight = newOffset == 0 ? nil : decodedNight(at: newOffset)
             }
             .onAppear {
                 if modelKey != key {
                     modelKey = key
                     model = resolved
+                    nightOffset = 0
+                    navNight = nil
                 }
+            }
+            // Load EVERY sleep block across BOTH sources (un-deduplicated) so the hero's ◀/▶ can
+            // browse split-sleep days the dashboard collapses — including Bluetooth-only nights,
+            // whose blocks live under the computed source. Re-runs whenever a sync/import bumps
+            // refreshSeq; snaps back to the newest day and rebuilds the model so offset 0 reflects
+            // the freshly-loaded blocks. (#170)
+            .task(id: repo.refreshSeq) {
+                allSessions = await repo.allSleepSessions()
+                nightOffset = 0
+                navNight = nil
+                modelKey = SleepInputKey(repo: repo)
+                model = SleepModel.build(repo: repo)
             }
         }
     }
 
     // MARK: - 0. HERO — sleep performance ring
 
-    @ViewBuilder
     private func sleepHero(_ model: SleepModel) -> some View {
-        let night = model.night
+        // Offset 0 reads the memoized latest night; navigated offsets read the cached
+        // `navNight` — never a fresh decode here (this runs on every 1Hz HR tick). When a
+        // navigated day decoded to no usable stages, the header stays on that REAL day's
+        // date/times with an honest placeholder — never the latest night silently rendered
+        // under a navigated label. The ◀/▶ header browses split-sleep days (#160, #170);
+        // the RecoveryRing + supporting line is our fork's hero redesign.
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            if nightOffset == 0 {
+                nightNavHeader(trailing: headerLine(model.night))
+                heroCard(model.night, performance: model.performance,
+                         needMin: model.needMin, isPersisted: model.isPersistedHypnogram)
+            } else if let night = navNight {
+                nightNavHeader(trailing: headerLine(night))
+                // A navigated night has no per-night performance %; show the honest no-score
+                // ring with its own asleep/need supporting line.
+                heroCard(night, performance: model.performance,
+                         needMin: model.needMin, isPersisted: (night.realSegments?.count ?? 0) >= 2,
+                         showsPerformance: false)
+            } else if let session = sessionRow(at: nightOffset) {
+                // Stage-less stub purely to reuse Night's date/time formatting.
+                let stub = Night(session: session, stages: Stages(awake: 0, light: 0, deep: 0, rem: 0))
+                nightNavHeader(trailing: headerLine(stub))
+                NoopCard {
+                    noStagePlaceholder
+                        .frame(maxWidth: .infinity)
+                        .frame(height: NoopMetrics.chartHeight)
+                }
+            }
+        }
+    }
+
+    /// Our fork's hero card: the sleep-performance RecoveryRing left/top, the supporting
+    /// asleep/need line and the detail subline. Fed by whichever Night the ◀/▶ nav selected.
+    @ViewBuilder
+    private func heroCard(_ night: Night, performance: SleepModel.Metric,
+                          needMin: Double, isPersisted: Bool, showsPerformance: Bool = true) -> some View {
         // model.needMin is precomputed in SleepModel.build — no per-render repo pass here.
         // SleepNeed.needMin floors at ~7.5h, so the need is always present.
         // Non-breaking spaces inside each duration so the line never wraps mid-duration ("7h / 30m").
         let asleepText = durationText(night.stages.asleep).replacingOccurrences(of: " ", with: "\u{00A0}")
-        let needText = durationText(model.needMin).replacingOccurrences(of: " ", with: "\u{00A0}")
+        let needText = durationText(needMin).replacingOccurrences(of: " ", with: "\u{00A0}")
         let supporting = String(localized: "\(asleepText) asleep · \(needText) needed")
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Last night", overline: "Sleep",
-                          trailing: "\(night.dateLabel) · \(night.onsetText)–\(night.wakeText)")
-            NoopCard {
-                // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 28) {
-                        heroRing(model, supporting: supporting)
-                        Text(heroSubline(model))
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    VStack(spacing: 10) {
-                        heroRing(model, supporting: supporting)
-                        Text(heroSubline(model))
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
+        let perf = showsPerformance ? performance.latest : nil
+        NoopCard {
+            // Wide (mac): ring left, details right. Narrow (iPhone): stacked, centered.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 28) {
+                    heroRing(perf, supporting: supporting)
+                    Text(heroSubline(night, performance: performance, isPersisted: isPersisted,
+                                     showsPerformance: showsPerformance))
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
                 }
+                VStack(spacing: 10) {
+                    heroRing(perf, supporting: supporting)
+                    Text(heroSubline(night, performance: performance, isPersisted: isPersisted,
+                                     showsPerformance: showsPerformance))
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
     }
 
     /// Ring with score, or a zero-fill track with "—" when no performance value exists.
     @ViewBuilder
-    private func heroRing(_ model: SleepModel, supporting: String) -> some View {
-        if let perf = model.performance.latest {
+    private func heroRing(_ perf: Double?, supporting: String) -> some View {
+        if let perf {
             RecoveryRing(score: perf, supporting: supporting,
                          diameter: 180, lineWidth: 14,
                          centerText: "\(Int(perf.rounded()))%",
@@ -141,15 +214,16 @@ struct SleepView: View {
     }
 
     /// "8h 01m in bed · 90% efficiency[ · performance +3% vs typical][ · stages approximate (on-device)]"
-    private func heroSubline(_ model: SleepModel) -> String {
-        var parts = [String(localized: "\(durationText(model.night.timeInBed)) in bed"),
-                     String(localized: "\(efficiencyText(model.night)) efficiency")]
+    private func heroSubline(_ night: Night, performance: SleepModel.Metric,
+                             isPersisted: Bool, showsPerformance: Bool) -> String {
+        var parts = [String(localized: "\(durationText(night.timeInBed)) in bed"),
+                     String(localized: "\(efficiencyText(night)) efficiency")]
         // The dropped Sleep Performance tile carried a "vs typical" caption — zero
-        // information loss: it lives here now.
-        if let perf = model.performance.latest, let typical = model.performance.typical, typical != 0 {
+        // information loss: it lives here now (only for the latest night, which has a perf %).
+        if showsPerformance, let perf = performance.latest, let typical = performance.typical, typical != 0 {
             parts.append(String(localized: "performance \(vsTypical(perf, typical, suffix: "%"))"))
         }
-        if model.isPersistedHypnogram { parts.append(String(localized: "stages approximate (on-device)")) }
+        if isPersisted { parts.append(String(localized: "stages approximate (on-device)")) }
         return parts.joined(separator: " · ")
     }
 
@@ -157,11 +231,20 @@ struct SleepView: View {
 
     @ViewBuilder
     private func nightTimeline(_ model: SleepModel) -> some View {
-        let night = model.night
+        // Feed the timeline from whichever Night the ◀/▶ nav selected: offset 0 uses the
+        // memoized latest night + intervals; a navigated night uses its own decoded timeline.
+        // A navigated day with no usable stages is already handled by the hero placeholder, so
+        // here we simply skip the timeline. (#160, #170)
+        if nightOffset == 0 {
+            nightTimelineCard(model.night, intervals: model.intervals)
+        } else if let night = navNight {
+            nightTimelineCard(night, intervals: night.intervals)
+        }
+    }
+
+    @ViewBuilder
+    private func nightTimelineCard(_ night: Night, intervals: [SleepInterval]) -> some View {
         let s = night.stages
-        // Intervals are reconstructed ONCE in the model build, not on every body pass
-        // (Night.intervals is a computed property and was previously evaluated twice here).
-        let intervals = model.intervals
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             ChartCard(
                 title: "Stage breakdown",
@@ -204,6 +287,24 @@ struct SleepView: View {
         .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(stage.label): \(durationText(minutes)), \(pct(minutes, total)) percent")
+    }
+
+    /// "date · onset–wake" — the nav header's trailing line. A day whose sleep crosses midnight
+    /// (onset and wake on different calendar dates) shows the span, e.g. "Fri 13 → Sat 14 Jun".
+    private func headerLine(_ night: Night) -> String {
+        "\(spanLabel(night)) · \(night.onsetText)–\(night.wakeText)"
+    }
+
+    /// Date label that becomes a span when the night crosses midnight (onset on a different
+    /// calendar day from wake) — e.g. "Fri 13 → Sat 14 Jun" — otherwise a single date. Computed
+    /// here because the shared `Night` (Strand/Data/SleepModel.swift) carries totals-only
+    /// formatting; this lets an aggregated split-sleep day read honestly. (#170)
+    private func spanLabel(_ night: Night) -> String {
+        let onsetDay = Date(timeIntervalSince1970: TimeInterval(night.session.startTs))
+        let wakeDay  = Date(timeIntervalSince1970: TimeInterval(night.session.endTs))
+        let cal = Calendar.current
+        if cal.isDate(onsetDay, inSameDayAs: wakeDay) { return night.dateLabel }
+        return "\(SleepView.spanFmt.string(from: onsetDay)) → \(SleepView.dateFmt.string(from: wakeDay))"
     }
 
     /// Full-width proportional stacked stage bar (fallback when no intervals).
@@ -430,6 +531,167 @@ struct SleepView: View {
         }
     }
 
+    // MARK: - Past-night navigation (split-sleep aware) (#160, #170)
+
+    /// The browsable block list: every sleep session un-deduplicated (incl. same-day naps / split
+    /// sleep). Falls back to `repo.sleeps` (one-per-night) until the fuller list loads, so the hero
+    /// is never empty during the first frame. (#170)
+    private var navSessions: [CachedSleepSession] {
+        allSessions.isEmpty ? repo.sleeps : allSessions
+    }
+
+    /// The browsable DAY list: every block grouped by the calendar day it ENDS on (matching the
+    /// dashboard's per-night merge), newest day first, blocks within a day oldest→newest. Each day
+    /// is ONE ◀/▶ stop, so a split-sleep day reads as a single night and the "N nights ago" label
+    /// stays truthful — two blocks of the same day are never "1 night ago" AND "2 nights ago". (#170)
+    private var navDays: [[CachedSleepSession]] {
+        let cal = Calendar.current
+        func endDay(_ s: CachedSleepSession) -> Date {
+            cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(s.endTs)))
+        }
+        let groups = Dictionary(grouping: navSessions, by: endDay)
+        return groups.keys.sorted(by: >).map { key in
+            (groups[key] ?? []).sorted { $0.startTs < $1.startTs }
+        }
+    }
+
+    /// Merge all of a day's blocks into ONE `Night`: stage minutes summed, each block's timeline
+    /// concatenated onto a single axis with the REAL gap between blocks preserved, efficiency
+    /// recomputed over time-in-bed (carried on the synthetic session so a navigated day never
+    /// borrows `repo.today`'s efficiency). Returns nil if no block decodes to usable stages. (#170)
+    private func mergeDay(_ sessions: [CachedSleepSession]) -> Night? {
+        guard let first = sessions.first,
+              let last = sessions.max(by: { $0.endTs < $1.endTs }) else { return nil }
+        let onset = first.startTs, wake = last.endTs
+        var stages = Stages(awake: 0, light: 0, deep: 0, rem: 0)
+        var segs: [SleepInterval] = []
+        for s in sessions {
+            let shift = TimeInterval(s.startTs - onset)
+            if let seg = decodeSegments(s.stagesJSON, sessionStart: s.startTs), seg.stages.total > 0 {
+                stages.awake += seg.stages.awake; stages.light += seg.stages.light
+                stages.deep  += seg.stages.deep;  stages.rem   += seg.stages.rem
+                for iv in seg.intervals {
+                    segs.append(SleepInterval(stage: iv.stage, start: iv.start + shift, end: iv.end + shift))
+                }
+            } else if let st = decodeStages(s.stagesJSON), st.total > 0 {
+                stages.awake += st.awake; stages.light += st.light
+                stages.deep  += st.deep;  stages.rem   += st.rem
+            }
+        }
+        guard stages.asleep > 0 else { return nil }
+        let eff = stages.total > 0 ? stages.asleep / stages.total : nil   // fraction ≤ 1
+        let synth = CachedSleepSession(startTs: onset, endTs: wake, efficiency: eff,
+                                       restingHr: nil, avgHrv: nil, stagesJSON: nil)
+        let realSegs = segs.count >= 2 ? segs.sorted { $0.start < $1.start } : nil
+        return Night(session: synth, stages: stages, realSegments: realSegs)
+    }
+
+    /// The merged Night for the DAY `offset` stops back from the most recent (0 = last night).
+    /// Backs the hero's ◀/▶ navigation via the `navNight` cache — JSON-decodes, so it only runs
+    /// from the onChange handlers, never per render. (#160, #170)
+    private func decodedNight(at offset: Int) -> Night? {
+        let days = navDays
+        guard offset >= 0, offset < days.count else { return nil }
+        return mergeDay(days[offset])
+    }
+
+    /// A synthetic session spanning the DAY `offset` stops back (onset of its first block → wake of
+    /// its last), for the honest no-stage-data header when a day's blocks don't decode to usable
+    /// stages. (#160, #170)
+    private func sessionRow(at offset: Int) -> CachedSleepSession? {
+        let days = navDays
+        guard offset >= 0, offset < days.count,
+              let first = days[offset].first,
+              let last = days[offset].max(by: { $0.endTs < $1.endTs }) else { return nil }
+        return CachedSleepSession(startTs: first.startTs, endTs: last.endTs,
+                                  efficiency: nil, restingHr: nil, avgHrv: nil, stagesJSON: nil)
+    }
+
+    /// Header above the hero with ◀/▶ to browse past nights. ◀ goes older (increasing offset),
+    /// ▶ goes newer; each is disabled at its bound. The canonical SectionHeader carries the
+    /// hierarchy so the hero reads like every other section. (#160)
+    @ViewBuilder
+    private func nightNavHeader(trailing: String) -> some View {
+        let lastIndex = max(navDays.count - 1, 0)
+        let title: LocalizedStringKey = nightOffset == 0 ? "Last night"
+            : (nightOffset == 1 ? "1 night ago" : "\(nightOffset) nights ago")
+        HStack(spacing: 12) {
+            Button { if nightOffset < lastIndex { nightOffset += 1 } } label: {
+                Image(systemName: "chevron.left")
+                    .font(StrandFont.headline)
+                    .foregroundStyle(nightOffset >= lastIndex ? StrandPalette.textTertiary : StrandPalette.accent)
+            }
+            .buttonStyle(.plain)
+            .disabled(nightOffset >= lastIndex)
+            .accessibilityLabel("Previous night")
+
+            SectionHeader(title, overline: "Sleep", trailing: trailing)
+
+            Button { if nightOffset > 0 { nightOffset -= 1 } } label: {
+                Image(systemName: "chevron.right")
+                    .font(StrandFont.headline)
+                    .foregroundStyle(nightOffset == 0 ? StrandPalette.textTertiary : StrandPalette.accent)
+            }
+            .buttonStyle(.plain)
+            .disabled(nightOffset == 0)
+            .accessibilityLabel("Next night")
+        }
+    }
+
+    // MARK: - Stage decoding (for the navigated split-sleep merge)
+    //
+    // The shared SleepModel layer (Strand/Data/SleepModel.swift) owns the same decoders for the
+    // dashboard's latest-night build; these instance copies back `mergeDay`, which assembles a
+    // navigated day's blocks here in the view.
+
+    /// Decode the imported stagesJSON dict of MINUTES {"light","deep","rem","awake"}.
+    private func decodeStages(_ json: String?) -> Stages? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        guard let obj = try? JSONSerialization.jsonObject(with: data),
+              let dict = obj as? [String: Any] else { return nil }
+        func val(_ key: String) -> Double {
+            if let n = dict[key] as? NSNumber { return n.doubleValue }
+            if let d = dict[key] as? Double { return d }
+            if let i = dict[key] as? Int { return Double(i) }
+            return 0
+        }
+        let s = Stages(awake: val("awake"), light: val("light"),
+                       deep: val("deep"), rem: val("rem"))
+        return s.total > 0 ? s : nil
+    }
+
+    /// Decode the COMPUTED stagesJSON segment array [{"start":epoch,"end":epoch,"stage":"wake"|
+    /// "light"|"deep"|"rem"}] into stage totals plus the real timeline (seconds relative to the
+    /// session start, the Hypnogram's domain). The on-device SleepStager calls awake "wake". (#77)
+    private func decodeSegments(
+        _ json: String?, sessionStart: Int
+    ) -> (stages: Stages, intervals: [SleepInterval])? {
+        guard let json, let data = json.data(using: .utf8),
+              let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+              !arr.isEmpty else { return nil }
+        var stages = Stages(awake: 0, light: 0, deep: 0, rem: 0)
+        var intervals: [SleepInterval] = []
+        for seg in arr {
+            guard let start = (seg["start"] as? NSNumber)?.intValue,
+                  let end = (seg["end"] as? NSNumber)?.intValue, end > start,
+                  let name = seg["stage"] as? String else { continue }
+            let minutes = Double(end - start) / 60.0
+            let stage: SleepStage
+            switch name {
+            case "wake", "awake": stage = .awake; stages.awake += minutes
+            case "light": stage = .light; stages.light += minutes
+            case "deep": stage = .deep; stages.deep += minutes
+            case "rem": stage = .rem; stages.rem += minutes
+            default: continue
+            }
+            intervals.append(SleepInterval(
+                stage: stage,
+                start: TimeInterval(start - sessionStart),
+                end: TimeInterval(end - sessionStart)))
+        }
+        return stages.total > 0 ? (stages, intervals) : nil
+    }
+
     private func trendRange(_ pts: [TrendPoint]) -> ClosedRange<Double> {
         let vals = pts.map(\.value)
         let lo = Swift.max(0, (vals.min() ?? 0) - 1)
@@ -568,6 +830,16 @@ struct SleepView: View {
             .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    /// Hero chart slot for a NAVIGATED session with no decodable stages — honest about the
+    /// gap instead of rendering the latest night under a navigated label. (#160)
+    private var noStagePlaceholder: some View {
+        Text("No stage data recorded for this night.")
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     // MARK: - Formatting helpers
 
     private func pct(_ minutes: Double, _ total: Double) -> Int {
@@ -638,6 +910,18 @@ struct SleepView: View {
         return tail.count > 1 ? tail : nil
     }
 
+    // MARK: - Date formatting for the nav header's cross-midnight span
+    //
+    // The shared `Night` (Strand/Data/SleepModel.swift) formats a single onset date; an
+    // aggregated split-sleep day can cross midnight, so `spanLabel(_:)` above formats the span
+    // with these. `EEE d MMM` matches Night.dateLabel's wake side; `EEE d` is the onset side. (#170)
+    private static let dateFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f
+    }()
+    /// Onset side of a cross-midnight span — no month (the wake side carries it): "Fri 13".
+    private static let spanFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE d"; return f
+    }()
 }
 
 // MARK: - Preview

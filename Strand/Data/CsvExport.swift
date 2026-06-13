@@ -72,8 +72,13 @@ enum CsvExport {
 
             // Workouts: imported WHOOP ∪ on-device detected. Apple-Health workouts are intentionally
             // omitted (read only the two NOOP sources), matching the cycles/sleep exclusion.
-            let workouts = (try await store.workouts(deviceId: deviceId, from: 0, to: hi, limit: 100_000))
-                + (try await store.workouts(deviceId: computedId, from: 0, to: hi, limit: 100_000))
+            // Dedup by (startTs, sport), imported (deviceId) first so it wins — the same session can
+            // exist under both ids (e.g. a reimported export + BLE re-detection), which double-counted
+            // it in the CSV and inflated totals on reimport. (PR #97 review, tigercraft4.)
+            var seenWorkouts = Set<String>()
+            let workouts = ((try await store.workouts(deviceId: deviceId, from: 0, to: hi, limit: 100_000))
+                + (try await store.workouts(deviceId: computedId, from: 0, to: hi, limit: 100_000)))
+                .filter { seenWorkouts.insert("\($0.startTs)|\($0.sport)").inserted }
 
             // Journal lives under the imported deviceId (WhoopImporter writes it there). Native
             // in-app journal logging is an Android/PR-#97 feature not present in this Mac build, so
@@ -109,12 +114,17 @@ enum CsvExport {
             panel.canCreateDirectories = true
             guard panel.runModal() == .OK, let dest = panel.url else { return .cancelled }
 
-            // NSSavePanel already confirmed overwrite; remove the stale file so Archive(.create) gets
-            // a clean path (it appends to, rather than truncates, an existing zip).
+            // Write to a temp path first, then swap into place — deleting the destination before a
+            // write that can throw destroyed the user's previous export on failure (PR #97 review,
+            // tigercraft4). replaceItemAt is atomic on APFS; the original survives a failed write.
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".zip")
+            try WhoopCsvExporter.writeArchive(entries: entries, to: tmp)
             if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
+                _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp)
+            } else {
+                try FileManager.default.moveItem(at: tmp, to: dest)
             }
-            try WhoopCsvExporter.writeArchive(entries: entries, to: dest)
             return .exported(dest)
             #else
             // iOS: stage the zip in a temp dir, then hand it to the system document picker so the

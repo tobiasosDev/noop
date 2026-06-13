@@ -405,6 +405,62 @@ object HealthConnectImporter {
         )
     }
 
+    /**
+     * Live top-up of TODAY's Health Connect step total (#150 follow-up). [import] is a manual
+     * one-shot, so today's stored steps freeze at import time while the real count keeps climbing —
+     * past days were fine, today wasn't. This does ONE StepsRecord read over [startOfDay, now],
+     * bucketed by record START day exactly like [import], and rewrites only today's "health-connect"
+     * [AppleDaily] row. The existing row is read first and updated via `copy(steps = …)` because
+     * [WhoopRepository.upsertAppleDaily] is a Room `@Upsert` — on a (deviceId, day) conflict it
+     * REPLACES the whole row, so a fresh steps-only row would null every other column.
+     *
+     * Returns the live sum, or the stored count when today read zero, or null when Health Connect
+     * is unavailable / steps aren't granted / there's nothing at all. Never throws.
+     */
+    suspend fun refreshTodaySteps(context: Context, repo: WhoopRepository): Int? {
+        if (sdkStatus(context) != HealthConnectClient.SDK_AVAILABLE) return null
+        val client = client(context)
+        val granted = try {
+            client.permissionController.getGrantedPermissions()
+        } catch (e: Exception) {
+            return null
+        }
+        if (HealthPermission.getReadPermission(StepsRecord::class) !in granted) return null
+
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val dayKey = today.toString()
+        var sum = 0L
+        // readAll swallows a failed read (sum stays 0), so a flaky provider degrades to the stored
+        // row below rather than clobbering it with zero.
+        readAll(
+            client, StepsRecord::class,
+            TimeRangeFilter.between(today.atStartOfDay(zone).toInstant(), Instant.now()),
+        ) { r ->
+            // The filter matches by overlap — drop records that STARTED yesterday so the bucketing
+            // agrees with [import]'s dayOf(r.startTime).
+            if (LocalDate.ofInstant(r.startTime, zone) == today) sum += r.count
+        }
+
+        val existing = try {
+            repo.appleDaily(HC_DEVICE, dayKey, dayKey).firstOrNull()
+        } catch (e: Exception) {
+            null
+        }
+        // Zero is indistinguishable from "no data yet today" — never overwrite a stored count with it.
+        if (sum <= 0L) return existing?.steps
+
+        val updated = existing?.copy(steps = sum.toInt())
+            ?: AppleDaily(deviceId = HC_DEVICE, day = dayKey, steps = sum.toInt())
+        try {
+            if (existing == null) repo.upsertDevice(HC_DEVICE, name = "Health Connect")
+            repo.upsertAppleDaily(listOf(updated))
+        } catch (e: Exception) {
+            return existing?.steps
+        }
+        return sum.toInt()
+    }
+
     // MARK: - paginated read helper
 
     /**

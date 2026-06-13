@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -51,6 +52,7 @@ import com.noop.data.ImportSummary
 import com.noop.ingest.AppleHealthImporter
 import com.noop.ingest.HealthConnectImporter
 import com.noop.ingest.HealthConnectWriter
+import com.noop.ingest.NutritionCsvImporter
 import com.noop.ingest.WhoopCsvImporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,6 +78,10 @@ import kotlinx.coroutines.withContext
  *                     [com.noop.ingest.AppleHealthImporter].
  *   - Health Connect— native Android import (steps/HR/HRV/sleep/SpO₂/weight/workouts) via
  *                     [com.noop.ingest.HealthConnectImporter], gated on runtime permission.
+ *   - Nutrition CSV — daily calories / macros / body weight from a nutrition CSV
+ *                     (MyFitnessPal, Cronometer, or any date+columns spreadsheet) via
+ *                     [com.noop.ingest.NutritionCsvImporter], stored as metricSeries rows
+ *                     under source "nutrition-csv".
  *   - WHOOP Strap   — the live BLE bond/stream status, straight from the LiveState flow.
  *   - Backup        — Export / Import the whole on-device database through [DataBackup],
  *                     wired to ActivityResult document launchers.
@@ -100,6 +106,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
     // export so each card reflects its own data rather than both showing under Apple Health (issue #34).
     var hcDays by remember { mutableStateOf<Int?>(null) }
     var hcWorkouts by remember { mutableStateOf<Int?>(null) }
+    // Nutrition CSV writes long-format metricSeries rows under its own source ("nutrition-csv"),
+    // so its card counts days-with-calories and weigh-ins straight off that table.
+    var nutritionDays by remember { mutableStateOf<Int?>(null) }
+    var nutritionWeighIns by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) {
         val now = System.currentTimeMillis() / 1000
@@ -110,6 +120,8 @@ fun DataSourcesScreen(vm: AppViewModel) {
         appleWorkouts = vm.repo.workouts("apple-health", 0L, now).size
         hcDays = vm.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31").size
         hcWorkouts = vm.repo.workouts("health-connect", 0L, now).size
+        nutritionDays = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "calories_in", "0000-01-01", "9999-12-31").size
+        nutritionWeighIns = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "weight", "0000-01-01", "9999-12-31").size
     }
 
     // Whole-store backup: export to a user-created document; import from a picked one.
@@ -163,6 +175,8 @@ fun DataSourcesScreen(vm: AppViewModel) {
         appleWorkouts = vm.repo.workouts("apple-health", 0L, nowS).size
         hcDays = vm.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31").size
         hcWorkouts = vm.repo.workouts("health-connect", 0L, nowS).size
+        nutritionDays = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "calories_in", "0000-01-01", "9999-12-31").size
+        nutritionWeighIns = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "weight", "0000-01-01", "9999-12-31").size
     }
 
     // Run an importer off the main thread, refresh the counts, then toast the result.
@@ -186,6 +200,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
     val appleImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> if (uri != null) runImport { AppleHealthImporter.importExport(context, uri, vm.repo) } }
+
+    val nutritionImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) runImport { NutritionCsvImporter.importCsv(context, uri, vm.repo) } }
 
     // Health Connect permission request → import once granted.
     val hcPermissionLauncher = rememberLauncherForActivityResult(
@@ -423,6 +441,32 @@ fun DataSourcesScreen(vm: AppViewModel) {
             } else {
                 RoadmapNote("Health Connect isn't set up on this device — install it from Google Play, then return here to import.")
             }
+        }
+
+        // --- Nutrition CSV (calories / macros / body weight) ---
+        SourceCard(
+            title = "Nutrition (CSV)",
+            icon = Icons.Filled.Restaurant,
+            subtitle = "Import daily calories, protein, carbs, fat and body weight from a " +
+                "nutrition CSV — a MyFitnessPal or Cronometer export, or any spreadsheet " +
+                "with a date column plus those values. Meal-level rows are summed per day.",
+        ) {
+            val hasNutrition = (nutritionDays ?: 0) > 0 || (nutritionWeighIns ?: 0) > 0
+            StatePill(
+                title = if (hasNutrition) "Imported" else "Nothing imported",
+                tone = if (hasNutrition) StrandTone.Accent else StrandTone.Neutral,
+                showsDot = true,
+            )
+            CountLine(
+                primary = nutritionDays?.let { "$it days logged" } ?: "—",
+                secondary = nutritionWeighIns?.let { "$it weigh-ins" } ?: "Counting…",
+            )
+            BackupButton(
+                label = "Import nutrition CSV…",
+                icon = Icons.Filled.FileUpload,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { nutritionImportLauncher.launch(arrayOf("*/*")) }
         }
 
         // --- Live WHOOP strap over BLE ---

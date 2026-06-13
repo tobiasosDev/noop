@@ -145,7 +145,7 @@ private data class DrawerGroup(val header: String, val items: List<Destination>)
 private val drawerGroups: List<DrawerGroup> = listOf(
     DrawerGroup("Overview", listOf(Destination.Today, Destination.Intelligence)),
     DrawerGroup("Live", listOf(Destination.Live, Destination.Intervals)),
-    DrawerGroup("Recovery", listOf(Destination.Sleep, Destination.Breathe, Destination.Stress)),
+    DrawerGroup("Charge", listOf(Destination.Sleep, Destination.Breathe, Destination.Stress)),
     DrawerGroup("Activity", listOf(Destination.Workouts, Destination.Trends)),
     DrawerGroup("Insight", listOf(
         Destination.Coach, Destination.Insights, Destination.Explore, Destination.Compare,

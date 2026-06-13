@@ -40,8 +40,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WorkoutRow::class,
         DismissedWorkout::class,
         AppleDaily::class,
+        PpgHrSample::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class WhoopDatabase : RoomDatabase() {
@@ -119,12 +120,30 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v5 -> v6: ADDITIVE — adds the `ppgHrSample` table (#156): HR derived from the WHOOP 5/MG
+         * v26 optical PPG waveform (autocorrelation). CREATE TABLE only (no existing data touched), so
+         * already-offloaded raw streams survive (the strap trims acked history and won't re-send it).
+         * The SQL MUST match Room's generated schema for [PpgHrSample] exactly — every column NOT NULL
+         * (Kotlin defaults, no SQL DEFAULT), `conf` is REAL, composite PRIMARY KEY (deviceId, ts) in
+         * declaration order. Guarded by MigrationRoundTripTest like the others.
+         */
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ppgHrSample` (`deviceId` TEXT NOT NULL, " +
+                        "`ts` INTEGER NOT NULL, `bpm` INTEGER NOT NULL, `conf` REAL NOT NULL, " +
+                        "`synced` INTEGER NOT NULL, PRIMARY KEY(`deviceId`, `ts`))",
+                )
+            }
+        }
+
         private fun build(appContext: Context): WhoopDatabase =
             Room.databaseBuilder(appContext, WhoopDatabase::class.java, DB_NAME)
                 // Real additive migration — NO destructive fallback (see the class doc): with
                 // exportSchema=false a silent rebuild would lose already-acked, non-resendable strap
                 // history on any schema mismatch. Room throws loudly instead; CI guards the SQL.
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

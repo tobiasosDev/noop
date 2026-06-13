@@ -27,7 +27,9 @@ import kotlin.math.roundToInt
  */
 class AiCoach(private val repo: WhoopRepository) {
 
-    /** The device key the rest of the app reads/writes daily metrics under. */
+    /** The device key the rest of the app reads/writes daily metrics under. Coach reads go
+     *  through the MERGED raw+computed view ([WhoopRepository.daysMerged]) — the same per-field
+     *  coalesce every screen uses — so on-device "-noop" scores are visible too (#124). */
     private val deviceId = "my-whoop"
 
     private val http: OkHttpClient = OkHttpClient.Builder()
@@ -70,7 +72,9 @@ class AiCoach(private val repo: WhoopRepository) {
 
         // Include the user's data ONLY with explicit consent; otherwise a note, never their numbers.
         val grounded = if (consent) {
-            val days = runCatching { repo.days(deviceId) }.getOrDefault(emptyList())
+            // Merged read, NOT raw days(): a live-strap user's scores live under "my-whoop-noop"
+            // and a raw read misses them — the coach then claimed it had no data. (#124)
+            val days = runCatching { repo.daysMerged(deviceId) }.getOrDefault(emptyList())
             injectContext(history, buildContext(days))
         } else {
             injectContext(history, NO_CONSENT_NOTE)
@@ -152,8 +156,8 @@ class AiCoach(private val repo: WhoopRepository) {
 
     /**
      * Compact plain-text summary of the user's recent data: the last ~14 days of
-     * recovery / day-strain / sleep-hours / HRV / resting-HR (where present), 30-day averages,
-     * and a recent-workouts line derived from logged exercise counts and day strain.
+     * charge / effort / rest-hours / HRV / resting-HR (where present), 30-day averages,
+     * and a recent-workouts line derived from logged exercise counts and effort.
      *
      * Kept well under ~1500 tokens. If there is no data at all, says so explicitly so the
      * model doesn't invent numbers.
@@ -165,7 +169,7 @@ class AiCoach(private val repo: WhoopRepository) {
                 "to sync their strap so future advice can reference their real metrics."
         }
 
-        // days() returns oldest-first; take the most recent up to 30 for averages, 14 for the table.
+        // daysMerged() returns oldest-first; take the most recent up to 30 for averages, 14 for the table.
         val last30 = days.takeLast(30)
         val last14 = days.takeLast(14)
 
@@ -181,15 +185,15 @@ class AiCoach(private val repo: WhoopRepository) {
             val hrv = d.avgHrv?.let { "${it.roundToInt()}ms" } ?: "-"
             val rhr = d.restingHr?.let { "${it}bpm" } ?: "-"
             sb.append(
-                "  ${d.day}: recovery $recovery, strain $strain, sleep $sleepH, HRV $hrv, RHR $rhr\n"
+                "  ${d.day}: charge $recovery, effort $strain, rest $sleepH, HRV $hrv, RHR $rhr\n"
             )
         }
 
         // --- 30-day averages ---
         sb.append("\n30-day averages (over ${last30.size} days):\n")
-        sb.append("  recovery ${avgInt(last30) { it.recovery }}%, ")
-        sb.append("strain ${avg1(last30) { it.strain }}, ")
-        sb.append("sleep ${avg1(last30) { d -> d.totalSleepMin?.div(60.0) }}h, ")
+        sb.append("  charge ${avgInt(last30) { it.recovery }}%, ")
+        sb.append("effort ${avg1(last30) { it.strain }}, ")
+        sb.append("rest ${avg1(last30) { d -> d.totalSleepMin?.div(60.0) }}h, ")
         sb.append("HRV ${avgInt(last30) { it.avgHrv }}ms, ")
         sb.append("RHR ${avgInt(last30) { d -> d.restingHr?.toDouble() }}bpm\n")
         // Additional vitals when present (#124 — the coach used to see only recovery/strain/sleep/HRV/RHR).
@@ -208,7 +212,7 @@ class AiCoach(private val repo: WhoopRepository) {
             for (d in workoutDays.reversed()) {
                 val n = d.exerciseCount ?: 0
                 val label = if (n == 1) "1 workout" else "$n workouts"
-                val strain = d.strain?.let { ", day strain ${fmt1(it)}" } ?: ""
+                val strain = d.strain?.let { ", effort ${fmt1(it)}" } ?: ""
                 sb.append("  ${d.day}: $label$strain\n")
             }
         }
@@ -217,7 +221,7 @@ class AiCoach(private val repo: WhoopRepository) {
         days.lastOrNull()?.let { latest ->
             val r = latest.recovery?.let { "${it.roundToInt()}%" } ?: "n/a"
             val s = latest.strain?.let { fmt1(it) } ?: "n/a"
-            sb.append("\nMost recent day (${latest.day}): recovery $r, day strain $s.\n")
+            sb.append("\nMost recent day (${latest.day}): charge $r, effort $s.\n")
         }
 
         return sb.toString().trim()
@@ -413,12 +417,13 @@ class AiCoach(private val repo: WhoopRepository) {
          */
         const val SYSTEM_PROMPT =
             "You are an elite, supportive recovery and performance coach with a real training " +
-                "methodology. You may be given a summary of the user's own wearable data (recovery " +
-                "%, day strain 0-21, sleep, HRV, resting heart rate) and recent workouts. Coach " +
-                "using autoregulation: recovery 67-100% = green light to build/push, higher strain " +
-                "is fine; 34-66% = maintain, quality over volume, keep it controlled; 0-33% = active " +
-                "recovery only (Zone 2, mobility, extra sleep) and protect against accumulating " +
-                "strain debt. Optimise workouts with progressive overload, polarised ~80/20 " +
+                "methodology. You may be given a summary of the user's own wearable data (charge " +
+                "0-100, effort 0-100, rest/sleep, HRV, resting heart rate) and recent workouts. " +
+                "Charge is the daily recovery/readiness score; effort is the day's cardiovascular " +
+                "load. Coach using autoregulation: charge 67-100 = green light to build/push, " +
+                "higher effort is fine; 34-66 = maintain, quality over volume, keep it controlled; " +
+                "0-33 = active recovery only (Zone 2, mobility, extra sleep) and protect against " +
+                "accumulating effort debt. Optimise workouts with progressive overload, polarised ~80/20 " +
                 "intensity, spacing hard sessions, deloads/periodisation, and treat sleep as the " +
                 "biggest recovery lever. Always cite the user's ACTUAL numbers, give a concrete plan " +
                 "(today and the week), and be specific, punchy and motivating. If no data is " +

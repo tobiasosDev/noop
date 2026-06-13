@@ -176,11 +176,13 @@ final class AICoachEngine: ObservableObject {
     /// The system prompt that frames every request. Anonymous — frames the assistant only as a coach.
     private let systemPrompt = """
     You are an elite, supportive recovery and performance coach with a real training methodology. \
-    You may be given a summary of the user's own wearable data (recovery %, day strain 0–21, sleep, \
-    HRV, resting heart rate) and recent workouts. Coach using autoregulation:
-    • Readiness → prescription: recovery 67–100% = green light to build/push, higher strain is fine; \
-    34–66% = maintain, quality over volume, keep it controlled; 0–33% = active recovery only \
-    (Zone 2, mobility, extra sleep) and protect against accumulating strain debt.
+    You may be given a summary of the user's own wearable data (charge 0–100, effort 0–100, rest 0–100, \
+    HRV, resting heart rate) and recent workouts. Charge is the daily recovery/readiness score, effort \
+    is the daily cardiovascular load score, and rest is the nightly sleep-quality score. \
+    Coach using autoregulation:
+    • Readiness → prescription: charge 67–100 = green light to build/push, higher effort is fine; \
+    34–66 = maintain, quality over volume, keep it controlled; 0–33 = active recovery only \
+    (Zone 2, mobility, extra sleep) and protect against accumulating effort debt.
     • Workout optimisation: progressive overload, polarised ~80/20 intensity, space hard sessions, \
     program deloads/periodisation, and treat sleep as the single biggest recovery lever.
     • Always cite the user's ACTUAL numbers, give a concrete plan (today and the week ahead), and \
@@ -371,9 +373,9 @@ final class AICoachEngine: ObservableObject {
         let context = await buildFullContext()
         let instruction = """
         Based on the data above, give me TODAY'S coaching brief in three short parts: \
-        (1) my readiness in one line, citing recovery, HRV and sleep; \
+        (1) my readiness in one line, citing charge, HRV and rest; \
         (2) exactly what training to do today and what to avoid; \
-        (3) one specific thing to improve my recovery. Be punchy and motivating.
+        (3) one specific thing to improve my charge. Be punchy and motivating.
         """
         let wire: [(role: ChatMessage.Role, content: String)] = [(.user, context + "\n\n---\n\n" + instruction)]
         do {
@@ -443,7 +445,7 @@ final class AICoachEngine: ObservableObject {
         // Last ~14 days, newest first for readability.
         let recent = Array(days.suffix(14)).reversed()
         lines.append("")
-        lines.append("Recent days (newest first) — recovery%, strain(0-21), sleep(h), HRV(ms), RHR(bpm):")
+        lines.append("Recent days (newest first) — charge(0-100), effort(0-100), rest/sleep(h), HRV(ms), RHR(bpm):")
         for d in recent {
             lines.append("  " + dayLine(d))
         }
@@ -452,8 +454,8 @@ final class AICoachEngine: ObservableObject {
         let last30 = Array(days.suffix(30))
         lines.append("")
         lines.append("30-day averages:")
-        lines.append("  recovery: \(avgInt(last30.compactMap { $0.recovery }))%"
-                     + ", strain: \(avgOne(last30.compactMap { $0.strain }))"
+        lines.append("  charge: \(avgInt(last30.compactMap { $0.recovery }))"
+                     + ", effort: \(avgOne(last30.compactMap { $0.strain }))"
                      + ", sleep: \(avgSleepHours(last30))h"
                      + ", HRV: \(avgInt(last30.compactMap { $0.avgHrv })) ms"
                      + ", RHR: \(avgInt(last30.compactMap { $0.restingHr.map(Double.init) })) bpm")
@@ -477,7 +479,7 @@ final class AICoachEngine: ObservableObject {
         for w in rows.prefix(limit) {
             var parts = ["  \(dateString(w.startTs)) \(w.sport)"]
             if let dur = w.durationS { parts.append("\(Int((dur / 60).rounded())) min") }
-            if let s = w.strain { parts.append("strain \(String(format: "%.1f", s))") }
+            if let s = w.strain { parts.append("effort \(String(format: "%.1f", s))") }
             if let hr = w.avgHr { parts.append("avg HR \(hr)") }
             if let kcal = w.energyKcal { parts.append("\(Int(kcal.rounded())) kcal") }
             if let dist = w.distanceM { parts.append("\(String(format: "%.1f", dist / 1000)) km") }
@@ -490,9 +492,9 @@ final class AICoachEngine: ObservableObject {
 
     private func dayLine(_ d: DailyMetric) -> String {
         var parts: [String] = [d.day + ":"]
-        parts.append("rec " + (d.recovery.map { "\(Int($0.rounded()))%" } ?? "—"))
-        parts.append("strain " + (d.strain.map { String(format: "%.1f", $0) } ?? "—"))
-        parts.append("sleep " + (d.totalSleepMin.map { String(format: "%.1fh", $0 / 60) } ?? "—"))
+        parts.append("charge " + (d.recovery.map { "\(Int($0.rounded()))" } ?? "—"))
+        parts.append("effort " + (d.strain.map { String(format: "%.1f", $0) } ?? "—"))
+        parts.append("rest " + (d.totalSleepMin.map { String(format: "%.1fh", $0 / 60) } ?? "—"))
         parts.append("HRV " + (d.avgHrv.map { "\(Int($0.rounded()))ms" } ?? "—"))
         parts.append("RHR " + (d.restingHr.map { "\($0)bpm" } ?? "—"))
         return parts.joined(separator: ", ")

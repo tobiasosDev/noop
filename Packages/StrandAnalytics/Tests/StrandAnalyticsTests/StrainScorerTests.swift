@@ -14,22 +14,24 @@ final class StrainScorerTests: XCTestCase {
         XCTAssertEqual(StrainScorer.defaultMaxHR(age: 30), 190)
     }
 
-    func testTrimpToStrainCeilingMapsTo21() {
-        // Edwards 24 h ceiling TRIMP = 7200 → strain exactly 21.0 with D = 7201.
-        XCTAssertEqual(StrainScorer.trimpToStrain(7200), 21.0, accuracy: 1e-9)
+    func testTrimpToStrainCeilingMapsTo100() {
+        // Edwards 24 h ceiling TRIMP = 7200 → Effort exactly 100.0 with D = 7201
+        // (rescaled from the old 21.0; the curve/saturation point is unchanged).
+        XCTAssertEqual(StrainScorer.trimpToStrain(7200), 100.0, accuracy: 1e-9)
     }
 
     func testTrimpToStrainKnownValues() {
         XCTAssertEqual(StrainScorer.trimpToStrain(0), 0.0, accuracy: 1e-9)
         XCTAssertEqual(StrainScorer.trimpToStrain(-5), 0.0, accuracy: 1e-9)
-        XCTAssertEqual(StrainScorer.trimpToStrain(100), 10.91, accuracy: 1e-9)
+        // 10.91 × 100/21 on the rescaled axis.
+        XCTAssertEqual(StrainScorer.trimpToStrain(100), 51.96, accuracy: 1e-2)
     }
 
     func testStrainGoldenEdwardsZone5() {
         // 600 z5 samples at 1 Hz, resting 60, max 190. TRIMP = 600*5*(1/60)=50.
-        // strain = 21*ln(51)/ln(7201) = 9.3.
+        // Effort = 100*ln(51)/ln(7201) = 44.27 (was 9.3 on the 0–21 axis).
         let s = StrainScorer.strain(hr(185, 600), maxHR: 190, restingHR: 60)
-        XCTAssertEqual(s!, 9.3, accuracy: 1e-2)
+        XCTAssertEqual(s!, 44.27, accuracy: 1e-2)
     }
 
     func testStrainReturnsNilTooFewReadings() {
@@ -58,7 +60,7 @@ final class StrainScorerTests: XCTestCase {
     func testStrainBanisterAlsoBounded() {
         let s = StrainScorer.strain(hr(185, 600), maxHR: 190, restingHR: 60, method: .banister)!
         XCTAssertGreaterThan(s, 0)
-        XCTAssertLessThanOrEqual(s, 21.0)
+        XCTAssertLessThanOrEqual(s, 100.0)
     }
 
     func testEstimateHRmaxObservedVsTanaka() {
@@ -89,9 +91,10 @@ final class StrainScorerTests: XCTestCase {
     }
 
     func testFitStrainDenominator() throws {
-        // Pairs generated from a known D should recover that D.
+        // Pairs generated from a known D should recover that D. Pairs use the rescaled
+        // 0–100 axis (maxStrain = 100), matching fitStrainDenominator's maxStrain term.
         let knownD = 5000.0
-        func strainFor(_ t: Double) -> Double { 21 * log(t + 1) / log(knownD) }
+        func strainFor(_ t: Double) -> Double { 100 * log(t + 1) / log(knownD) }
         let pairs = [(100.0, strainFor(100)), (1000.0, strainFor(1000)), (50.0, strainFor(50))]
         let fitted = try StrainScorer.fitStrainDenominator(pairs)
         XCTAssertEqual(fitted, knownD, accuracy: 1.0)

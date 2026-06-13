@@ -48,6 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.data.DailyMetric
+import com.noop.data.MoodStore
+import com.noop.ingest.NutritionCsvImporter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -122,7 +124,7 @@ data class CompareMetric(
  * [DailyMetric] so a my-whoop metric can be derived from the daily cache as a fallback.
  */
 private object CompareCatalog {
-    val categories = listOf("Heart", "Recovery", "Sleep", "Strain", "Health")
+    val categories = listOf("Heart", "Charge", "Rest", "Effort", "Health", "Nutrition", "Mind")
 
     val all: List<CompareMetric> = listOf(
         // Heart
@@ -130,29 +132,37 @@ private object CompareCatalog {
         CompareMetric("max_hr", "Max Heart Rate", "Heart", "bpm", "my-whoop", 0),
         CompareMetric("energy_kcal", "Calories", "Heart", "kcal", "my-whoop", 0),
         CompareMetric("vo2max", "VO₂ Max", "Heart", "", "apple-health", 1),
-        // Recovery
-        CompareMetric("recovery", "Recovery", "Recovery", "%", "my-whoop", 0),
-        CompareMetric("hrv", "Heart Rate Variability", "Recovery", "ms", "my-whoop", 0),
-        CompareMetric("rhr", "Resting Heart Rate", "Recovery", "bpm", "my-whoop", 0),
-        CompareMetric("resp_rate", "Respiratory Rate", "Recovery", "rpm", "my-whoop", 1),
-        CompareMetric("spo2", "Blood Oxygen", "Recovery", "%", "my-whoop", 0),
-        CompareMetric("skin_temp", "Skin Temperature", "Recovery", "°C", "my-whoop", 1),
-        // Sleep
-        CompareMetric("sleep_performance", "Sleep Performance", "Sleep", "%", "my-whoop", 0),
-        CompareMetric("sleep_total_min", "Asleep Time", "Sleep", "min", "my-whoop", 0),
-        CompareMetric("sleep_efficiency", "Sleep Efficiency", "Sleep", "%", "my-whoop", 0),
-        CompareMetric("sleep_deep_min", "Deep (SWS) Sleep", "Sleep", "min", "my-whoop", 0),
-        CompareMetric("sleep_rem_min", "REM Sleep", "Sleep", "min", "my-whoop", 0),
-        CompareMetric("sleep_light_min", "Light Sleep", "Sleep", "min", "my-whoop", 0),
-        // Strain
-        CompareMetric("strain", "Day Strain", "Strain", "/21", "my-whoop", 1),
-        CompareMetric("steps", "Steps", "Strain", "", "apple-health", 0),
-        CompareMetric("active_kcal", "Active Energy", "Strain", "kcal", "apple-health", 0),
+        // Charge (was Recovery)
+        CompareMetric("recovery", "Charge", "Charge", "%", "my-whoop", 0),
+        CompareMetric("hrv", "Heart Rate Variability", "Charge", "ms", "my-whoop", 0),
+        CompareMetric("rhr", "Resting Heart Rate", "Charge", "bpm", "my-whoop", 0),
+        CompareMetric("resp_rate", "Respiratory Rate", "Charge", "rpm", "my-whoop", 1),
+        CompareMetric("spo2", "Blood Oxygen", "Charge", "%", "my-whoop", 0),
+        CompareMetric("skin_temp", "Skin Temperature", "Charge", "°C", "my-whoop", 1),
+        // Rest (was Sleep)
+        CompareMetric("sleep_performance", "Rest", "Rest", "%", "my-whoop", 0),
+        CompareMetric("sleep_total_min", "Asleep Time", "Rest", "min", "my-whoop", 0),
+        CompareMetric("sleep_efficiency", "Sleep Efficiency", "Rest", "%", "my-whoop", 0),
+        CompareMetric("sleep_deep_min", "Deep (SWS) Sleep", "Rest", "min", "my-whoop", 0),
+        CompareMetric("sleep_rem_min", "REM Sleep", "Rest", "min", "my-whoop", 0),
+        CompareMetric("sleep_light_min", "Light Sleep", "Rest", "min", "my-whoop", 0),
+        // Effort (was Strain)
+        CompareMetric("strain", "Effort", "Effort", "/100", "my-whoop", 1),
+        CompareMetric("steps", "Steps", "Effort", "", "apple-health", 0),
+        CompareMetric("active_kcal", "Active Energy", "Effort", "kcal", "apple-health", 0),
         // Health / Body
         CompareMetric("weight", "Weight", "Health", "kg", "apple-health", 1),
         CompareMetric("body_fat", "Body Fat", "Health", "%", "apple-health", 1),
         CompareMetric("lean_mass", "Lean Body Mass", "Health", "kg", "apple-health", 1),
         CompareMetric("bmi", "BMI", "Health", "", "apple-health", 1),
+        // Nutrition (imported from a food-tracker CSV — calories-in next to calories-out).
+        // Mirrors the macOS MetricCatalog entries exactly (same keys + sources, v2.2.0 parity).
+        CompareMetric("calories_in", "Calories In", "Nutrition", "kcal", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("protein_g", "Protein", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("carbs_g", "Carbs", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("fat_g", "Fat", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        // Mind (daily mood check-in, 1–5; non-clinical self-tracking).
+        CompareMetric("mood", "Mood", "Mind", "/5", MoodStore.MOOD_DEVICE_ID, 0),
     )
 
     fun inCategory(c: String): List<CompareMetric> = all.filter { it.category == c }

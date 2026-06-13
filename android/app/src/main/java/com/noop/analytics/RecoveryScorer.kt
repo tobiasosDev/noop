@@ -1,13 +1,15 @@
 package com.noop.analytics
 
 import com.noop.data.HrSample
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /*
- * RecoveryScorer.kt — resting HR during sleep + a transparent 0–100 recovery score.
+ * RecoveryScorer.kt — resting HR during sleep + a transparent 0–100 recovery score
+ * (NOOP "Charge").
  *
  * Faithful Kotlin port of StrandAnalytics/RecoveryScorer.swift (verified on macOS),
  * itself ported from server/ingest/app/analysis/recovery.py.
@@ -17,10 +19,17 @@ import kotlin.math.roundToInt
  * HRV-dominant, baseline-normalized proxy.
  *
  * Weighting (documented, grounded, explainable):
- *   higher HRV vs baseline       → higher recovery  (W_HRV   = 0.60, dominant)
- *   lower resting HR vs baseline → higher recovery  (W_RHR   = 0.20)
- *   lower resp vs baseline       → higher recovery  (W_RESP  = 0.05)
- *   higher sleep performance     → higher recovery  (W_SLEEP = 0.15)
+ *   higher HRV vs baseline        → higher recovery  (W_HRV   = 0.55, dominant)
+ *   lower resting HR vs baseline   → higher recovery  (W_RHR   = 0.20)
+ *   lower resp vs baseline         → higher recovery  (W_RESP  = 0.05)
+ *   higher sleep performance       → higher recovery  (W_SLEEP = 0.15)
+ *   skin temp NEAR baseline        → higher recovery  (W_SKIN_TEMP = 0.05)
+ *
+ * Skin temp is a SYMMETRIC penalty: further from the personal baseline in EITHER
+ * direction (illness / overreach) lowers Charge. It enters as −|dev| / scale, like
+ * the "lower is better" terms but on the absolute deviation. When skinTempDev is null
+ * the term drops and the remaining weights renormalize, so the score is IDENTICAL to
+ * the pre-skin-temp model (the no-skin-temp path is byte-for-byte unchanged).
  *
  * Each metric is standardized to a robust z-score against the personal baseline
  * (mean + EWMA-abs-dev spread). Missing terms are dropped and the weights
@@ -42,10 +51,20 @@ object RecoveryScorer {
     // Constants (recovery.py)
     // ─────────────────────────────────────────────────────────────────────────
 
-    const val wHRV: Double = 0.60
+    const val wHRV: Double = 0.55
     const val wRHR: Double = 0.20
     const val wResp: Double = 0.05
     const val wSleep: Double = 0.15
+
+    /** Skin-temperature deviation weight (symmetric illness/overreach penalty). */
+    const val wSkinTemp: Double = 0.05
+
+    /**
+     * Skin-temp deviation scale (°C per z-unit). The term is −|skinTempDevC| / scale,
+     * so a 0.5 °C absolute deviation from the personal baseline costs ≈ 1 z-unit of
+     * Charge. skinTempDevC is the raw ±°C delta (DailyMetric.skinTempDevC), not a z.
+     */
+    const val skinTempDevScale: Double = 0.5
 
     /** Logistic spread: ±2 z-units ≈ full Red–Green band (15%–95%). */
     const val logisticK: Double = 1.6
@@ -143,7 +162,12 @@ object RecoveryScorer {
      * @param hrvBaseline HRV baseline (required for a score).
      * @param rhrBaseline resting-HR baseline; null drops the RHR term.
      * @param respBaseline respiration baseline; null drops the resp term.
-     * @param sleepPerf sleep-performance proxy (efficiency 0..1); null drops the term.
+     * @param sleepPerf sleep-performance proxy (Rest composite 0..1, or efficiency
+     *   0..1 for legacy callers); null drops the term.
+     * @param skinTempDev tonight's skin-temperature deviation from the personal
+     *   baseline (raw ±°C, DailyMetric.skinTempDevC); applied as a SYMMETRIC penalty
+     *   −|dev| / skinTempDevScale. null drops the term and renormalizes (score then
+     *   identical to the pre-skin-temp model).
      * @param hrvBaselineUsable whether the HRV baseline has enough nights
      *   (BaselineState.usable). When false, returns null (cold-start).
      */
@@ -155,6 +179,7 @@ object RecoveryScorer {
         rhrBaseline: DriverBaseline?,
         respBaseline: DriverBaseline?,
         sleepPerf: Double?,
+        skinTempDev: Double? = null,
         hrvBaselineUsable: Boolean = true,
     ): Double? {
         // Cold-start gate: HRV is the dominant driver; if its baseline isn't
@@ -179,6 +204,11 @@ object RecoveryScorer {
         if (sleepPerf != null) {
             terms.add(((sleepPerf - sleepPerfCenter) / sleepPerfScale) to wSleep)
         }
+        // Skin-temp term: SYMMETRIC penalty, no baseline arg (skinTempDev is already a
+        // deviation). Further from baseline in either direction → more negative z.
+        if (skinTempDev != null) {
+            terms.add((-abs(skinTempDev) / skinTempDevScale) to wSkinTemp)
+        }
 
         if (terms.isEmpty()) return null
         val totalWeight = terms.sumOf { it.second }
@@ -201,6 +231,7 @@ object RecoveryScorer {
         rhrBaseline: BaselineState?,
         respBaseline: BaselineState?,
         sleepPerf: Double?,
+        skinTempDev: Double? = null,
     ): Double? = recovery(
         hrv = hrv,
         rhr = rhr,
@@ -209,6 +240,7 @@ object RecoveryScorer {
         rhrBaseline = rhrBaseline?.let { DriverBaseline(it) },
         respBaseline = respBaseline?.let { DriverBaseline(it) },
         sleepPerf = sleepPerf,
+        skinTempDev = skinTempDev,
         hrvBaselineUsable = hrvBaseline.usable,
     )
 }

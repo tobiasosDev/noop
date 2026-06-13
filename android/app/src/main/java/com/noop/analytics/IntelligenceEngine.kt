@@ -1,6 +1,7 @@
 package com.noop.analytics
 
 import com.noop.data.DailyMetric
+import com.noop.data.MetricSeriesRow
 import com.noop.data.SleepSession
 import com.noop.data.WhoopRepository
 import com.noop.data.WorkoutRow
@@ -257,10 +258,16 @@ object IntelligenceEngine {
         val dailies = ArrayList<DailyMetric>()
         val sleepRows = ArrayList<SleepSession>()
         val workoutRows = ArrayList<WorkoutRow>()
+        // Rest composite (0–100) per night → persisted as the sleep_performance metric series so the
+        // dashboard Rest score reflects the new composite, not raw efficiency. Swift parity.
+        val restRows = ArrayList<MetricSeriesRow>()
 
         for (res in scoredNights) {
             val recovery = recomputeRecovery(res.daily, baselines2)
             val skinTempDevC = recomputeSkinTempDev(res.nightlySkinTempC, baselines2.skinTemp)
+            RestScorer.restFromDaily(res.daily)?.let { rest ->
+                restRows.add(MetricSeriesRow(deviceId = computedId, day = res.daily.day, key = "sleep_performance", value = rest))
+            }
 
             out.add(
                 Computed(
@@ -315,6 +322,7 @@ object IntelligenceEngine {
         // merges these UNDER any imported "my-whoop" rows, so a real WHOOP import always wins;
         // this only fills the days the strap collected but no import covered.
         if (dailies.isNotEmpty()) repo.upsertDailyMetrics(dailies)
+        if (restRows.isNotEmpty()) repo.upsertMetricSeries(restRows)
         if (sleepRows.isNotEmpty()) repo.upsertSleepSessions(sleepRows)
         // Make re-detection idempotent across runs: clear the prior computed detected workouts
         // in the scored window (a bout's startTs can drift as more HR arrives, which would
@@ -370,6 +378,10 @@ object IntelligenceEngine {
         val hrvVal = daily.avgHrv ?: return null
         val rhrVal = daily.restingHr ?: return null
         val hrvBase = baselines.hrv ?: return null
+        // Charge enrichment: feed the Rest COMPOSITE (÷100) as the sleep-quality term instead of raw
+        // efficiency, and fold in the night's skin-temp deviation (both from persisted daily fields).
+        // Mirrors the Swift recomputeRecovery. (Charge/Effort/Rest scoring redesign.)
+        val restQuality = RestScorer.restFromDaily(daily)?.let { it / 100.0 } ?: daily.efficiency
         return RecoveryScorer.recovery(
             hrv = hrvVal,
             rhr = rhrVal.toDouble(),
@@ -377,7 +389,8 @@ object IntelligenceEngine {
             hrvBaseline = hrvBase,
             rhrBaseline = baselines.restingHR,
             respBaseline = baselines.resp,
-            sleepPerf = daily.efficiency,
+            sleepPerf = restQuality,
+            skinTempDev = daily.skinTempDevC,
         )
     }
 

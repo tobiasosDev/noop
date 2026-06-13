@@ -128,6 +128,16 @@ class ProfileStore(private val prefs: SharedPreferences) {
         get() = prefs.getInt(KEY_HRMAX, 0).coerceIn(0, 230)
         set(v) = prefs.edit().putInt(KEY_HRMAX, v.coerceIn(0, 230)).apply()
 
+    /**
+     * Step-calibration divisor (#139): counter ticks per real step for the @57 motion
+     * counter. 1.0 = raw pass-through (default — no behavior change). Clamped 0.5–4.0.
+     */
+    var stepTicksPerStep: Double
+        get() = prefs.getFloat(KEY_STEP_SCALE, 1f).toDouble().coerceIn(STEP_SCALE_MIN, STEP_SCALE_MAX)
+        set(v) = prefs.edit()
+            .putFloat(KEY_STEP_SCALE, v.coerceIn(STEP_SCALE_MIN, STEP_SCALE_MAX).toFloat())
+            .apply()
+
     /** The auto (Tanaka) HR-max for the current age. */
     val hrMaxAuto: Int get() = Zones.hrMaxTanaka(age)
 
@@ -141,6 +151,7 @@ class ProfileStore(private val prefs: SharedPreferences) {
         private const val KEY_WEIGHT = "weight_kg"
         private const val KEY_HEIGHT = "height_cm"
         private const val KEY_HRMAX = "hr_max_override"
+        private const val KEY_STEP_SCALE = "step_ticks_per_step"
 
         private const val AGE_MIN = 13
         private const val AGE_MAX = 100
@@ -148,6 +159,8 @@ class ProfileStore(private val prefs: SharedPreferences) {
         private const val WEIGHT_MAX = 250.0
         private const val HEIGHT_MIN = 120.0
         private const val HEIGHT_MAX = 230.0
+        private const val STEP_SCALE_MIN = 0.5
+        private const val STEP_SCALE_MAX = 4.0
 
         fun from(context: Context): ProfileStore =
             ProfileStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
@@ -185,6 +198,8 @@ fun SettingsScreen(vm: AppViewModel) {
     val puffinExperiment = remember { PuffinExperiment.from(context) }
     var puffinExperiments by remember { mutableStateOf(puffinExperiment.isEnabled) }
     var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
+    var deepData by remember { mutableStateOf(puffinExperiment.isDeepDataEnabled) }
+    var broadcastHr by remember { mutableStateOf(puffinExperiment.broadcastHr) }
 
     // "Keep connected in the background" — drives WhoopConnectionService (foreground service). Default
     // on. SharedPreferences isn't reactive, so the Switch mirrors into a local state.
@@ -378,6 +393,23 @@ fun SettingsScreen(vm: AppViewModel) {
                         )
                     }
                 }
+                RowDivider()
+                // Step calibration (#139): daily steps = @57 counter ticks ÷ this divisor.
+                // 1.0 = raw pass-through until the true 5/MG tick rate is known.
+                FormRow(label = "Step calibration") {
+                    StepperField(
+                        value = "%.1f".format(profile.stepTicksPerStep),
+                        accessibility = "Step calibration, %.1f counter ticks per step"
+                            .format(profile.stepTicksPerStep),
+                        onMinus = { mutate { profile.stepTicksPerStep -= 0.1 } },
+                        onPlus = { mutate { profile.stepTicksPerStep += 0.1 } },
+                    )
+                }
+                Text(
+                    "Counter ticks per step — leave at 1.0 unless your steps run high. Walk a known 1,000 steps and divide NOOP's count by the real count to get your value.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
             }
         }
 
@@ -597,6 +629,117 @@ fun SettingsScreen(vm: AppViewModel) {
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
+
+                // --- Broadcast heart rate (turn the strap into a standard BLE HR sensor). (#181) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Broadcast heart rate (Garmin/ANT)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = broadcastHr,
+                        onCheckedChange = {
+                            broadcastHr = it
+                            puffinExperiment.broadcastHr = it
+                            vm.ble.setBroadcastHr(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Broadcast heart rate"
+                        },
+                    )
+                }
+                Text(
+                    "Makes your WHOOP 5.0/MG advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge/watch), Zwift or gym equipment can use it during a workout. Applied on the next connection (and immediately if connected); writes the strap's whoop_live_hr_in_adv_ind_pkt flag. Reversible. 5/MG only.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- R22 deep-data unlock — the one probe that writes to the strap. (#174) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Unlock WHOOP 5/MG deep data (R22)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = deepData,
+                        onCheckedChange = {
+                            deepData = it
+                            puffinExperiment.isDeepDataEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Unlock WHOOP 5/MG deep data"
+                        },
+                    )
+                }
+                Text(
+                    "WHOOP 5/MG straps hand a fresh app only live heart rate. The official app switches on the deeper streams (high-rate HR + motion + history) by writing a set of feature flags — a sequence two independent projects have documented. With this on, the button below sends that exact sequence to your strap. Unlike everything else here it does write to the strap, but it's reversible (it only changes which data the strap emits) and is the same thing the official app does. Experimental — it may do nothing on your firmware.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                if (deepData) {
+                    Button(
+                        onClick = { vm.ble.enableWhoop5DeepData() },
+                        enabled = live.bonded && live.worn,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Palette.accent, contentColor = Palette.surfaceBase,
+                        ),
+                    ) { Text("Send enable sequence to strap") }
+                    Text(
+                        if (!live.bonded) "Connect and bond a 5/MG strap first."
+                        else if (!live.worn) "Put the strap on first — the deep stream is on-wrist only."
+                        else "Wear the strap, tap once, then let it sync and share your strap log.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
+                    )
+                    // Live R22 telemetry (#174): proof of what the strap is doing right now.
+                    if (live.r22FlagsAccepted > 0) {
+                        Text(
+                            if (live.r22FlagsAccepted >= 15) "✓ Strap accepted all 15 R22 flags"
+                            else "Strap accepted ${live.r22FlagsAccepted}/15 R22 flags…",
+                            style = NoopType.caption,
+                            color = if (live.r22FlagsAccepted >= 15) Palette.statusPositive else Palette.textSecondary,
+                        )
+                    }
+                    if (live.deepPacketsThisSession > 0) {
+                        Text(
+                            "🎯 Deep data is flowing — ${live.deepPacketsThisSession} R22 packet(s) this session. Please share your strap log!",
+                            style = NoopType.caption,
+                            color = Palette.statusPositive,
+                        )
+                    } else if (live.r22FlagsAccepted >= 15) {
+                        Text(
+                            "Flags accepted, but no deep packets yet — keep the strap on for a couple of minutes, then share your strap log on #174.",
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

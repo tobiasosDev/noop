@@ -41,6 +41,7 @@ import com.noop.analytics.ReadinessEngine
 import com.noop.data.AppleDaily
 import com.noop.data.DailyMetric
 import com.noop.data.WorkoutRow
+import com.noop.ingest.HealthConnectImporter
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -66,17 +67,25 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
     val live by viewModel.live.collectAsStateWithLifecycle()
     var footer by remember { mutableStateOf(TodayFooterState()) }
     var selectedDayOffset by remember { mutableIntStateOf(0) }
-    val selectedDay = remember(selectedDayOffset) { LocalDate.now().minusDays(selectedDayOffset.toLong()) }
+    // Anchor offset-0 to the LOGICAL day (rolls at 04:00 local), so between midnight and 4am "Today"
+    // still resolves to the prior calendar day's banked row instead of an empty new-calendar-day row
+    // that blanks the dashboard (#144). Past offsets count back from this anchor. Presentation-only.
+    val todayDate = logicalDayNow()
+    val selectedDay = remember(selectedDayOffset, todayDate) { todayDate.minusDays(selectedDayOffset.toLong()) }
     val selectedDayKey = remember(selectedDay) { selectedDay.toString() }
     val historicalMetric = remember(days, selectedDayKey) { days.lastOrNull { it.day == selectedDayKey } }
     val displayMetric = remember(today, historicalMetric, selectedDayOffset) {
         if (selectedDayOffset == 0) today ?: historicalMetric else historicalMetric
     }
+    // Keep the explicit calendar date visible alongside Today/Yesterday so the logical-day remap stays
+    // honest — between midnight and 04:00 "Today" still points at the prior calendar date, and showing
+    // that date makes it obvious which day's row is on screen (#144).
     val dayLabel = remember(selectedDayOffset, selectedDay) {
+        val date = selectedDay.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.US))
         when (selectedDayOffset) {
-            0 -> "Today"
-            1 -> "Yesterday"
-            else -> selectedDay.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.US))
+            0 -> "Today · $date"
+            1 -> "Yesterday · $date"
+            else -> date
         }
     }
     val synthesisTitle = remember(selectedDayOffset) {
@@ -110,6 +119,14 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
     // moves. On-device WHOOP 5/MG steps still take precedence. (#150)
     var importedStepsForDay by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(days, selectedDayKey) {
+        // Today's steps keep moving after the manual one-shot HC import, so the stored row goes
+        // stale within minutes — top it up with ONE live StepsRecord read before the stored-row
+        // read below. Best-effort: any HC hiccup just falls through to whatever is stored. (#150)
+        if (selectedDayOffset == 0) {
+            try {
+                HealthConnectImporter.refreshTodaySteps(context, viewModel.repo)
+            } catch (_: Exception) { /* best-effort */ }
+        }
         importedStepsForDay = stepsForDay(
             viewModel.repo.appleDaily("apple-health", "0000-01-01", "9999-12-31"),
             viewModel.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31"),
@@ -206,7 +223,7 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
             }
             InsightCard(
                 modifier = Modifier.weight(1f),
-                category = "Recovery",
+                category = "Charge",
                 status = if (recoveryCalibration != null) "Calibrating" else synthesisWord(displayMetric?.recovery),
                 detail = if (recoveryCalibration != null) {
                     "Learning your baseline — $recoveryCalibration of ${Baselines.minNightsSeed} nights."
@@ -225,9 +242,13 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
         Spacer(Modifier.height(Metrics.selectorTopUp))
         SectionHeader("Key Metrics", overline = dayLabel, trailing = "14-day trend")
         MetricGrid(displayMetric, window, recoveryCalibration, unitSystem, weightKg, profileWeightKg, importedStepsForDay)
-        HeartRateTrendCard(viewModel, days, selectedDay)
+        HeartRateTrendCard(viewModel, days, selectedDay, todayDate)
         TodayWorkoutsSection(footer.recentWorkouts)
-        TodaySourcesSection(footer)
+        // Honest, dismissible 12-hourly donation ask — a card in the flow, never a dialog.
+        DonationNudgeCard()
+        // Strap battery only while the link is up AND a real reading exists — a stale % from a
+        // dropped connection must not present as live (#159).
+        TodaySourcesSection(footer, strapBatteryPct = if (live.connected) live.batteryPct?.roundToInt() else null)
     }
 }
 
@@ -292,7 +313,7 @@ internal fun recoveryCalibrationNights(
 
 /**
  * The full 14-day metric grid, mirroring the macOS LazyVGrid order:
- * Recovery, Day Strain, Sleep, HRV, Resting HR, Blood Oxygen, Respiratory,
+ * Charge, Effort, Rest, HRV, Resting HR, Blood Oxygen, Respiratory,
  * Steps, Weight, Calories. Each tile is a fixed-height [SparkStatTile] so the
  * grid tiles perfectly with no empty cells.
  */
@@ -310,7 +331,7 @@ private fun MetricGrid(
         { m ->
             SparkStatTile(
                 modifier = m,
-                label = "Recovery",
+                label = "Charge",
                 value = d?.recovery?.let { "${it.roundToInt()}%" }
                     ?: recoveryCalibration?.let { "$it/${Baselines.minNightsSeed}" } ?: NO_DATA,
                 caption = d?.recovery?.let {
@@ -324,9 +345,9 @@ private fun MetricGrid(
         { m ->
             SparkStatTile(
                 modifier = m,
-                label = "Day Strain",
+                label = "Effort",
                 value = d?.strain?.let { String.format(Locale.US, "%.1f", it) } ?: NO_DATA,
-                caption = d?.strain?.let { "of 21" },
+                caption = d?.strain?.let { "of 100" },
                 accent = d?.strain?.let { Palette.strainColor(it) } ?: Palette.textTertiary,
                 spark = w.strain,
                 sparkColor = Palette.strain066,
@@ -335,7 +356,7 @@ private fun MetricGrid(
         { m ->
             SparkStatTile(
                 modifier = m,
-                label = "Sleep",
+                label = "Rest",
                 value = sleepValue(d),
                 caption = d?.efficiency?.let { String.format(Locale.US, "%.0f%% eff", it) },
                 accent = d?.totalSleepMin?.let { Palette.textPrimary } ?: Palette.textTertiary,
@@ -454,15 +475,23 @@ private fun MetricGrid(
 // so the buckets — being uniform 5-min means in time order — read as an even left-to-right day curve.
 
 @Composable
-private fun HeartRateTrendCard(viewModel: AppViewModel, days: List<DailyMetric>, selectedDay: LocalDate) {
+private fun HeartRateTrendCard(
+    viewModel: AppViewModel,
+    days: List<DailyMetric>,
+    selectedDay: LocalDate,
+    today: LocalDate,
+) {
+    // "Today" here is the LOGICAL day (rolls at 04:00 local), so in the small hours after midnight the
+    // trend keeps the evening's curve — window start at the logical day's own midnight, "since midnight"
+    // subtitle, "Today" label — rather than blanking to an empty new-calendar-day axis (#144).
     var buckets by remember { mutableStateOf<List<Double>>(emptyList()) }
     // Re-load when the day list changes (a sync/import updates it), and on first composition.
-    LaunchedEffect(days, selectedDay) {
+    LaunchedEffect(days, selectedDay, today) {
         val zone = ZoneId.systemDefault()
         val start = selectedDay.atStartOfDay(zone).toEpochSecond()
         val nextStart = selectedDay.plusDays(1).atStartOfDay(zone).toEpochSecond()
         val now = System.currentTimeMillis() / 1000
-        val end = if (selectedDay == LocalDate.now(zone)) now else (nextStart - 1)
+        val end = if (selectedDay == today) now else (nextStart - 1)
         buckets = viewModel.repo.hrBuckets("my-whoop", start, end, 300L).map { it.avgBpm }
     }
     if (buckets.size < 2) return
@@ -473,8 +502,8 @@ private fun HeartRateTrendCard(viewModel: AppViewModel, days: List<DailyMetric>,
     val avg = buckets.average().roundToInt()
 
     val selectedLabel = when (selectedDay) {
-        LocalDate.now() -> "Today"
-        LocalDate.now().minusDays(1) -> "Yesterday"
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
         else -> selectedDay.format(DateTimeFormatter.ofPattern("d MMM", Locale.US))
     }
 
@@ -485,7 +514,7 @@ private fun HeartRateTrendCard(viewModel: AppViewModel, days: List<DailyMetric>,
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Overline("Beats per minute")
-                    val subtitle = if (selectedDay == LocalDate.now()) {
+                    val subtitle = if (selectedDay == today) {
                         "5-minute average | since midnight"
                     } else {
                         "5-minute average | selected day"
@@ -545,7 +574,7 @@ private fun TodayWorkoutsSection(workouts: List<WorkoutRow>) {
                 rowWorkouts.forEach { workout ->
                     StatTile(
                         modifier = Modifier.weight(1f),
-                        label = workout.sport,
+                        label = WorkoutEditing.displaySport(workout.sport),
                         value = workoutDuration(workout),
                         caption = workoutCaption(workout),
                         accent = workout.strain?.let { Palette.strainColor(it) } ?: Palette.textPrimary,
@@ -560,15 +589,18 @@ private fun TodayWorkoutsSection(workouts: List<WorkoutRow>) {
 }
 
 @Composable
-private fun TodaySourcesSection(footer: TodayFooterState) {
+private fun TodaySourcesSection(footer: TodayFooterState, strapBatteryPct: Int? = null) {
     SectionHeader("Data Sources", overline = "Provenance")
     NoopCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SourceRow(
                 badge = "Whoop",
                 tint = Palette.accent,
-                present = (footer.whoopDays ?: 0) > 0,
+                // A live battery reading means the strap IS connected, even before the first banked
+                // night — don't contradict it with "Not connected" (#159).
+                present = (footer.whoopDays ?: 0) > 0 || strapBatteryPct != null,
                 detail = countDetail(footer.whoopDays, footer.whoopWorkouts, "workouts"),
+                batteryPct = strapBatteryPct,
             )
             Box(
                 modifier = Modifier
@@ -604,9 +636,16 @@ private fun SourceRow(
     tint: Color,
     present: Boolean,
     detail: String,
+    batteryPct: Int? = null,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         SourceBadge(badge, tint = if (present) tint else Palette.textTertiary)
+        // Compact strap-battery readout beside the source badge — same pill + tone bands as the
+        // Settings Strap section; absent entirely when there's no live reading (#159).
+        batteryPct?.let { pct ->
+            Spacer(Modifier.width(8.dp))
+            StatePill(title = "$pct%", tone = batteryPillTone(pct), showsDot = false)
+        }
         Spacer(Modifier.weight(1f))
         Text(
             text = if (present) detail else "Not connected",
@@ -628,7 +667,9 @@ private fun SourceRow(
 
 @Composable
 private fun ReadinessSection(days: List<DailyMetric>) {
-    val todayKey = java.time.LocalDate.now().toString()
+    // Logical day (rolls at 04:00 local), so readiness keeps reading the evening's row in the small
+    // hours instead of an empty new-calendar-day row (#144). Mirrors the Today-row resolution.
+    val todayKey = logicalDayKeyNow()
     val readiness = remember(days, todayKey) { ReadinessEngine.evaluate(days, today = todayKey) }
     if (readiness.level == ReadinessEngine.Level.INSUFFICIENT) return
 
@@ -858,9 +899,9 @@ private fun synthesisDetail(d: DailyMetric?): String {
     val rec = d?.recovery
         ?: return "No metrics yet. Import your WHOOP export or wear the strap to begin."
     val recPart = when {
-        rec < 50 -> "Recovery is low"
-        rec < 70 -> "Recovery is steady"
-        else -> "Recovery is strong"
+        rec < 50 -> "Charge is low"
+        rec < 70 -> "Charge is steady"
+        else -> "Charge is strong"
     }
     val sleepPart = d.totalSleepMin?.let { mins ->
         if (mins / 60.0 >= 7) " and sleep was consistent" else " but sleep ran short"
@@ -937,10 +978,19 @@ private const val NO_DATA = "No Data"
 
 private val workoutDateFmt: DateTimeFormatter =
     DateTimeFormatter.ofPattern("d MMM", Locale.US).withZone(ZoneId.systemDefault())
+private val workoutTimeFmt: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("HH:mm", Locale.US).withZone(ZoneId.systemDefault())
 
 private fun countDetail(days: Int?, workouts: Int?, workoutLabel: String): String {
     if (days == null || workouts == null) return "Counting..."
     return "${grouped(days)} days · ${grouped(workouts)} $workoutLabel"
+}
+
+/** Same bands as the Settings Strap battery pill, so the % reads the same colour everywhere (#159). */
+private fun batteryPillTone(pct: Int): StrandTone = when {
+    pct <= 15 -> StrandTone.Critical
+    pct <= 30 -> StrandTone.Warning
+    else -> StrandTone.Positive
 }
 
 private fun workoutDuration(row: WorkoutRow): String {
@@ -954,9 +1004,15 @@ private fun workoutDuration(row: WorkoutRow): String {
     }
 }
 
+/** "d MMM · HH:mm–HH:mm" (#157); start-only when the end isn't after the start (zero/unknown span). */
 private fun workoutCaption(row: WorkoutRow): String {
     val date = workoutDateFmt.format(Instant.ofEpochSecond(row.startTs))
-    return row.avgHr?.let { "$date · $it bpm" } ?: date
+    val start = workoutTimeFmt.format(Instant.ofEpochSecond(row.startTs))
+    return if (row.endTs > row.startTs) {
+        "$date · $start–${workoutTimeFmt.format(Instant.ofEpochSecond(row.endTs))}"
+    } else {
+        "$date · $start"
+    }
 }
 
 private fun grouped(value: Int): String =

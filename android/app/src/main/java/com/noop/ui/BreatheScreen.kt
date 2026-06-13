@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,6 +49,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.util.Locale
+import kotlin.math.roundToInt
 
 // MARK: - Pace presets (ported from BreathingView.Pace)
 
@@ -87,6 +91,37 @@ fun BreatheScreen(viewModel: AppViewModel) {
     var rmssd by remember { mutableStateOf<Double?>(null) }
     val rrWindow = 30
 
+    // Pre/post outcome capture: the baseline locks at start (or to the first rolling
+    // value inside the session's first ~60s); mean/peak stream while running. The last
+    // completed outcome persists via NoopPrefs (display-only — no Room table).
+    val context = LocalContext.current
+    var baselineRmssd by remember { mutableStateOf<Double?>(null) }
+    var sessionRmssdSum by remember { mutableDoubleStateOf(0.0) }
+    var sessionRmssdCount by remember { mutableIntStateOf(0) }
+    var sessionRmssdPeak by remember { mutableDoubleStateOf(0.0) }
+    var endedOutcome by remember { mutableStateOf<String?>(null) }
+    // SharedPreferences isn't reactive: read once, mirror writes into this state.
+    var lastStoredOutcome by remember {
+        mutableStateOf(NoopPrefs.of(context).getString(KEY_BREATHE_LAST_OUTCOME, "").orEmpty())
+    }
+
+    // Bank the just-ended session's outcome (mirrors BreathingView.captureOutcome):
+    // null below the 2-minute floor; "—" stays display-only, never persisted.
+    fun endSession() {
+        val core = breatheOutcomeCore(
+            baseline = baselineRmssd,
+            sum = sessionRmssdSum,
+            count = sessionRmssdCount,
+            peak = sessionRmssdPeak,
+            seconds = sessionSeconds,
+        )
+        endedOutcome = core
+        if (core != null && core != "—") {
+            lastStoredOutcome = core
+            NoopPrefs.of(context).edit().putString(KEY_BREATHE_LAST_OUTCOME, core).apply()
+        }
+    }
+
     // Orb expansion 0..1; driven by an eased animation per breath phase.
     val orbTarget = if (running && phase == Phase.Inhale) 1f else 0f
     val phaseDurationMs = ((if (phase == Phase.Inhale) pace.inhale else pace.exhale) * 1000).toInt()
@@ -106,7 +141,17 @@ fun BreatheScreen(viewModel: AppViewModel) {
                 if (rr.isEmpty()) return@collect
                 val merged = (rrBuffer.value + rr).takeLast(rrWindow)
                 rrBuffer.value = merged
-                rmssd = if (merged.size >= 2) Hrv.rmssd(merged) else null
+                val r = if (merged.size >= 2) Hrv.rmssd(merged) else null
+                rmssd = r
+                // Outcome capture: while running, lock the baseline (first value
+                // inside ~60s when none was available at start) and stream the
+                // session mean/peak.
+                if (running && r != null) {
+                    if (baselineRmssd == null && sessionSeconds <= 60) baselineRmssd = r
+                    sessionRmssdSum += r
+                    sessionRmssdCount += 1
+                    if (r > sessionRmssdPeak) sessionRmssdPeak = r
+                }
             }
     }
 
@@ -136,7 +181,13 @@ fun BreatheScreen(viewModel: AppViewModel) {
         }
     }
 
-    DisposableEffect(Unit) { onDispose { running = false } }
+    DisposableEffect(Unit) {
+        onDispose {
+            // Leaving mid-session still banks the outcome (mirrors macOS onDisappear → stop()).
+            if (running) endSession()
+            running = false
+        }
+    }
 
     ScreenScaffold(
         title = "Breathe",
@@ -197,8 +248,21 @@ fun BreatheScreen(viewModel: AppViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap), modifier = Modifier.fillMaxWidth()) {
             Button(
                 onClick = {
-                    running = !running
-                    if (running) { sessionSeconds = 0; breathCount = 0 }
+                    if (running) {
+                        running = false
+                        endSession()
+                    } else {
+                        sessionSeconds = 0
+                        breathCount = 0
+                        endedOutcome = null
+                        // Baseline: prefer the pre-session rolling value; otherwise the
+                        // R-R collector locks the first value inside the first ~60s.
+                        baselineRmssd = rmssd
+                        sessionRmssdSum = 0.0
+                        sessionRmssdCount = 0
+                        sessionRmssdPeak = 0.0
+                        running = true
+                    }
                 },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
@@ -222,6 +286,25 @@ fun BreatheScreen(viewModel: AppViewModel) {
                 Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
                 Text("Test buzz", style = NoopType.body)
             }
+        }
+
+        // Calm one-line outcome — fresh after a finished session, persisted on re-entry.
+        // Hidden while running and when there is nothing honest to show.
+        val outcomeLine = when {
+            running -> null
+            endedOutcome == "—" -> "RMSSD — · not enough R-R data"
+            endedOutcome != null -> "RMSSD $endedOutcome"
+            lastStoredOutcome.isNotEmpty() -> "Last session: $lastStoredOutcome"
+            else -> null
+        }
+        if (outcomeLine != null) {
+            Text(
+                outcomeLine,
+                style = NoopType.footnote,
+                color = Palette.textSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         // Readout tiles.
@@ -392,6 +475,33 @@ private fun coherenceState(rmssd: Double?): Pair<String, StrandTone> = when {
     rmssd < 45 -> "Settling" to StrandTone.Neutral
     rmssd < 80 -> "Coherent" to StrandTone.Positive
     else -> "Deep calm" to StrandTone.Positive
+}
+
+// MARK: - Session outcome
+
+/** NoopPrefs key for the last completed session's outcome core (mirrors macOS
+ *  `@AppStorage("breathe.lastOutcome")`). Display-only persistence — no Room table. */
+private const val KEY_BREATHE_LAST_OUTCOME = "breathe.lastOutcome"
+
+/**
+ * End-of-session outcome core: "+18% vs start · peak 64 ms" — the session MEAN
+ * rolling RMSSD vs the start baseline. Null below the 2-minute floor (abandoned —
+ * show nothing); "—" when the session ran long enough but there was no usable
+ * baseline or no R-R data (never invent a number). Mirrors
+ * BreathingView.captureOutcome case-for-case.
+ */
+internal fun breatheOutcomeCore(
+    baseline: Double?,
+    sum: Double,
+    count: Int,
+    peak: Double,
+    seconds: Int,
+): String? {
+    if (seconds < 120) return null
+    if (baseline == null || baseline <= 0 || count == 0) return "—"
+    val mean = sum / count
+    val pct = ((mean - baseline) / baseline * 100).roundToInt()
+    return String.format(Locale.US, "%+d%% vs start · peak %.0f ms", pct, peak)
 }
 
 // MARK: - Haptic hint

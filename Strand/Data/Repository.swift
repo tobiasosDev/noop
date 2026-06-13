@@ -47,11 +47,14 @@ final class Repository: ObservableObject {
         self.appleDeviceId = appleDeviceId
     }
 
-    /// Today's row, by the device's ACTUAL local calendar date — NOT just the newest stored row, which
-    /// after a historical import was months-old data shown as today's hero (issue #23). nil if no row
-    /// for today yet (the dashboard then shows its empty/pending state).
+    /// Today's row, by the device's LOGICAL local day — NOT just the newest stored row, which after a
+    /// historical import was months-old data shown as today's hero (issue #23). The logical day rolls at
+    /// 04:00 local (see `logicalDayKey`), so between midnight and 4am we keep resolving the prior logical
+    /// day's row instead of an empty new-calendar-day row that blanks the dashboard (#144). nil if no row
+    /// for that day yet (the dashboard then shows its empty/pending state). Presentation-only — stored
+    /// row keys are untouched.
     var today: DailyMetric? {
-        let key = Repository.localDayKey(Date())
+        let key = Repository.logicalDayKey(Date())
         return days.last(where: { $0.day == key })
     }
     /// The trailing 7 CALENDAR days ending today (for the week strip), oldest→newest — not the last 7
@@ -66,6 +69,32 @@ final class Repository: ObservableObject {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX"); return f
     }()
     static func localDayKey(_ date: Date) -> String { dayKeyFormatter.string(from: date) }
+
+    /// The hour the LOGICAL day rolls (04:00 local). Between midnight and this hour, "Today" stays put.
+    static let logicalDayRolloverHour = 4
+
+    /// The LOGICAL local day for `now` — the calendar date of `now - rolloverHour hours`. Rolls at
+    /// 04:00 local rather than midnight, so the small hours after midnight still resolve to the prior
+    /// calendar date's row instead of an empty new-calendar-day row (#144). Pure + injectable so the
+    /// boundary is testable (23:59 → same day, 01:00 → previous day, 04:01 → new day). Presentation-only:
+    /// used solely to pick which stored row is Today and to anchor the Today HR-trend window start; stored
+    /// row keys are never rewritten.
+    static func logicalDay(_ now: Date, rolloverHour: Int = logicalDayRolloverHour) -> Date {
+        now.addingTimeInterval(-Double(rolloverHour) * 3_600)
+    }
+
+    /// `yyyy-MM-dd` key for the logical day of `now` (see `logicalDay`).
+    static func logicalDayKey(_ now: Date, rolloverHour: Int = logicalDayRolloverHour) -> String {
+        localDayKey(logicalDay(now, rolloverHour: rolloverHour))
+    }
+
+    /// Start of the logical day (its real calendar midnight) for `now`, in `calendar`'s zone — the anchor
+    /// for the Today HR-trend window so it spans from the logical day's 00:00 rather than restarting at the
+    /// new calendar midnight while we're still showing yesterday's logical day in the small hours (#144).
+    static func logicalDayStart(_ now: Date, calendar: Calendar = .current,
+                                rolloverHour: Int = logicalDayRolloverHour) -> Date {
+        calendar.startOfDay(for: logicalDay(now, rolloverHour: rolloverHour))
+    }
 
     private func ensureStore() async -> WhoopStore? {
         if let store { return store }
@@ -175,6 +204,33 @@ final class Repository: ObservableObject {
     func sleepSessions(from: Int, to: Int, limit: Int = 100) async -> [CachedSleepSession] {
         guard let store = await ensureStore() else { return [] }
         return (try? await store.sleepSessions(deviceId: deviceId, from: from, to: to, limit: limit)) ?? []
+    }
+
+    /// Every sleep BLOCK across BOTH sources, UN-deduplicated — so a split-sleep day (a nap
+    /// + a main sleep, or any night recorded as multiple blocks) keeps ALL of its blocks.
+    /// `sleeps` collapses each day to a single winner for the dashboard; this does not.
+    ///
+    /// Crucially this reads the on-device COMPUTED source (`computedDeviceId`) directly, not
+    /// just the imported `deviceId`. A Bluetooth-only user (no WHOOP/Apple-Health import) has
+    /// every block under the computed source, so a loader that only un-dedupes the imported
+    /// device sees nothing to expand and silently falls back to the deduped one-per-day list —
+    /// hiding the day's extra blocks. Imported blocks still win on any day they cover (matching
+    /// the dashboard's imported-wins merge); computed blocks fill days with no import.
+    /// Oldest→newest by onset.
+    func allSleepSessions(days: Int = 4000) async -> [CachedSleepSession] {
+        guard let store = await ensureStore() else { return [] }
+        let now = Int(Date().timeIntervalSince1970)
+        let lo = now - days * 86_400, hi = now + 86_400
+        let imported = (try? await store.sleepSessions(deviceId: deviceId, from: lo, to: hi, limit: 4000)) ?? []
+        let computed = (try? await store.sleepSessions(deviceId: computedDeviceId, from: lo, to: hi, limit: 4000)) ?? []
+        let cal = Calendar.current
+        func endDay(_ s: CachedSleepSession) -> Date {
+            cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(s.endTs)))
+        }
+        var importedDays = Set<Date>()
+        for s in imported { importedDays.insert(endDay(s)) }
+        let computedKept = computed.filter { !importedDays.contains(endDay($0)) }
+        return (imported + computedKept).sorted { $0.startTs < $1.startTs }
     }
 
     // MARK: - Metric explorer reads (generic substrate)

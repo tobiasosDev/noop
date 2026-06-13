@@ -384,7 +384,7 @@ struct AppleHealthView: View {
             label: "Workouts",
             value: "\(workoutCount)",
             caption: workoutCount > 0 ? "Apple-logged" : nil,
-            accent: workoutCount > 0 ? StrandPalette.strainColor(12) : StrandPalette.textTertiary
+            accent: workoutCount > 0 ? StrandPalette.strainColor(57) : StrandPalette.textTertiary
         )
     }
 

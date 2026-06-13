@@ -23,12 +23,22 @@ public enum WhoopCsvExporter {
     /// RFC-4180 quoting: only quote when the field carries a comma, quote, CR or LF; escape an
     /// embedded `"` by doubling it. The importer's CSVTable parser is the consumer, so this is the
     /// minimal escaping it round-trips.
+    ///
+    /// Formula-injection guard: a free-text value starting with `=`, `+`, `-`, `@`, tab or CR is
+    /// executed as a formula by Excel/Sheets/LibreOffice when the CSV is opened there (quoting alone
+    /// does NOT prevent that). Neutralise with a leading apostrophe — the spreadsheet convention for
+    /// "literal text". Numbers never pass through field() (they use num()), so this only ever touches
+    /// free text such as source names.
     static func field(_ raw: String?) -> String {
         guard let raw, !raw.isEmpty else { return "" }
-        guard raw.contains(",") || raw.contains("\"") || raw.contains("\n") || raw.contains("\r") else {
-            return raw
+        var safe = raw
+        if let first = safe.unicodeScalars.first, "=+-@\t\r".unicodeScalars.contains(first) {
+            safe = "'" + safe
         }
-        return "\"" + raw.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        guard safe.contains(",") || safe.contains("\"") || safe.contains("\n") || safe.contains("\r") else {
+            return safe
+        }
+        return "\"" + safe.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
     /// Locale-proof numbers: integral Doubles print without a trailing ".0" (matching how WHOOP
@@ -140,11 +150,16 @@ public enum WhoopCsvExporter {
             let cols: [String] = [
                 d.day + " 00:00:00", "", "UTC+00:00",
                 num(d.recovery), num(d.restingHr), num(d.avgHrv), num(d.skinTempDevC), num(d.spo2Pct),
-                num(d.strain), num(s["energy_kcal"]), num(s["max_hr"]), num(s["avg_hr"]),
+                // Day Strain column is WHOOP's 0–21 scale → convert our 0–100 Effort down so the CSV is
+                // WHOOP-format and a NOOP→NOOP round-trip is lossless (importer scales it back up).
+                num(WhoopExportImporter.whoopDayStrainFromEffort(d.strain)), num(s["energy_kcal"]), num(s["max_hr"]), num(s["avg_hr"]),
                 "", "",                              // sleep/wake onset live in sleeps.csv, not here
                 num(s["sleep_performance"]), num(d.respRateBpm), num(d.totalSleepMin), num(s["in_bed_min"]),
                 num(d.lightMin), num(d.deepMin), num(d.remMin),
-                num(s["awake_min"] ?? d.disturbances.map(Double.init)),
+                // Awake duration is MINUTES; when absent leave the cell empty. (Falling back to the
+                // disturbance COUNT exported a wrong unit that round-tripped on reimport — PR #97
+                // review, tigercraft4.)
+                num(s["awake_min"]),
                 num(d.efficiency), num(s["sleep_consistency"]), num(s["sleep_need_min"]),
                 num(s["sleep_debt_min"]),
                 field(sourceByDay[d.day]),
@@ -192,7 +207,7 @@ public enum WhoopCsvExporter {
             let zones = zonePercents(w.zonesJSON)
             let cols: [String] = [
                 utc(w.startTs), utc(w.startTs), utc(w.endTs), "UTC+00:00",
-                field(w.sport), num(w.strain), num(w.energyKcal), num(w.maxHr), num(w.avgHr),
+                field(w.sport), num(WhoopExportImporter.whoopDayStrainFromEffort(w.strain)), num(w.energyKcal), num(w.maxHr), num(w.avgHr),
                 num(zones?[0]), num(zones?[1]), num(zones?[2]), num(zones?[3]), num(zones?[4]),
                 num(w.distanceM),
                 field(sourceLabel(w)),

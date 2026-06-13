@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -200,6 +201,11 @@ fun LineChart(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            // Clip drawing to the chart bounds so the gradient fill (which runs to
+            // size.height with no bottom pad) and the round-capped stroke can't bleed
+            // past the edges. Compose Canvas does NOT clip by default — macOS parity for
+            // TrendChart.swift's `.chartPlotStyle { $0.clipped() }` + `.clipped()`.
+            .clipToBounds()
             .then(interactiveModifier),
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

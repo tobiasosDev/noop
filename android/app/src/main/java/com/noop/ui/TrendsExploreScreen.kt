@@ -30,6 +30,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.data.DailyMetric
+import com.noop.data.MoodStore
+import com.noop.ingest.NutritionCsvImporter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -84,6 +86,10 @@ private data class MetricSpec(
     val decimals: Int = 0,
     val dailyPick: ((DailyMetric) -> Double?)? = null,
     val seriesKey: String? = null,
+    /** Source (deviceId) the [seriesKey] lives under when it is NOT the strap's own — e.g. the
+     *  nutrition-csv import or the noop-mood check-in write under dedicated source ids (v2.2.0
+     *  parity with the macOS MetricCatalog, whose descriptors carry key+source). */
+    val seriesSource: String? = null,
 ) {
     fun format(v: Double): String {
         if (!v.isFinite()) return "—"
@@ -92,35 +98,35 @@ private data class MetricSpec(
     }
 }
 
-/** The built-in DailyMetric-backed metrics, in the macOS ordering (Recovery first). */
+/** The built-in DailyMetric-backed metrics, in the macOS ordering (Charge first). */
 private val builtInMetrics: List<MetricSpec> = listOf(
     MetricSpec(
-        key = "recovery", title = "Recovery", unit = "%", category = "Recovery",
+        key = "recovery", title = "Charge", unit = "%", category = "Charge",
         accent = Palette.accent, higherIsBetter = true, decimals = 0,
         dailyPick = { it.recovery },
     ),
     MetricSpec(
-        key = "strain", title = "Day Strain", unit = "", category = "Strain",
+        key = "strain", title = "Effort", unit = "/100", category = "Effort",
         accent = Palette.strain066, higherIsBetter = null, decimals = 1,
         dailyPick = { it.strain },
     ),
     MetricSpec(
-        key = "hrv", title = "HRV", unit = "ms", category = "Recovery",
+        key = "hrv", title = "HRV", unit = "ms", category = "Charge",
         accent = Palette.metricPurple, higherIsBetter = true, decimals = 0,
         dailyPick = { it.avgHrv },
     ),
     MetricSpec(
-        key = "rhr", title = "Resting HR", unit = "bpm", category = "Recovery",
+        key = "rhr", title = "Resting HR", unit = "bpm", category = "Charge",
         accent = Palette.metricRose, higherIsBetter = false, decimals = 0,
         dailyPick = { it.restingHr?.toDouble() },
     ),
     MetricSpec(
-        key = "sleep", title = "Sleep", unit = "h", category = "Sleep",
+        key = "sleep", title = "Sleep", unit = "h", category = "Rest",
         accent = Palette.metricPurple, higherIsBetter = true, decimals = 1,
         dailyPick = { it.totalSleepMin?.let { m -> m / 60.0 } },
     ),
     MetricSpec(
-        key = "efficiency", title = "Sleep Efficiency", unit = "%", category = "Sleep",
+        key = "efficiency", title = "Sleep Efficiency", unit = "%", category = "Rest",
         accent = Palette.accent, higherIsBetter = true, decimals = 0,
         dailyPick = { it.efficiency },
     ),
@@ -134,6 +140,22 @@ private val builtInMetrics: List<MetricSpec> = listOf(
         accent = Palette.accent, higherIsBetter = null, decimals = 1,
         dailyPick = { it.respRateBpm },
     ),
+)
+
+/** Proper titles/units/categories for series-backed keys written by the importers and the Mind
+ *  check-in — matching the macOS MetricCatalog entries exactly (v2.2.0 parity). seriesKey/
+ *  seriesSource are filled in at discovery time. */
+private val knownSeriesMetrics: Map<String, MetricSpec> = mapOf(
+    "calories_in" to MetricSpec("calories_in", "Calories In", "kcal", "Nutrition",
+        Palette.metricAmber, null, 0),
+    "protein_g" to MetricSpec("protein_g", "Protein", "g", "Nutrition",
+        Palette.metricCyan, null, 0),
+    "carbs_g" to MetricSpec("carbs_g", "Carbs", "g", "Nutrition",
+        Palette.metricCyan, null, 0),
+    "fat_g" to MetricSpec("fat_g", "Fat", "g", "Nutrition",
+        Palette.metricCyan, null, 0),
+    "mood" to MetricSpec("mood", "Mood", "/5", "Mind",
+        Palette.metricPurple, true, 0),
 )
 
 // MARK: - A loaded series point (day string + value), oldest first.
@@ -167,19 +189,30 @@ fun TrendsExploreScreen(vm: AppViewModel) {
     val deviceId = "my-whoop"
     val recentDays by vm.recentDays.collectAsStateWithLifecycle()
 
-    // Extra long-format keys from the metricSeries table (anything beyond the built-ins).
-    var extraKeys by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Extra long-format keys from the metricSeries table (anything beyond the built-ins) — from the
+    // strap source AND the dedicated import/check-in sources, which write under their OWN deviceIds
+    // (nutrition-csv, noop-mood) and were invisible to a strap-only key scan (v2.2.0 parity).
+    var extraKeys by remember { mutableStateOf<List<Pair<String, String?>>>(emptyList()) }
     LaunchedEffect(deviceId) {
-        extraKeys = runCatching { vm.repo.metricKeys(deviceId) }.getOrDefault(emptyList())
+        val strap = runCatching { vm.repo.metricKeys(deviceId) }.getOrDefault(emptyList())
+            .map { it to null as String? }
+        val sourced = listOf(NutritionCsvImporter.SOURCE_ID, MoodStore.MOOD_DEVICE_ID).flatMap { src ->
+            runCatching { vm.repo.metricKeys(src) }.getOrDefault(emptyList()).map { it to (src as String?) }
+        }
+        extraKeys = strap + sourced
     }
 
     // The full picker: built-ins first, then any extra metricSeries keys not already covered.
+    // Known import/check-in keys get their proper titles/units/categories (matching the macOS
+    // MetricCatalog); anything else falls back to a prettified key under "Other".
     val metrics = remember(extraKeys) {
         val builtInKeys = builtInMetrics.map { it.key }.toSet()
         val extras = extraKeys
-            .filter { it !in builtInKeys }
-            .map { k ->
-                MetricSpec(
+            .filter { (k, _) -> k !in builtInKeys }
+            .distinctBy { (k, src) -> "$src:$k" }
+            .map { (k, src) ->
+                val known = knownSeriesMetrics[k]
+                known?.copy(seriesKey = k, seriesSource = src) ?: MetricSpec(
                     key = k,
                     title = k.replace('_', ' ').replaceFirstChar { c -> c.uppercase() },
                     unit = "",
@@ -188,6 +221,7 @@ fun TrendsExploreScreen(vm: AppViewModel) {
                     higherIsBetter = null,
                     decimals = 1,
                     seriesKey = k,
+                    seriesSource = src,
                 )
             }
         builtInMetrics + extras
@@ -209,8 +243,10 @@ fun TrendsExploreScreen(vm: AppViewModel) {
             }
             seriesKeyLoaded = selected.key
         } else if (selected.seriesKey != null) {
+            // Series-backed metrics live under their own source id when imported/checked-in
+            // (nutrition-csv, noop-mood) — read from that source, else the strap's (v2.2.0 parity).
             val rows = runCatching {
-                vm.repo.metricSeries(deviceId, selected.seriesKey, "0000-00-00", "9999-99-99")
+                vm.repo.metricSeries(selected.seriesSource ?: deviceId, selected.seriesKey, "0000-00-00", "9999-99-99")
             }.getOrDefault(emptyList())
             loadedSeries = rows.map { SeriesPoint(it.day, it.value) }
             seriesKeyLoaded = selected.key

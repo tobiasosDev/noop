@@ -230,7 +230,7 @@ fun LiveScreen(viewModel: AppViewModel) {
                         StatTile(modifier = Modifier.weight(1f), label = "HR", value = bpm?.toString() ?: "—")
                         StatTile(modifier = Modifier.weight(1f), label = "Avg", value = if (w.avgHr > 0) "${w.avgHr}" else "—")
                         StatTile(modifier = Modifier.weight(1f), label = "Peak", value = if (w.peakHr > 0) "${w.peakHr}" else "—")
-                        StatTile(modifier = Modifier.weight(1f), label = "Strain", value = String.format("%.1f", w.liveStrain))
+                        StatTile(modifier = Modifier.weight(1f), label = "Effort", value = String.format("%.1f", w.liveStrain))
                     }
                     if (w.gpsEnabled) {
                         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {

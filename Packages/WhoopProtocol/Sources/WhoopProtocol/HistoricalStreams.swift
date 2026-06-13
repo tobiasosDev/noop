@@ -67,6 +67,10 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
         return rawTs + snapped
     }
     var out = Streams()
+    // v26 optical-PPG records (issue #156): no measured HR/motion, just the 24 Hz waveform. Collect
+    // (corrected-wall ts, samples) here and derive a per-second HR after the loop (PpgHr.derivePpgHr),
+    // so the timeline stays continuous through the v26-heavy stretches that have no v18 HR summary.
+    var ppgRecords: [(ts: Int, samples: [Int])] = []
     for r in parsed {
         if !r.ok || r.crcOK == false { continue }
         let p = r.parsed
@@ -76,6 +80,11 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
             // (FIX #72); a normal strap is unchanged (offset < threshold).
             guard let rawTs = p["unix"]?.intValue else { continue }
             let ts = correctedWall(rawTs)
+            // v26 PPG buffer: stash the waveform for the post-loop HR estimator. A v26 record carries
+            // no heart_rate/spo2/gravity, so it adds nothing to the branches below — handled here only.
+            if let samples = p["ppg_waveform"]?.intArrayValue, !samples.isEmpty {
+                ppgRecords.append((ts: ts, samples: samples))
+            }
             if let bpm = p["heart_rate"]?.intValue, bpm != 0 {  // skip startup hr=0
                 out.hr.append(HRSample(ts: ts, bpm: bpm))
             }
@@ -126,5 +135,8 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
             continue
         }
     }
+    // Derive per-second HR from the collected v26 PPG bursts (issue #156). Empty when there were no v26
+    // records (the WHOOP 4 / v18-only common case), so this is a no-op cost there.
+    out.ppgHr = PpgHr.derivePpgHr(records: ppgRecords)
     return out
 }

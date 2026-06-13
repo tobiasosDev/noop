@@ -11,8 +11,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,46 +58,57 @@ import kotlin.math.roundToInt
  * Sleep — Whoop-sleep clarity on the locked Noop component system. Mirrors the macOS
  * SleepView (Strand/Screens/SleepView.swift) section-for-section:
  *
- *   1. HERO "Last night" — the stage breakdown. A Hypnogram when stage minutes are
- *      present (deep / rem / light / awake reconstructed end-to-end), with a footer
- *      of REM / Deep / Light / Awake each "Xh Ym · NN%".
+ *   1. HERO — the stage breakdown for the navigated night. ◀/▶ chevrons flank the
+ *      header and walk EVERY recorded night (0 = last night), replacing the fixed
+ *      3-day selector (#160). A Hypnogram when stage minutes are present (deep / rem /
+ *      light / awake reconstructed end-to-end), with a footer of REM / Deep / Light /
+ *      Awake each "Xh Ym · NN%".
  *   2. A uniform grid of fixed StatTiles, each with a sparkline + "vs typical" caption:
- *      Sleep Performance, Efficiency, Consistency, Hours vs Needed, Restorative,
+ *      Rest, Efficiency, Consistency, Hours vs Needed, Restorative,
  *      Respiratory, Sleep Debt.
  *   3. "Stages vs typical" — Deep / REM / Light horizontal bars showing last-night
  *      minutes with a marker at the personal typical (mean).
  *   4. A 14-day asleep-hours trend LineChart.
  *
  * Data wiring is faithful to the macOS screen: the "typical" is the mean across the
- * cached daily metrics; the per-night stage split comes from the latest DailyMetric's
- * deep/rem/light minutes. The hero hypnogram prefers the REAL per-epoch segments the
- * on-device stager persists into sleepSession.stagesJSON ([{start,end,stage}]) when the
- * merged session is the same night — labelled approximate (on-device staging). Imported
- * nights carry minutes only, so they keep the reconstructed plausible architecture
+ * cached daily metrics; the per-night stage split comes from the selected night's
+ * DailyMetric deep/rem/light minutes (the grid/trends window ends on that day, exactly
+ * as it followed the old day selector). The hero hypnogram prefers the REAL per-epoch
+ * segments the on-device stager persists into sleepSession.stagesJSON ([{start,end,stage}])
+ * when the merged session is the same night — labelled approximate (on-device staging).
+ * Imported nights carry minutes only, so they keep the reconstructed plausible architecture
  * (deep early, REM later, awake last). No data is fabricated: with no nights the screen
- * shows an honest empty state.
+ * shows an honest empty state, and a navigated night with no usable stage data says so
+ * instead of silently showing another night (#160).
  */
 @Composable
 fun SleepScreen(vm: AppViewModel) {
     val days by vm.recentDays.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
-    var selectedDayOffset by remember { mutableIntStateOf(0) }
-    val selectedDay = remember(selectedDayOffset) { LocalDate.now().minusDays(selectedDayOffset.toLong()) }
-    val selectedDayKey = remember(selectedDay) { selectedDay.toString() }
 
-    // The latest sleep session (for onset/wake clock + stored efficiency). Loaded once
-    // from the repo; the my-whoop daily metrics drive everything else and arrive via the
-    // shared recentDays flow.
-    var session by remember { mutableStateOf<SleepSession?>(null) }
-    LaunchedEffect(selectedDayKey) {
-        val now = System.currentTimeMillis() / 1000L
-        val from = now - 60L * 24L * 60L * 60L // 60-day lookback
-        session = runCatching {
-            vm.repo.sleepSessionsMerged("my-whoop", from, now)
-                .filter { AnalyticsEngine.dayString(it.endTs) == selectedDayKey }
-                .maxByOrNull { it.startTs }
-        }.getOrNull()
+    // Every recorded sleep BLOCK, oldest→newest — the hero's ◀/▶ chevrons walk this whole list,
+    // including same-day naps / split sleep that `sleepSessionsMerged` collapses to one-per-night
+    // for the dashboard (#170). Derived un-deduplicated: every imported session, plus the computed
+    // "-noop" sessions on days the import doesn't cover (imported-wins / computed-fills, mirroring
+    // mergeSleep but WITHOUT the per-night collapse). Keyed on `days` so a sync/import (which always
+    // rewrites dailyMetric too) reloads; these reads have no Flow. (#160, #170)
+    var sleeps by remember { mutableStateOf<List<SleepSession>>(emptyList()) }
+    LaunchedEffect(days) {
+        sleeps = runCatching {
+            val now = System.currentTimeMillis() / 1000L
+            val imported = vm.repo.sleepSessions("my-whoop", 0L, now)
+            val computed = vm.repo.sleepSessions(vm.repo.computedDeviceId("my-whoop"), 0L, now)
+            val importedDays = imported.map { AnalyticsEngine.dayString(it.endTs) }.toHashSet()
+            val computedOnly = computed.filter { AnalyticsEngine.dayString(it.endTs) !in importedDays }
+            (imported + computedOnly).sortedBy { it.startTs }
+        }.getOrDefault(emptyList())
     }
+
+    // 0 = latest night, N = N sleep-sessions back. Snaps back to the newest night when the
+    // list itself changes (new night synced / re-import); structural equality keeps no-op
+    // reloads from resetting a browse in progress. (#160)
+    var nightOffset by remember { mutableIntStateOf(0) }
+    LaunchedEffect(sleeps) { nightOffset = 0 }
 
     // Export-verbatim sleep figures (sleep_performance / consistency / need / debt) — the
     // headline tiles prefer them over the on-device approximations. Keyed on `days` so a
@@ -109,85 +126,164 @@ fun SleepScreen(vm: AppViewModel) {
         )
     }
 
-    val model = remember(days, session, imported, selectedDayKey) {
-        buildSleepModel(days, session, imported, selectedDay = selectedDayKey)
+    // The navigated night, decoded once per (offset, data) change — chevron taps re-pick
+    // instantly without re-parsing stagesJSON on every recomposition. (#160)
+    val night = remember(nightOffset, sleeps, days) { selectNight(sleeps, days, nightOffset) }
+
+    // The whole screen follows the selected night: the grid/trends window ends on its day,
+    // exactly as it followed the old day selector. Null when that day has no stage minutes.
+    val model = remember(days, night, imported) {
+        buildSleepModel(days, night?.session, imported, selectedDay = night?.dayKey)
     }
+    val display = remember(model, night) { heroDisplay(model, night) }
 
     ScreenScaffold(title = "Sleep", subtitle = "Last night, read in two seconds.") {
-        DaySelectorBar(selectedOffset = selectedDayOffset, onSelect = { selectedDayOffset = it })
-        if (model == null) {
+        if (model == null && night == null) {
             // While the strap is mid-offload, say so — "No nights" reads as final otherwise (#77).
             if (live.backfilling) SyncingHistoryNote(chunks = live.syncChunksThisSession)
             SleepEmptyState()
         } else {
-            Hero(model)
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            MetricGrid(model)
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            StagesVsTypical(model)
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            DurationTrend(model)
+            Hero(
+                display = display,
+                clock = night?.clockLabel ?: model?.clockLabel,
+                nightOffset = nightOffset,
+                lastIndex = max(sleeps.lastIndex, 0),
+                onNavigate = { nightOffset = it },
+            )
+            if (model != null) {
+                Spacer(Modifier.height(Metrics.selectorTopUp))
+                MetricGrid(model)
+                Spacer(Modifier.height(Metrics.selectorTopUp))
+                StagesVsTypical(model)
+                Spacer(Modifier.height(Metrics.selectorTopUp))
+                DurationTrend(model)
+            }
         }
     }
 }
 
-@Composable
-private fun DaySelectorBar(selectedOffset: Int, onSelect: (Int) -> Unit) {
-    ThreeDaySelectorBar(selectedOffset = selectedOffset, onSelect = onSelect)
-}
-
-// MARK: - 1. HERO — stage breakdown
+// MARK: - 1. HERO — stage breakdown for the navigated night
 
 @Composable
-private fun Hero(m: SleepModel) {
-    val s = m.stages
+private fun Hero(
+    display: HeroDisplay?,
+    clock: String?,
+    nightOffset: Int,
+    lastIndex: Int,
+    onNavigate: (Int) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader(
-            "Last night",
-            overline = "Sleep",
-            trailing = m.clockLabel,
-        )
-        ChartCard(
-            title = "Stage breakdown",
-            subtitle = "${durationText(s.total)} in bed · ${m.efficiencyText} efficiency" +
-                (if (m.realSegments != null) " · approx. stages (on-device)" else ""),
-            trailing = durationText(s.asleep),
-            footer = {
-                ChartFooter(
-                    listOf(
-                        "REM" to "${durationText(s.rem)} · ${pct(s.rem, s.total)}%",
-                        "Deep" to "${durationText(s.deep)} · ${pct(s.deep, s.total)}%",
-                        "Light" to "${durationText(s.light)} · ${pct(s.light, s.total)}%",
-                        "Awake" to "${durationText(s.awake)} · ${pct(s.awake, s.total)}%",
-                    ),
-                )
-            },
-        ) {
-            // True per-epoch segments when the stager persisted them; else the reconstructed
-            // architecture: light → deep → light → rem → light → awake.
-            val segments = m.realSegments ?: stageSegments(s)
-            if (segments.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(modifier = Modifier.fillMaxWidth().height(Metrics.stageStripHeight)) {
-                        Hypnogram(
-                            stages = segments,
-                            modifier = Modifier.fillMaxWidth().height(Metrics.stageStripHeight),
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space16)) {
-                        StageLegend("Deep", Palette.sleepDeep)
-                        StageLegend("Light", Palette.sleepLight)
-                        StageLegend("REM", Palette.sleepREM)
-                        StageLegend("Awake", Palette.sleepAwake)
-                    }
-                }
-            } else {
+        NightNavHeader(nightOffset, lastIndex, clock, onNavigate)
+        if (display == null) {
+            // Honest fallback: this night recorded no usable stage data — never silently
+            // substitute another night's hypnogram. (#160)
+            NoopCard {
                 Text(
-                    "No stage breakdown for the latest night.",
+                    "No stage data recorded for this night.",
                     style = NoopType.subhead,
                     color = Palette.textTertiary,
                 )
             }
+        } else {
+            val s = display.stages
+            ChartCard(
+                title = "Stage breakdown",
+                subtitle = "${durationText(s.total)} in bed · ${display.efficiencyText} efficiency" +
+                    (if (display.realSegments != null) " · approx. stages (on-device)" else ""),
+                trailing = durationText(s.asleep),
+                footer = {
+                    ChartFooter(
+                        listOf(
+                            "REM" to "${durationText(s.rem)} · ${pct(s.rem, s.total)}%",
+                            "Deep" to "${durationText(s.deep)} · ${pct(s.deep, s.total)}%",
+                            "Light" to "${durationText(s.light)} · ${pct(s.light, s.total)}%",
+                            "Awake" to "${durationText(s.awake)} · ${pct(s.awake, s.total)}%",
+                        ),
+                    )
+                },
+            ) {
+                // True per-epoch segments when the stager persisted them; else the reconstructed
+                // architecture: light → deep → light → rem → light → awake.
+                val segments = display.realSegments ?: stageSegments(s)
+                if (segments.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth().height(Metrics.stageStripHeight)) {
+                            Hypnogram(
+                                stages = segments,
+                                modifier = Modifier.fillMaxWidth().height(Metrics.stageStripHeight),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space16)) {
+                            StageLegend("Deep", Palette.sleepDeep)
+                            StageLegend("Light", Palette.sleepLight)
+                            StageLegend("REM", Palette.sleepREM)
+                            StageLegend("Awake", Palette.sleepAwake)
+                        }
+                    }
+                } else {
+                    Text(
+                        "No stage breakdown for this night.",
+                        style = NoopType.subhead,
+                        color = Palette.textTertiary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Hero header with ◀/▶ to browse past nights. ◀ goes older (offset+1), ▶ newer; each is
+ * disabled at its bound — tinted tertiary when disabled, accent when active. Mirrors the
+ * macOS nightNavHeader (SleepView.swift). (#160)
+ */
+@Composable
+private fun NightNavHeader(
+    offset: Int,
+    lastIndex: Int,
+    clock: String?,
+    onNavigate: (Int) -> Unit,
+) {
+    val canGoOlder = offset < lastIndex
+    val canGoNewer = offset > 0
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(Metrics.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = { if (canGoOlder) onNavigate(offset + 1) },
+            enabled = canGoOlder,
+            modifier = Modifier.size(Metrics.iconButton),
+        ) {
+            Icon(
+                Icons.Filled.ChevronLeft,
+                contentDescription = "Previous night",
+                tint = if (canGoOlder) Palette.accent else Palette.textTertiary,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Overline(
+                if (offset == 0) "Last night" else "$offset night${if (offset == 1) "" else "s"} ago",
+                color = Palette.textTertiary,
+            )
+            Text(
+                clock ?: "—",
+                style = NoopType.headline,
+                color = Palette.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(
+            onClick = { if (canGoNewer) onNavigate(offset - 1) },
+            enabled = canGoNewer,
+            modifier = Modifier.size(Metrics.iconButton),
+        ) {
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = "Next night",
+                tint = if (canGoNewer) Palette.accent else Palette.textTertiary,
+            )
         }
     }
 }
@@ -216,7 +312,7 @@ private fun MetricGrid(m: SleepModel) {
     val tiles = listOf<@Composable (Modifier) -> Unit>(
         { mod ->
             SparkTile(
-                mod, "Sleep Performance",
+                mod, "Rest",
                 value = pctValue(m.performance.latest),
                 caption = vsTypical(m.performance.latest, m.performance.typical, "%"),
                 accent = m.performance.latest?.let { Palette.recoveryColor(it) } ?: Palette.textPrimary,
@@ -297,7 +393,7 @@ private fun MetricGrid(m: SleepModel) {
 private fun StagesVsTypical(m: SleepModel) {
     val s = m.stages
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        SectionHeader("Stages vs typical", overline = "Last night", trailing = "marker = your mean")
+        SectionHeader("Stages vs typical", overline = "Selected night", trailing = "marker = your mean")
         NoopCard {
             Column(verticalArrangement = Arrangement.spacedBy(Metrics.space14)) {
                 StageRow("Deep", last = s.deep, typical = m.typicalDeepMin, color = Palette.sleepDeep)
@@ -664,6 +760,78 @@ internal data class SleepModel(
     val realSegments: List<Pair<String, Float>>?,
 )
 
+/** The night the ◀/▶ chevrons selected: its session, the day-metric key it resolves to,
+ *  its persisted per-epoch weights (or null) and the "EEE d MMM · HH:mm–HH:mm" clock. (#160) */
+internal data class HeroNight(
+    val session: SleepSession,
+    val dayKey: String,
+    val realSegments: List<Pair<String, Float>>?,
+    val clockLabel: String,
+)
+
+/** What the hero card draws for the selected night — null means no usable stage data
+ *  (renders the honest "No stage data recorded for this night." fallback). (#160) */
+internal data class HeroDisplay(
+    val stages: Stages,
+    val realSegments: List<Pair<String, Float>>?,
+    val efficiencyText: String,
+)
+
+/**
+ * Pick the night [offset] sleep-sessions back from the most recent (0 = latest), clamped
+ * so a stale offset after a data change shows the oldest night rather than nothing. The
+ * day key tries UTC then local-tz attribution of the wake timestamp — imported
+ * DailyMetric.day is local-tz while dayString is UTC, so a near-midnight-UTC wake needs
+ * the second key; both derive from THIS session's endTs, never another night. (#160)
+ */
+internal fun selectNight(
+    sleeps: List<SleepSession>,
+    days: List<DailyMetric>,
+    offset: Int,
+): HeroNight? {
+    if (sleeps.isEmpty()) return null
+    val idx = (sleeps.size - 1 - offset).coerceIn(0, sleeps.size - 1)
+    val session = sleeps[idx]
+    val utcKey = AnalyticsEngine.dayString(session.endTs)
+    val localKey = localDayString(session.endTs)
+    val dayKey = listOf(utcKey, localKey).firstOrNull { key ->
+        days.any { it.day == key && (it.deepMin ?: 0.0) + (it.remMin ?: 0.0) + (it.lightMin ?: 0.0) > 0.0 }
+    } ?: utcKey
+    val segments = parsePersistedSegments(session.stagesJSON)
+        ?.map { seg -> seg.stage to ((seg.end - seg.start) / 60f) }
+    return HeroNight(session, dayKey, segments, sessionClockLabel(session))
+}
+
+/**
+ * Resolve what the hero shows: the day-metric model when it resolved for the selected
+ * night; else the session's own persisted segments (the day row can miss while the
+ * segments exist); else null → the honest fallback. Never another night's data. (#160)
+ */
+internal fun heroDisplay(model: SleepModel?, night: HeroNight?): HeroDisplay? {
+    if (model != null) return HeroDisplay(model.stages, model.realSegments, model.efficiencyText)
+    val segments = night?.realSegments ?: return null
+    val stages = stagesFromSegments(segments) ?: return null
+    val eff = night.session.efficiency
+        ?.let { e -> "${(if (e <= 1.0) e * 100.0 else e).roundToInt()}%" } ?: "—"
+    return HeroDisplay(stages, segments, eff)
+}
+
+/** Sum (stage, minutes) weights into per-stage totals; null when nothing is > 0. */
+internal fun stagesFromSegments(segments: List<Pair<String, Float>>): Stages? {
+    var awake = 0.0; var light = 0.0; var deep = 0.0; var rem = 0.0
+    for ((stage, minutes) in segments) {
+        val m = minutes.toDouble()
+        when (stage) {
+            "wake", "awake" -> awake += m
+            "light" -> light += m
+            "deep" -> deep += m
+            "rem" -> rem += m
+        }
+    }
+    val s = Stages(awake = awake, light = light, deep = deep, rem = rem)
+    return if (s.total > 0.0) s else null
+}
+
 /**
  * Build the whole model from the cached daily metrics + the latest sleep session + the
  * export-verbatim sleep figures. Returns null when there is no usable latest night (no
@@ -757,12 +925,15 @@ internal fun buildSleepModel(
     }
     val trendDates = trendRows.map { it.day }
 
-    // Real per-epoch timeline only when the merged session IS this night (UTC end-day
-    // match, the same attribution AnalyticsEngine uses); else synthesized fallback. Note:
-    // imported DailyMetric.day is local-tz while dayString is UTC, so a near-midnight-UTC
-    // wake can miss the match — that degrades safely to synthesis, never to a wrong night.
+    // Real per-epoch timeline only when the merged session IS this night — UTC OR local-tz
+    // end-day match (imported DailyMetric.day is local-tz while dayString is UTC, so a
+    // near-midnight-UTC wake only matches via the local key; selectNight attributes the
+    // night the same way). A non-matching session degrades safely to synthesis, never to
+    // a wrong night. (#160)
     val realSegments = session
-        ?.takeIf { AnalyticsEngine.dayString(it.endTs) == latest.day }
+        ?.takeIf {
+            AnalyticsEngine.dayString(it.endTs) == latest.day || localDayString(it.endTs) == latest.day
+        }
         ?.let { parsePersistedSegments(it.stagesJSON) }
         ?.map { seg -> seg.stage to ((seg.end - seg.start) / 60f) }
 
@@ -887,19 +1058,27 @@ private fun List<Double>.averageOrNull(): Double? =
     if (isEmpty()) null else sum() / size
 
 private fun clockLabel(latest: DailyMetric, session: SleepSession?): String {
-    val timeFmt = SimpleDateFormat("HH:mm", Locale.US)
-    val dateFmt = SimpleDateFormat("EEE d MMM", Locale.US)
-    if (session != null) {
-        val onset = Date(session.startTs * 1000L)
-        val wake = Date(session.endTs * 1000L)
-        return "${dateFmt.format(onset)} · ${timeFmt.format(onset)}–${timeFmt.format(wake)}"
-    }
+    if (session != null) return sessionClockLabel(session)
     // Fall back to the daily metric's day string (YYYY-MM-DD), formatted to "EEE d MMM".
+    val dateFmt = SimpleDateFormat("EEE d MMM", Locale.US)
     return runCatching {
         val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
         parser.parse(latest.day)?.let { dateFmt.format(it) }
     }.getOrNull() ?: latest.day
 }
+
+/** "Wed 4 Jun · 22:50–06:48" — the night-nav header's date · onset–wake line. (#160) */
+private fun sessionClockLabel(session: SleepSession): String {
+    val timeFmt = SimpleDateFormat("HH:mm", Locale.US)
+    val dateFmt = SimpleDateFormat("EEE d MMM", Locale.US)
+    val onset = Date(session.startTs * 1000L)
+    val wake = Date(session.endTs * 1000L)
+    return "${dateFmt.format(onset)} · ${timeFmt.format(onset)}–${timeFmt.format(wake)}"
+}
+
+/** Unix seconds → "YYYY-MM-DD" in the DEVICE timezone (vs AnalyticsEngine.dayString = UTC). */
+private fun localDayString(ts: Long): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(ts * 1000L))
 
 /** One persisted per-epoch stage segment (wall-clock unix seconds). */
 internal data class PersistedSegment(val start: Long, val end: Long, val stage: String)

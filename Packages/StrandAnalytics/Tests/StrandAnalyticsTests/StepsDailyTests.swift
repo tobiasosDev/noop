@@ -85,4 +85,38 @@ final class StepsDailyTests: XCTestCase {
         XCTAssertEqual(AnalyticsEngine.analyzeDay(day: dayUtc, steps: s, profile: profile).daily.steps,
                        120)
     }
+
+    // MARK: - Step-scale calibration (#139)
+
+    private func stepsFor(_ samples: [StepSample], ticksPerStep: Double) -> Int? {
+        AnalyticsEngine.analyzeDay(day: dayUtc, steps: samples,
+                                   profile: UserProfile(stepTicksPerStep: ticksPerStep)).daily.steps
+    }
+
+    func testTicksPerStepTwoHalvesTheTotal() {
+        // 120 raw ticks at 2.0 ticks/step => 60 steps.
+        let s = [step(0, 100), step(60, 150), step(120, 220)]
+        XCTAssertEqual(stepsFor(s, ticksPerStep: 2.0), 60)
+    }
+
+    func testTicksPerStepHalvingRoundsToNearest() {
+        // 121 raw ticks at 2.0 => 60.5, rounded to nearest => 61.
+        let s = [step(0, 100), step(60, 150), step(120, 221)]
+        XCTAssertEqual(stepsFor(s, ticksPerStep: 2.0), 61)
+    }
+
+    func testTicksPerStepDefaultIsRawPassThrough() {
+        // Default 1.0 (and an explicit 1.0) must leave the total untouched — no behavior
+        // change until the user calibrates.
+        let s = [step(0, 100), step(60, 150), step(120, 220)]
+        XCTAssertEqual(stepsFor(s), 120)
+        XCTAssertEqual(stepsFor(s, ticksPerStep: 1.0), 120)
+    }
+
+    func testTicksPerStepClampsAtFloor() {
+        // A divisor below the 0.5 floor clamps: it can at most double the total, never
+        // explode it. 120 / 0.5 = 240 even when the profile says 0.1.
+        let s = [step(0, 100), step(60, 150), step(120, 220)]
+        XCTAssertEqual(stepsFor(s, ticksPerStep: 0.1), 240)
+    }
 }

@@ -9,8 +9,12 @@ be checked.
 > unofficial, local-first companion app. It interoperates with a WHOOP strap that
 > **you own**, reading **your own** biometric data from **your own** device. It is
 > not affiliated with, endorsed by, or connected to WHOOP, Inc. All computed
-> outputs (recovery, strain, HRV, sleep, SpO₂, skin temperature, respiratory rate)
-> are approximations and are not clinically validated. See `DISCLAIMER.md` and
+> outputs (Charge, Effort, Rest, HRV, SpO₂, skin temperature, respiratory rate — Charge/Effort/Rest
+> being NOOP's own recovery/strain/sleep scores, not WHOOP's)
+> are approximations and are not clinically validated. Self-tracking features such
+> as the Mind / mood check-in and nutrition import are **informational only** and are
+> **not** a diagnosis, treatment, or dietary/medical advice. Use at your own risk;
+> your data stays on your device. See `DISCLAIMER.md`, `TERMS.md`, and
 > `ATTRIBUTION.md` at the repo root.
 
 ---
@@ -27,15 +31,18 @@ turn it on with your own API key; when you ask it a question it sends a short te
 summary of your recent metrics to the provider you choose. Nothing else in the app ever
 touches the network, and your raw data never does.
 
-Data enters NOOP two ways:
+Data enters NOOP two ways, and leaves it (other than the optional AI Coach) only when **you**
+deliberately export it to another store on the **same device**:
 
 | Path | Transport | Direction |
 |------|-----------|-----------|
 | Live collection | Bluetooth LE, strap → device | Read-only from the strap |
-| File import | User-selected files on disk | Read-only from disk |
+| File import (Apple Health, WHOOP CSV, nutrition CSV) | User-selected files on disk | Read-only from disk |
+| Apple Health export, incl. iOS "Export for Shortcuts" | On-device, user-initiated | NOOP → your Apple Health, on your device only (§1.3) |
 
-The only outbound path is the opt-in AI Coach; the biometric pipeline produces no network
-traffic of any kind.
+The only **network** path is the opt-in AI Coach; the biometric pipeline produces no network
+traffic of any kind. The Apple Health export above is an **on-device** hand-off, not a network
+upload — see §1.3.
 
 ### 1.1 Network code: only the optional AI Coach
 
@@ -68,7 +75,7 @@ feature that uses the network, and only on your terms:
   (Anthropic, OpenAI, or a local / self-hosted OpenAI-compatible LLM such as Ollama or
   LM Studio). No key, no network calls, ever.
 - **What is sent.** When you ask a question, NOOP builds a compact **text** summary of
-  your recent metrics (recovery, strain, sleep, HRV, resting HR over ~14 days, plus
+  your recent metrics (Charge, Effort, Rest, HRV, resting HR over ~14 days, plus
   30-day averages and recent workouts) and sends it, with your question, directly to
   your chosen endpoint (e.g. `api.anthropic.com` / `api.openai.com` for the hosted
   providers). If you point the Coach at a local / self-hosted LLM, that endpoint is on
@@ -127,6 +134,26 @@ property is enforced by the OS, not merely by convention.
 > notarized builds should enable the Hardened Runtime; it composes with, and does
 > not weaken, the sandbox entitlements above.
 
+### 1.3 iOS Apple Health export ("Export for Shortcuts") — on-device, user-initiated, one-way
+
+On iOS NOOP can hand your metrics to **Apple Health**. This is the one path where data leaves
+NOOP's own store — but it never leaves your **device**, and never touches the network.
+
+- **You initiate it; NOOP writes only what you enable.** Nothing is exported automatically. You
+  choose which metrics to push, and NOOP writes only those, only when you trigger the export. There
+  is no background sync.
+- **On-device, not a network upload.** The export is a local hand-off to Apple Health on the same
+  phone. No NOOP server, no cloud, no telemetry is involved — consistent with §1.
+- **HealthKit-free option.** The **"Export for Shortcuts"** path produces data for the Apple
+  Shortcuts app rather than writing through HealthKit directly, so you can route it with a Shortcut
+  you control. Where it does write to Apple Health, it does so through Apple's permission-gated APIs:
+  you grant access per data type, and you can revoke it in iOS Settings at any time.
+- **Once it's in Apple Health, it's yours and Apple's, not NOOP's.** NOOP cannot read back, manage,
+  or delete what you exported; that store, its backups (e.g. iCloud Health if *you* enabled it), and
+  its sharing settings are governed by Apple and by your choices. **You are responsible for the data
+  you push into Apple Health and for anything you or your Shortcuts then do with it.** See
+  `DISCLAIMER.md` §5.3 and `TERMS.md` §5.
+
 ---
 
 ## 2. Data at rest
@@ -154,6 +181,10 @@ It holds exactly the kinds of data you would expect from the features:
   `skinTempSample`, `respSample`, `gravitySample`, `battery`, `event`.
 - **Derived/cached metrics**: `sleepSession`, `dailyMetric`, `workout`, `journal`,
   `appleDaily`, and the generic long-format `metricSeries`.
+- **Your own entries and imports**: daily **mood check-ins** (the Mind feature) and imported
+  **nutrition** figures (from a Cronometer / MacroFactor CSV) are stored the same way — locally, in
+  this database, never transmitted. They are self-tracking notes, not clinical records (see
+  `DISCLAIMER.md` §5).
 - **A transient raw outbox** (`rawBatch`): compressed raw BLE frames, **prunable**.
 - **Device records** (`device`): strap id, MAC, name, first/last-seen timestamps.
 
@@ -394,6 +425,15 @@ bundle of CSV files, but the same defensive posture applies.
 - **Tolerant, header-name-driven parsing.** Columns are matched by normalized header
   name (not position), every column is optional, BOMs are stripped, and rows with no
   usable timestamp are dropped. Malformed input degrades to fewer rows, not a crash.
+
+**Nutrition CSV (`NutritionCsvImport.swift`).** The nutrition importer (Cronometer /
+MacroFactor daily-summary exports) reuses the same shared CSV reader (`CSVParsing.swift`)
+and the same tolerant posture: headers are matched case-insensitively by name (date /
+calories / protein / carbs / fat / weight), every column is optional, non-`yyyy-MM-dd`
+dates and value-less rows are **skipped and counted, never fatal**, and only the
+recognised numeric fields are read — no archive member or cell is ever executed or
+interpreted. The result is projected into the long-format `metricSeries` store under the
+dedicated source id `nutrition-csv`, alongside your other metrics and entirely on-device.
 
 ---
 

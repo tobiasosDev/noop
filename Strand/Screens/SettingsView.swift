@@ -32,6 +32,14 @@ struct SettingsView: View {
     /// Opt-in WHOOP 5/MG raw-frame capture to a file (off by default). See [PuffinFrameRecorder].
     @AppStorage(PuffinFrameRecorder.enabledKey) private var puffinCapture = false
 
+    /// Opt-in WHOOP 5/MG "R22" deep-data unlock (off by default) — the one probe that writes a
+    /// persistent feature flag to the strap. See [PuffinExperiment.deepDataKey]. (#174)
+    @AppStorage(PuffinExperiment.deepDataKey) private var deepDataEnabled = false
+
+    /// Opt-in "Broadcast heart rate" (off by default) — makes the strap advertise its HR as a standard
+    /// BLE sensor for Garmin/Zwift/gym kit. See [PuffinExperiment.broadcastHrKey]. (#181)
+    @AppStorage(PuffinExperiment.broadcastHrKey) private var broadcastHrEnabled = false
+
     // Imperial/Metric display preference (D#103). Stored data is always SI; this only changes how
     // distances/weights/heights/temperatures are SHOWN — and lets the profile fields below take
     // imperial entry. Temperature has a separate override so °C/°F can be picked independently.
@@ -163,6 +171,25 @@ struct SettingsView: View {
                                              : StrandPalette.textTertiary)
                     }
                 }
+                rowDivider
+                // Step calibration (#139): daily steps = @57 counter ticks ÷ this divisor.
+                // 1.0 = raw pass-through until the true 5/MG tick rate is known.
+                FormRow(label: "Step calibration") {
+                    HStack(spacing: 10) {
+                        Text(String(format: "%.1f", profile.stepTicksPerStep))
+                            .font(StrandFont.bodyNumber)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .frame(minWidth: 44, alignment: .trailing)
+                        Stepper("Step calibration",
+                                value: $profile.stepTicksPerStep, in: 0.5...4.0, step: 0.1)
+                            .labelsHidden()
+                            .accessibilityLabel("Step calibration, \(String(format: "%.1f", profile.stepTicksPerStep)) counter ticks per step")
+                    }
+                }
+                Text("Counter ticks per step — leave at 1.0 unless your steps run high. Walk a known 1,000 steps and divide NOOP's count by the real count to get your value.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -479,6 +506,70 @@ struct SettingsView: View {
 
                 Divider().overlay(StrandPalette.hairline)
 
+                // MARK: R22 deep-data unlock — the one probe that writes to the strap.
+                Toggle(isOn: $deepDataEnabled) {
+                    Text("Unlock WHOOP 5/MG deep data (R22)")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("WHOOP 5/MG straps hand a fresh app only live heart rate. The official app switches on the deeper streams (high-rate HR + motion + history) by writing a set of feature flags — a sequence two independent projects have documented. With this on, the button below sends that exact sequence to your strap. Unlike everything else here it does write to the strap, but it's reversible (it only changes which data the strap chooses to emit) and is the same thing the official app does. Experimental: it may do nothing on your firmware. iPhone/Android only — a Mac can't write to a 5/MG.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if deepDataEnabled {
+                    Button {
+                        model.ble.enableWhoop5DeepData()
+                    } label: {
+                        Label("Send enable sequence to strap", systemImage: "bolt.badge.automatic")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(StrandPalette.accent)
+                    .disabled(!live.bonded || !live.worn)
+                    Text(live.bonded ? (live.worn ? "Wear the strap, tap once, then let it sync and share your strap log." : "Put the strap on first — the deep stream is on-wrist only.") : "Connect and bond a 5/MG strap first.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+
+                    // Live R22 telemetry (#174): proof of what the strap is doing right now.
+                    if live.r22FlagsAccepted > 0 {
+                        Label(live.r22FlagsAccepted >= 15
+                              ? "Strap accepted all 15 R22 flags"
+                              : "Strap accepted \(live.r22FlagsAccepted)/15 R22 flags…",
+                              systemImage: live.r22FlagsAccepted >= 15 ? "checkmark.seal.fill" : "ellipsis")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(live.r22FlagsAccepted >= 15 ? StrandPalette.statusPositive : StrandPalette.textSecondary)
+                    }
+                    if live.deepPacketsThisSession > 0 {
+                        Label("Deep data is flowing — \(live.deepPacketsThisSession) R22 packet\(live.deepPacketsThisSession == 1 ? "" : "s") this session. Please share your strap log!",
+                              systemImage: "waveform.path.ecg")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.statusPositive)
+                    } else if live.r22FlagsAccepted >= 15 {
+                        Text("Flags accepted, but no deep packets yet — keep the strap on for a couple of minutes, then share your strap log on #174.")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                }
+
+                Divider().overlay(StrandPalette.hairline)
+
+                // MARK: Broadcast HR — make the strap a standard BLE HR sensor (Garmin/Zwift/gym).
+                Toggle(isOn: $broadcastHrEnabled) {
+                    Text("Broadcast heart rate (Garmin/ANT)")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                .onChange(of: broadcastHrEnabled) { on in model.ble.setBroadcastHr(on) }
+                Text("Makes your WHOOP 5.0/MG advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge/watch), Zwift or gym equipment can use it during a workout. Applied on the next connection (and immediately if connected); writes the strap's whoop_live_hr_in_adv_ind_pkt flag. Reversible. iPhone-side only — a Mac can't write to a 5/MG.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Toggle(isOn: $puffinCapture) {
                     Text("Record puffin frames to a file")
                         .font(StrandFont.subhead)
@@ -548,11 +639,15 @@ struct SettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
+                    // Three labelled buttons must share a narrow iPhone row without wrapping mid-word
+                    // (the labels otherwise broke to one character per line). Equal width + shrink-to-fit
+                    // keeps each on a single line; the icon stays. (#175)
                     Button {
                         runExport()
                     } label: {
                         Label("Export…", systemImage: "square.and.arrow.up")
-                            .padding(.horizontal, 6)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity).padding(.horizontal, 6)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(StrandPalette.accent)
@@ -562,7 +657,8 @@ struct SettingsView: View {
                         runImport()
                     } label: {
                         Label("Import…", systemImage: "square.and.arrow.down")
-                            .padding(.horizontal, 6)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity).padding(.horizontal, 6)
                     }
                     .buttonStyle(.bordered)
                     .tint(StrandPalette.accent)
@@ -572,7 +668,8 @@ struct SettingsView: View {
                         runCsvExport()
                     } label: {
                         Label("Export CSV…", systemImage: "tablecells")
-                            .padding(.horizontal, 6)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity).padding(.horizontal, 6)
                     }
                     .buttonStyle(.bordered)
                     .tint(StrandPalette.accent)

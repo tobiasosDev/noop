@@ -23,7 +23,14 @@ struct WhatsNewView: View {
             Divider().overlay(StrandPalette.hairline)
             footer
         }
+        // A fixed 560×640 is right for the macOS sheet window, but on iPhone it's wider than the
+        // screen, so the content (and the "Got it" button) ran off the right edge (#185). iOS fills
+        // the presented sheet instead.
+        #if os(macOS)
         .frame(width: 560, height: 640)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #endif
         .background(StrandPalette.surfaceBase)
     }
 

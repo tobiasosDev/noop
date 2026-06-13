@@ -83,6 +83,19 @@ struct BreathingView: View {
     @State private var rrBuffer: [Int] = []
     @State private var rmssd: Double? = nil
 
+    // Pre/post outcome capture: the baseline locks at start (or to the first
+    // rolling value inside the session's first ~60s); mean/peak stream while
+    // running. "—" = the session ran ≥2 min but R-R data was insufficient.
+    @State private var baselineRmssd: Double? = nil
+    @State private var sessionRmssdSum: Double = 0
+    @State private var sessionRmssdCount: Int = 0
+    @State private var sessionRmssdPeak: Double = 0
+    @State private var endedOutcome: String? = nil
+
+    /// Last completed session's outcome core — display-only persistence (no store
+    /// table), so the result is still visible on re-entry.
+    @AppStorage("breathe.lastOutcome") private var lastStoredOutcome = ""
+
     /// Phase driver (fast, smooth) and a once-per-second session tick.
     private let phaseTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private let secondTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
@@ -96,6 +109,7 @@ struct BreathingView: View {
             statusRow
             orbCard
             controlRow
+            if let line = outcomeLine { outcomeFootnote(line) }
             readoutRow
             coherenceCard
             if !live.bonded { hapticHint }
@@ -278,6 +292,26 @@ struct BreathingView: View {
         }
     }
 
+    // MARK: - Session outcome
+
+    /// Calm one-line outcome — fresh after a finished session, persisted on re-entry.
+    /// Hidden while running and when there is nothing honest to show.
+    private var outcomeLine: String? {
+        if running { return nil }
+        if let endedOutcome {
+            return endedOutcome == "—" ? "RMSSD — · not enough R-R data" : "RMSSD \(endedOutcome)"
+        }
+        if !lastStoredOutcome.isEmpty { return "Last session: \(lastStoredOutcome)" }
+        return nil
+    }
+
+    private func outcomeFootnote(_ line: String) -> some View {
+        Text(line)
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
     // MARK: - Readouts
 
     // Three fixed-height metric tiles. On macOS/iPad (.regular) they sit 3-up
@@ -438,15 +472,42 @@ struct BreathingView: View {
         running = true
         sessionSeconds = 0
         breathCount = 0
+        endedOutcome = nil
+        // Baseline: prefer the pre-session rolling value; otherwise ingest() locks
+        // the first value that lands inside the session's first ~60s.
+        baselineRmssd = rmssd
+        sessionRmssdSum = 0
+        sessionRmssdCount = 0
+        sessionRmssdPeak = 0
         armPhase(.inhale, from: Date(), buzz: true)
     }
 
     private func stop() {
+        let wasRunning = running
         running = false
         phaseDeadline = .distantFuture
+        // Leaving mid-session (onDisappear) still banks the outcome.
+        if wasRunning { captureOutcome() }
         withAnimation(.easeInOut(duration: 0.8)) {
             orbProgress = 0
         }
+    }
+
+    /// End-of-session outcome: "+18% vs start · peak 64 ms" — the session MEAN
+    /// rolling RMSSD vs the start baseline. Sessions under 2 minutes are treated
+    /// as abandoned: no line, nothing persisted. "—" = long enough but not enough
+    /// R-R data to compare; never invent a number.
+    private func captureOutcome() {
+        guard sessionSeconds >= 120 else { return }
+        guard let base = baselineRmssd, base > 0, sessionRmssdCount > 0 else {
+            endedOutcome = "—"
+            return
+        }
+        let mean = sessionRmssdSum / Double(sessionRmssdCount)
+        let pct = Int(((mean - base) / base * 100).rounded())
+        let core = String(format: "%+d%% vs start · peak %.0f ms", pct, sessionRmssdPeak)
+        endedOutcome = core
+        lastStoredOutcome = core
     }
 
     /// Begin a breath phase: set the target, schedule its end, and (optionally)
@@ -488,6 +549,14 @@ struct BreathingView: View {
             rrBuffer.removeFirst(rrBuffer.count - rrWindow)
         }
         rmssd = computeRMSSD(rrBuffer)
+        // Outcome capture: while running, lock the baseline (first value inside
+        // ~60s when none was available at start) and stream the session mean/peak.
+        if running, let r = rmssd {
+            if baselineRmssd == nil && sessionSeconds <= 60 { baselineRmssd = r }
+            sessionRmssdSum += r
+            sessionRmssdCount += 1
+            sessionRmssdPeak = max(sessionRmssdPeak, r)
+        }
     }
 
     /// RMSSD = sqrt(mean of squared successive differences) over the R-R series.

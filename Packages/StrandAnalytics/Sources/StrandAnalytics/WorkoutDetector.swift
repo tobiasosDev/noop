@@ -23,10 +23,16 @@ public struct UserProfile: Equatable, Sendable {
     public var heightCm: Double
     public var age: Double
     public var sex: String   // "male" | "female" | "nonbinary"
+    /// Counter ticks per real step for the @57 motion counter (#139). The WHOOP 5/MG
+    /// counter overcounts and its true tick rate is unknown, so the daily-steps total
+    /// divides by this. 1.0 = raw pass-through (default); the engine clamps ≥ 0.5.
+    public var stepTicksPerStep: Double
     public init(weightKg: Double = 70.0, heightCm: Double = 170.0,
-                age: Double = 30.0, sex: String = "nonbinary") {
+                age: Double = 30.0, sex: String = "nonbinary",
+                stepTicksPerStep: Double = 1.0) {
         self.weightKg = weightKg; self.heightCm = heightCm
         self.age = age; self.sex = sex
+        self.stepTicksPerStep = stepTicksPerStep
     }
 }
 

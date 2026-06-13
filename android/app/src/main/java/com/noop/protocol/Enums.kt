@@ -92,6 +92,15 @@ enum class CommandNumber(val rawValue: Int) {
     DISABLE_ALARM(69),
     RUN_HAPTICS_PATTERN(79),
     GET_ALL_HAPTICS_PATTERN(80),
+    // SET_CONFIG / SET_FF_VALUE (0x78) — write one persistent feature flag. The 5/MG "enable R22
+    // packets" sequence (Whoop5Config) sends 15 of these to switch on the deep biometric streams.
+    // Reversible; gated behind the deep-data opt-in; iOS/Android only. (#174)
+    SET_CONFIG(120),
+    // SET_DEVICE_CONFIG (0x77) — write one persistent DEVICE-config value (distinct from the
+    // feature-flag SET_CONFIG/0x78). Used for the "Broadcast HR" flag whoop_live_hr_in_adv_ind_pkt,
+    // which makes the strap advertise its HR as a standard 0x180D BLE sensor. Validated on real
+    // hardware (paired on a Garmin Edge 840). Reversible; gated behind the broadcast-HR opt-in. (#181)
+    SET_DEVICE_CONFIG(119),
     START_RAW_DATA(81),
     STOP_RAW_DATA(82),
     STOP_HAPTICS(122),

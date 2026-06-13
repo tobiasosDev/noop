@@ -64,7 +64,7 @@ private func metricAccent(_ m: MetricDescriptor) -> Color {
 /// The gradient for a metric's trend line — strain/recovery ride their data scales;
 /// everything else uses a flat tint of its category accent.
 private func metricGradient(_ m: MetricDescriptor) -> Gradient {
-    if m.category == "Strain" { return StrandPalette.strainGradient }
+    if m.category == "Effort" { return StrandPalette.strainGradient }
     if m.key == "recovery" { return StrandPalette.recoveryGradient }
     let c = metricAccent(m)
     return Gradient(colors: [c.opacity(0.55), c])

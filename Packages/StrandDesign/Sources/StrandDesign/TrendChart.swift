@@ -133,6 +133,11 @@ public struct TrendChart: View {
             }
         }
         .chartYScale(domain: valueRange)
+        // Clip the plot to its own bounds. catmullRom interpolation overshoots past the data extremes
+        // on sharp turns, and the AreaMark gradient is drawn UNCLIPPED — so on a spiky HR curve the
+        // rose fill bled down the page behind the cards below the chart. Clipping the plot area bounds
+        // every mark (line, area, points, overshoot) to the chart rectangle.
+        .chartPlotStyle { plotArea in plotArea.clipped() }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine().foregroundStyle(StrandPalette.hairline.opacity(0.4))
@@ -200,6 +205,9 @@ public struct TrendChart: View {
             }
         }
         .frame(height: height)
+        // Belt-and-suspenders: also bound the whole chart (axes + overlay) to its frame so nothing
+        // a Charts internal might draw outside the plot can reach the surrounding layout.
+        .clipped()
     }
 
     private var averageValue: Double {

@@ -68,10 +68,41 @@ own agreements and local laws before use; you are responsible for your own compl
 
 ## 5. Not a medical device
 
-Outputs such as heart rate, HRV, recovery, strain, sleep stages, SpO₂, respiratory rate, and skin
-temperature are **approximations** computed from published methods. They are **not** clinically
+Outputs such as heart rate, HRV, Charge, Effort, Rest, sleep stages, SpO₂, respiratory rate, and skin
+temperature (Charge/Effort/Rest are NOOP's own recovery/strain/sleep scores, not WHOOP's) are
+**approximations** computed from published methods. They are **not** clinically
 validated, are **not** a medical device, and are **not** medical advice. Do not use them to
 diagnose, treat, or make health decisions. Consult a qualified professional.
+
+This applies to **every** feature, including each of the following.
+
+### 5.1 Mind / mood check-in — non-clinical self-tracking only
+
+The **Mind** feature (daily mood check-in and the correlations it draws between your mood and your
+other metrics) is a **personal self-tracking journal**. It is **not** a mental-health assessment,
+diagnosis, screening, therapy, or treatment, and it is **not** a substitute for care from a
+qualified professional. Any pattern or correlation it surfaces is **informational only** — a
+reflection of numbers you entered, not a clinical finding.
+
+**If you are struggling, in distress, or in crisis, contact a qualified professional or your local
+emergency service straight away — do not rely on NOOP.**
+
+### 5.2 Nutrition import — informational, not dietary advice
+
+Importing nutrition data (e.g. a Cronometer or MacroFactor CSV) simply displays figures **you**
+recorded elsewhere alongside your other metrics. NOOP does **not** verify, correct, or endorse those
+figures, and nothing it shows is **dietary, nutritional, or medical advice**. For guidance on diet,
+supplements, or any condition affected by nutrition, consult a qualified professional.
+
+### 5.3 Apple Health & "Export for Shortcuts" — your data, your choice
+
+On iOS, NOOP can prepare metrics for Apple Health (including the HealthKit-free **"Export for
+Shortcuts"** path). NOOP writes **only** the data you explicitly choose to export, **on your own
+device**, and only when you trigger it. **You are responsible for the data you push into Apple
+Health** and for anything you, or Shortcuts you run, then do with it. NOOP cannot see, retrieve, or
+manage data once it is in Apple Health — that store and its sharing settings are governed by Apple
+and by you. NOOP-prepared values are the same uncertified approximations described above; do not
+treat them as clinical records.
 
 ## 6. Good-faith takedown contact
 

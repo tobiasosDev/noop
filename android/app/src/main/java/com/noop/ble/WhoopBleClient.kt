@@ -37,6 +37,7 @@ import com.noop.protocol.DeviceFamily
 import com.noop.protocol.Framing
 import com.noop.protocol.Reassembler
 import com.noop.protocol.Streams
+import com.noop.protocol.Whoop5Config
 import com.noop.protocol.extractStreams
 import com.noop.analytics.IntelligenceEngine
 import com.noop.analytics.UserProfile
@@ -123,6 +124,15 @@ data class LiveState(
      *  direct connect just re-fails. Carries an actionable forget+re-pair guide; cleared on the next
      *  successful connect. Parity with macOS LiveState.reconnectGuide (5/MG firmware reset, 2026-06). */
     val reconnectGuide: String? = null,
+    /** EXPERIMENTAL R22 telemetry (#174): how many of the 15 enable_r22 SET_CONFIG flags the strap has
+     *  ACKed since the last "Send enable sequence" tap. 15 = the strap accepted the whole sequence (it
+     *  returns a COMMAND_RESPONSE per flag — hardware-confirmed). Reset per attempt + per session.
+     *  Twin of macOS LiveState.r22FlagsAccepted. */
+    val r22FlagsAccepted: Int = 0,
+    /** Count of LIVE type-0x2F deep biometric records seen this session OUTSIDE a history offload — i.e.
+     *  the R22 deep stream actually flowing in realtime. 0 with flags accepted = enable taken but no deep
+     *  data yet. Twin of macOS LiveState.deepPacketsThisSession. (#174) */
+    val deepPacketsThisSession: Int = 0,
 )
 
 /**
@@ -185,9 +195,6 @@ class WhoopBleClient(
         /** Cap on the in-app strap-log ring buffer (for the "Share strap log" diagnostics export). */
         private const val LOG_BUFFER_MAX = 2000
 
-        /** Bump whenever a historical layout is added/changed so the reject archive re-decodes once more
-         *  (#151). 2 = the WHOOP 4.0 v25 layout (v1.95). Matches the Swift BLEManager constant. */
-        private const val REJECT_REPLAY_DECODER_VERSION = 2
 
         // MARK: GATT UUIDs (authoritative, from BLEManager.swift / FINDINGS.md).
         //
@@ -465,14 +472,17 @@ class WhoopBleClient(
 
     init {
         // Retro-decode (#151): when the decoder gains a historical layout (WHOOP 4.0 v25), re-run every
-        // archived undecodable frame through it ONCE and insert whatever now decodes — the only path by
-        // which already-acked, strap-freed history backfills after an update. Version-gated so it runs
-        // once per decoder version; idempotent if it re-runs (offloaded rows dedupe by ts). Mirrors the
-        // Swift BLEManager gate. (This client is a process singleton, so init runs once per process.)
+        // archived undecodable frame through it and insert whatever now decodes — the only path by
+        // which already-acked, strap-freed history backfills after an update. Runs once per APP version
+        // (no manual decoder constant to forget to bump, #152); idempotent if it re-runs (offloaded rows
+        // dedupe by ts), and the gate holds on a failed insert so the records retry next launch. Mirrors
+        // the Swift BLEManager gate. (This client is a process singleton, so init runs once per process.)
         ioScope.launch {
-            val rows = rawHistoryArchive.replayIfNeeded(repository, deviceId, REJECT_REPLAY_DECODER_VERSION)
+            val rows = rawHistoryArchive.replayIfNeeded(
+                repository, deviceId, com.noop.ui.AppChangelog.CURRENT_VERSION,
+            )
             if (rows > 0) {
-                log("Backfill: retro-decoded $rows record(s) from the reject archive after a decoder update.")
+                log("Backfill: retro-decoded $rows record(s) from the reject archive after an update.")
             }
         }
     }
@@ -521,6 +531,7 @@ class WhoopBleClient(
                     heightCm = profileStore.heightCm,
                     age = profileStore.age.toDouble(),
                     sex = profileStore.sex,
+                    stepTicksPerStep = profileStore.stepTicksPerStep,
                 )
                 runCatching {
                     IntelligenceEngine.analyzeRecent(
@@ -757,7 +768,8 @@ class WhoopBleClient(
     fun prepareForModelSwitch() {
         disconnect()
         lastDevice = null   // don't auto-reconnect to the old strap; the next connect scans for the new model
-        _state.value = _state.value.copy(connected = false, bonded = false, encryptedBond = false)
+        _state.value = _state.value.copy(connected = false, bonded = false, encryptedBond = false,
+                                         r22FlagsAccepted = 0, deepPacketsThisSession = 0)   // #174 reset per session
     }
 
     /**
@@ -811,7 +823,14 @@ class WhoopBleClient(
                 cmd != CommandNumber.SEND_HISTORICAL_DATA && cmd != CommandNumber.HISTORICAL_DATA_RESULT &&
                 cmd != CommandNumber.SET_CLOCK && cmd != CommandNumber.GET_CLOCK &&
                 cmd != CommandNumber.GET_DATA_RANGE &&
-                cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM) {
+                cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM &&
+                // SET_CONFIG (the R22 deep-stream unlock) is allowed ONLY while the deep-data experiment
+                // is opted in — it writes a persistent feature flag to the strap, so it must never fire
+                // on a default install. Reversible; driven only by enableWhoop5DeepData(). (#174)
+                !(cmd == CommandNumber.SET_CONFIG && puffinExperiment.isDeepDataEnabled) &&
+                // SET_DEVICE_CONFIG (the Broadcast-HR flag) is allowed ONLY while that opt-in is on.
+                // Reversible; driven only by setBroadcastHr(). (#181)
+                !(cmd == CommandNumber.SET_DEVICE_CONFIG && puffinExperiment.broadcastHr)) {
                 log("send(${cmd.name}) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -1261,6 +1280,7 @@ class WhoopBleClient(
                 // Reassemble (no-op for already-complete frames) then route each complete frame.
                 // Port of: for frame in reassembler.feed(bytes) { router.handle(frame:) }.
                 for (frame in reassembler.feed(bytes)) {
+                    noteWhoop5R22Telemetry(frame, backfilling && isOffloadFrame(frame, connectedFamily))  // #174
                     handleFrame(frame)              // UI (always) — port of router.handle(frame:)
 
                     // Capture the strap's newest stored record from a GET_DATA_RANGE reply, feeding
@@ -1299,6 +1319,29 @@ class WhoopBleClient(
                 }
             }
             else -> { /* ignore */ }
+        }
+    }
+
+    /**
+     * EXPERIMENTAL R22 telemetry (#174) — port of macOS BLEManager.noteWhoop5R22Telemetry.
+     * (1) A COMMAND_RESPONSE (type 0x24) to a SET_CONFIG (0x78) = the strap ACKing one enable_r22 flag.
+     * (2) A type-0x2F record OUTSIDE a history offload = the R22 deep biometric stream flowing live.
+     * 5/MG puffin layout: packet_type @ byte 8, the responded-to cmd @ byte 10.
+     */
+    private fun noteWhoop5R22Telemetry(frame: ByteArray, duringOffload: Boolean) {
+        if (frame.size <= 10) return
+        val type = frame[8].toInt() and 0xFF
+        if (type == 0x24 && (frame[10].toInt() and 0xFF) == CommandNumber.SET_CONFIG.rawValue) {
+            val n = _state.value.r22FlagsAccepted + 1
+            _state.value = _state.value.copy(r22FlagsAccepted = n)
+            val total = Whoop5Config.enableR22Sequence.size
+            if (n == total) log("Deep-data: strap ACCEPTED all $n/$total R22 flags ✓ — keep it on; watching for deep packets.")
+        }
+        if (type == 0x2F && !duringOffload) {
+            val n = _state.value.deepPacketsThisSession + 1
+            _state.value = _state.value.copy(deepPacketsThisSession = n)
+            if (n == 1) log("Deep-data: 🎯 FIRST live deep (R22, type-0x2F) packet received — please keep wearing it and share your strap log on #174.")
+            else if (n % 50 == 0) log("Deep-data: $n live deep (type-0x2F) packets this session.")
         }
     }
 
@@ -1633,6 +1676,72 @@ class WhoopBleClient(
         if (connectedFamily == DeviceFamily.WHOOP4 || _state.value.bonded) {
             send(CommandNumber.TOGGLE_REALTIME_HR, byteArrayOf(0))
         }
+    }
+
+    /**
+     * EXPERIMENTAL (#181): make the strap advertise its heart rate as a standard BLE HR sensor by
+     * writing the device-config flag whoop_live_hr_in_adv_ind_pkt = "1" (on) / "0" (off) via
+     * SET_DEVICE_CONFIG (0x77). Validated on real hardware: with it on, the strap advertises 0x180D +
+     * the live HR in its manufacturer data, so a Garmin (Edge/watch), Zwift or gym HR client pairs to it
+     * directly. Reversible; opt-in. Mirrors `BLEManager.setBroadcastHr`. (Broadcast HR)
+     */
+    fun setBroadcastHr(on: Boolean) {
+        if (connectedFamily != DeviceFamily.WHOOP5) {
+            log("Broadcast HR: needs a WHOOP 5.0/MG strap — ignored."); return
+        }
+        val s = _state.value
+        if (!s.connected || !s.bonded) {
+            log("Broadcast HR: connect and bond a 5/MG strap first — ignored."); return
+        }
+        val value = if (on) 0x31 else 0x30   // ASCII '1' / '0'
+        send(
+            CommandNumber.SET_DEVICE_CONFIG,
+            byteArrayOf(0x01) + Whoop5Config.deviceConfigBody("whoop_live_hr_in_adv_ind_pkt", value),
+            withResponse = true,
+        )
+        log("Broadcast HR: wrote whoop_live_hr_in_adv_ind_pkt=" + (if (on) "1" else "0"))
+    }
+
+    /**
+     * EXPERIMENTAL (#174): write the official app's `enable_r22_*` SET_CONFIG sequence to a bonded
+     * WHOOP 5/MG to switch on the deep biometric (type-0x2F "R22") streams the strap withholds from a
+     * fresh third-party connection. Exact 15-flag sequence + values built byte-for-byte by
+     * [Whoop5Config] (documented by judes.club + Asherlc/dofek). Port of `BLEManager.enableWhoop5DeepData`.
+     *
+     * Safety: only runs when the deep-data experiment is opted in AND the strap is a bonded, worn 5/MG.
+     * The R22 stream is on-wrist gated. Each flag is one SET_CONFIG write WITH RESPONSE, spaced ~80 ms.
+     * Reversible — it only changes which data the strap emits. After it runs, wear + sync and share the
+     * strap log so we can confirm the deeper records start flowing.
+     */
+    fun enableWhoop5DeepData() {
+        if (connectedFamily != DeviceFamily.WHOOP5) {
+            log("Deep-data: needs a WHOOP 5.0/MG strap — ignored."); return
+        }
+        if (!puffinExperiment.isDeepDataEnabled) {
+            log("Deep-data: the deep-data experiment is off — enable it in Settings first."); return
+        }
+        val s = _state.value
+        if (!s.connected || !s.bonded) {
+            log("Deep-data: connect and bond a 5/MG strap first — ignored."); return
+        }
+        if (!s.worn) {
+            log("Deep-data: the R22 stream is on-wrist only — put the strap ON, then try again."); return
+        }
+        _state.value = _state.value.copy(r22FlagsAccepted = 0)   // fresh attempt
+        val flags = Whoop5Config.enableR22Sequence
+        log("Deep-data: sending the ${flags.size}-flag enable_r22 sequence (experimental, reversible)…")
+        flags.forEachIndexed { i, flag ->
+            handler.postDelayed({
+                send(
+                    CommandNumber.SET_CONFIG,
+                    byteArrayOf(0x01) + Whoop5Config.payloadBody(flag.name, flag.value),
+                    withResponse = true,
+                )
+            }, 80L * i)
+        }
+        handler.postDelayed({
+            log("Deep-data: sequence sent. Keep the strap on, let it sync, then share your strap log — we're looking for new deep records (type-0x2F) to start arriving. (#174)")
+        }, 80L * flags.size + 200L)
     }
 
     /**
@@ -2000,6 +2109,8 @@ class WhoopBleClient(
             startWhoop5BackfillCapture()
         }
         if (connectedFamily == DeviceFamily.WHOOP5) {
+            // Re-apply the Broadcast-HR device-config flag if the user opted in (#181).
+            if (PuffinExperiment.from(context).broadcastHr) setBroadcastHr(true)
             // Goose parity, hardware-validated (#78 fork): query the strap's stored range first and
             // fire the transfer on its SUCCESS response (PENDING precedes it). FAIL-OPEN: real
             // hardware sometimes swallows the first GET_DATA_RANGE entirely, so a 2s fallback fires

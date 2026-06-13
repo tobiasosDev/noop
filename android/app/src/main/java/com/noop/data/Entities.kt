@@ -49,6 +49,23 @@ data class HrSample(
     val synced: Int = 0,
 )
 
+/**
+ * HR derived from the WHOOP 5/MG **v26** optical PPG waveform (#156). The v26 record stores no
+ * per-second bpm (HR is PPG-derived on-device), so [com.noop.protocol.PpgHr] reconstructs it by
+ * autocorrelation. Kept in its own table (NOT merged into `hrSample`) so a real sensor HR is never
+ * confused with a derived estimate; [conf] (0…1) records the autocorrelation strength. PK
+ * (deviceId, ts) = one estimate per window-centre second; [hrBuckets][WhoopDao.hrBuckets] COALESCE-
+ * unions it with `hrSample` so PPG HR only fills seconds the strap never reported. v5_6 migration.
+ */
+@Entity(tableName = "ppgHrSample", primaryKeys = ["deviceId", "ts"])
+data class PpgHrSample(
+    val deviceId: String,
+    val ts: Long,
+    val bpm: Int,
+    val conf: Double,
+    val synced: Int = 0,
+)
+
 /** One downsampled HR point — the bucket's start (unix seconds) + the mean bpm over it. Query
  *  result of [WhoopDao.hrBuckets], not a table. Mirrors the macOS `HRBucket`. */
 data class HrBucket(

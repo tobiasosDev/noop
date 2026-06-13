@@ -31,7 +31,7 @@ struct CoachView: View {
     private let customModelTag = "__custom__"
 
     private let suggestions = [
-        "How's my recovery trending?",
+        "How's my charge trending?",
         "What should today's training look like?",
         "Analyse my sleep",
         "Why am I run down?",
@@ -39,7 +39,7 @@ struct CoachView: View {
 
     var body: some View {
         ScreenScaffold(title: "Coach",
-                       subtitle: "Ask about your recovery, strain, sleep and workouts — grounded in your own numbers.") {
+                       subtitle: "Ask about your charge, effort, rest and workouts — grounded in your own numbers.") {
             if coach.isConfigured {
                 connectedHeader
                 consentBar
@@ -81,7 +81,7 @@ struct CoachView: View {
                 Text("Let the coach use my data")
                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
                 Text(coach.dataConsent
-                     ? "On — your recovery, sleep, HRV and workouts are shared with the provider for tailored coaching."
+                     ? "On — your charge, rest, HRV and workouts are shared with the provider for tailored coaching."
                      : "Off — the coach answers generally and sends none of your metrics.")
                     .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

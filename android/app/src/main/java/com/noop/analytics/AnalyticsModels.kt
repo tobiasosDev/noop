@@ -40,6 +40,12 @@ data class UserProfile(
     val age: Double = 30.0,
     /** "male" | "female" | "nonbinary". */
     val sex: String = "nonbinary",
+    /**
+     * Counter ticks per real step for the @57 motion counter (#139). The WHOOP 5/MG
+     * counter overcounts and its true tick rate is unknown, so the daily-steps total
+     * divides by this. 1.0 = raw pass-through (default); the engine clamps ≥ 0.5.
+     */
+    val stepTicksPerStep: Double = 1.0,
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,10 +243,16 @@ data class DayResult(
     val sleepSessions: List<DetectedSleep>,
     /** Detected workout/exercise sessions. */
     val workouts: List<ExerciseSession>,
-    /** Recovery score [0,100] or null (cold-start / no HRV baseline). */
+    /** Charge (recovery) score [0,100] or null (cold-start / no HRV baseline). */
     val recovery: Double?,
-    /** Day strain [0,21] or null (insufficient HR samples / invalid HRR). */
+    /** Effort (strain) score [0,100] or null (insufficient HR samples / invalid HRR). */
     val strain: Double?,
+    /**
+     * Rest (sleep_performance) composite [0,100] or null (no in-bed session). The persistence /
+     * series layer stores this under the `sleep_performance` key. Replaces the bare efficiency
+     * proxy (duration-vs-need 0.50 + efficiency 0.20 + restorative 0.20 + consistency 0.10).
+     */
+    val rest: Double? = null,
     /**
      * Wear-gated mean in-bed skin temperature (°C) for this night, or null when no worn in-bed
      * samples were available. Baseline-INDEPENDENT (like avgHrv): the caller seeds a personal
@@ -248,4 +260,10 @@ data class DayResult(
      * in a second pass. APPROXIMATE. (PR #85)
      */
     val nightlySkinTempC: Double? = null,
+    /** Per-score certainty tier for Charge (recovery). Mirrors Swift. */
+    val chargeConfidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
+    /** Per-score certainty tier for Effort (strain). Mirrors Swift. */
+    val effortConfidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
+    /** Per-score certainty tier for Rest (sleep_performance composite). Mirrors Swift. */
+    val restConfidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
 )

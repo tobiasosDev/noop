@@ -12,11 +12,13 @@ import WhoopProtocol
 ///     standard `skin_temp` config — pinning the honest cold-start gate (<4 nights ⇒ no
 ///     skinTempDevC) and that a real elevation surfaces as a positive deviation once seeded.
 ///
-/// SCALE NOTE: the Swift WHOOP5 decoder defines °C = raw/128 (the AS6221's native
-/// 7.8125 m°C/LSB; see Interpreter.swift skin_temp_raw@73) — the fixtures here therefore
-/// encode raw = °C × 128, NOT the ×100 the Android decoder/tests use for the same register.
-/// Worn nightly values seen on real hardware were ~33–35 °C, off-wrist/charging ~22–27 °C —
-/// which is exactly the contamination the wear-gate excludes. All values APPROXIMATE.
+/// SCALE NOTE: the firmware stores CENTIDEGREES in skin_temp_raw@73 — °C = raw/100, matching
+/// the Android decoder/tests. (The earlier /128 "AS6221-native" assumption was disproven by the
+/// real captures in Whoop5HistoricalTests: worn raw 3057 / off-wrist 2247 are 30.6 °C skin and
+/// 22.5 °C room ambient under /100, but an impossible 23.9 °C "skin" under /128 — below the worn
+/// gate, silently dropping every real night. PR #97 review / #166.) Worn nightly values on real
+/// hardware are ~30–35 °C, off-wrist/charging ~22–27 °C — exactly the contamination the
+/// wear-gate excludes. All values APPROXIMATE.
 final class SkinTempAnalyticsTests: XCTestCase {
 
     private func session(start: Int, durSec: Int) -> SleepSession {
@@ -25,8 +27,8 @@ final class SkinTempAnalyticsTests: XCTestCase {
     }
 
     private func hr(_ ts: Int, bpm: Int = 55) -> HRSample { HRSample(ts: ts, bpm: bpm) }
-    /// raw = °C × 128 (Swift decoder scale): 34 °C → 4352, 36 °C → 4608, 22 °C → 2816.
-    private func skin(_ ts: Int, rawX128: Int) -> SkinTempSample { SkinTempSample(ts: ts, raw: rawX128) }
+    /// raw = °C × 100 (centidegrees, firmware scale): 34 °C → 3400, 36 °C → 3600, 22 °C → 2200.
+    private func skin(_ ts: Int, rawX100: Int) -> SkinTempSample { SkinTempSample(ts: ts, raw: rawX100) }
 
     // MARK: - wornNightlySkinTempC
 
@@ -34,7 +36,7 @@ final class SkinTempAnalyticsTests: XCTestCase {
         let start = 1_000_000
         let sess = [session(start: start, durSec: 600)]
         let hrs = (0..<600).map { hr(start + $0) }
-        let temps = (0..<600).map { skin(start + $0, rawX128: 4352) }  // 34.00 °C
+        let temps = (0..<600).map { skin(start + $0, rawX100: 3400) }  // 34.00 °C
         let mean = try XCTUnwrap(AnalyticsEngine.wornNightlySkinTempC(sess, hr: hrs, skinTemp: temps))
         XCTAssertEqual(mean, 34.0, accuracy: 1e-9)
     }
@@ -43,7 +45,7 @@ final class SkinTempAnalyticsTests: XCTestCase {
         // The strap streams HR only on-wrist; skin-temp samples with no concurrent worn BPM drop.
         let start = 2_000_000
         let sess = [session(start: start, durSec: 600)]
-        let temps = (0..<600).map { skin(start + $0, rawX128: 4352) }
+        let temps = (0..<600).map { skin(start + $0, rawX100: 3400) }
         XCTAssertNil(AnalyticsEngine.wornNightlySkinTempC(sess, hr: [], skinTemp: temps))
     }
 
@@ -53,10 +55,10 @@ final class SkinTempAnalyticsTests: XCTestCase {
         let night = 3_000_000
         let sess = [session(start: night, durSec: 600)]
         let inBedHr = (0..<600).map { hr(night + $0) }
-        let inBedTemp = (0..<600).map { skin(night + $0, rawX128: 4352) }
+        let inBedTemp = (0..<600).map { skin(night + $0, rawX100: 3400) }
         let day = night + 10_000
         let dayHr = (0..<600).map { hr(day + $0) }
-        let dayTemp = (0..<600).map { skin(day + $0, rawX128: 4608) }  // 36 °C, worn-range, daytime
+        let dayTemp = (0..<600).map { skin(day + $0, rawX100: 3600) }  // 36 °C, worn-range, daytime
         let mean = try XCTUnwrap(AnalyticsEngine.wornNightlySkinTempC(
             sess, hr: inBedHr + dayHr, skinTemp: inBedTemp + dayTemp))
         XCTAssertEqual(mean, 34.0, accuracy: 1e-9)
@@ -69,7 +71,7 @@ final class SkinTempAnalyticsTests: XCTestCase {
         let start = 4_000_000
         let sess = [session(start: start, durSec: 600)]
         let hrs = (0..<600).map { hr(start + $0) }
-        let temps = (0..<600).map { skin(start + $0, rawX128: 2816) }  // 22 °C ambient
+        let temps = (0..<600).map { skin(start + $0, rawX100: 2200) }  // 22 °C ambient
         XCTAssertNil(AnalyticsEngine.wornNightlySkinTempC(sess, hr: hrs, skinTemp: temps))
     }
 
@@ -77,7 +79,7 @@ final class SkinTempAnalyticsTests: XCTestCase {
         let start = 5_000_000
         let sess = [session(start: start, durSec: 100)]
         let hrs = (0..<100).map { hr(start + $0) }
-        let temps = (0..<100).map { skin(start + $0, rawX128: 4352) }  // 100 < minSkinTempSamples
+        let temps = (0..<100).map { skin(start + $0, rawX100: 3400) }  // 100 < minSkinTempSamples
         XCTAssertNil(AnalyticsEngine.wornNightlySkinTempC(sess, hr: hrs, skinTemp: temps))
     }
 

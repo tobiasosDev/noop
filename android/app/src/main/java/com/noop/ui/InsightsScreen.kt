@@ -44,15 +44,15 @@ import kotlin.math.sqrt
 // Two halves:
 //
 //  1. BEHAVIOUR EFFECTS — split logged journal answers (the days each behaviour WAS
-//     logged "yes" vs NOT) and compare a chosen outcome metric (Recovery / HRV /
-//     Sleep / RHR) between the two groups. Ranked by effect size (Cohen's d), with
+//     logged "yes" vs NOT) and compare a chosen outcome metric (Charge / HRV /
+//     Rest / RHR) between the two groups. Ranked by effect size (Cohen's d), with
 //     significant effects first. Each card carries a plain-English sentence, the
 //     with/without means, group counts, a significance pill, and the magnitude word.
 //     Tint is sign-aware: a behaviour that moves the outcome the "good" way (respecting
 //     higherIsBetter) reads positive/green, the "bad" way reads critical/red.
 //
 //  2. METRIC RELATIONSHIPS — a curated set of Pearson correlations between daily series
-//     (HRV ↔ recovery, sleep ↔ recovery, RHR ↔ recovery, recovery → next-day recovery),
+//     (HRV ↔ charge, rest ↔ charge, RHR ↔ charge, charge → next-day charge),
 //     each rendered as a one-line insight with r and a plain-English reading.
 //
 // Data note vs macOS: the Swift app computes these via the StrandAnalytics package
@@ -75,7 +75,7 @@ private enum class Outcome(
     val format: (Double) -> String,
 ) {
     Recovery(
-        label = "Recovery", outcomeName = "Recovery", higherIsBetter = true,
+        label = "Charge", outcomeName = "Charge", higherIsBetter = true,
         pick = { it.recovery }, format = { "${it.roundToInt()}%" },
     ),
     Hrv(
@@ -83,7 +83,7 @@ private enum class Outcome(
         pick = { it.avgHrv }, format = { "${it.roundToInt()} ms" },
     ),
     Sleep(
-        label = "Sleep", outcomeName = "Sleep efficiency", higherIsBetter = true,
+        label = "Rest", outcomeName = "Rest", higherIsBetter = true,
         pick = { it.efficiency }, format = { "${it.roundToInt()}%" },
     ),
     Rhr(
@@ -234,6 +234,12 @@ fun InsightsScreen(vm: AppViewModel) {
                 hiddenQuestions = next
             },
         )
+
+        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+
+        // --- Mind: daily mood check-in + mood ↔ body correlations (Swift Mind-lane
+        //     mirror; storage contract + footnote shared verbatim across platforms) ---
+        MindSection(vm)
 
         Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
 
@@ -589,32 +595,32 @@ private fun computeRelationships(model: InsightModel): List<Relationship> {
     pearsonAligned(series(Outcome.Hrv), series(Outcome.Recovery))?.let { (r, n) ->
         out.add(
             Relationship(
-                "hrv-rec", "HRV ↔ Recovery",
-                "Heart-rate variability as the engine behind your recovery score.", r, n,
+                "hrv-rec", "HRV ↔ Charge",
+                "Heart-rate variability as the engine behind your charge score.", r, n,
             ),
         )
     }
     pearsonAligned(series(Outcome.Sleep), series(Outcome.Recovery))?.let { (r, n) ->
         out.add(
             Relationship(
-                "sleep-rec", "Sleep ↔ Recovery",
-                "How closely a high-efficiency night tracks next-morning recovery.", r, n,
+                "sleep-rec", "Rest ↔ Charge",
+                "How closely a good night tracks next-morning charge.", r, n,
             ),
         )
     }
     pearsonAligned(series(Outcome.Rhr), series(Outcome.Recovery))?.let { (r, n) ->
         out.add(
             Relationship(
-                "rhr-rec", "Resting HR ↔ Recovery",
-                "A lower resting heart rate usually means a higher recovery.", r, n,
+                "rhr-rec", "Resting HR ↔ Charge",
+                "A lower resting heart rate usually means a higher charge.", r, n,
             ),
         )
     }
     pearsonLagged(series(Outcome.Recovery), lagDays = 1)?.let { (r, n) ->
         out.add(
             Relationship(
-                "rec-lag", "Recovery → Next-day recovery",
-                "How much one day's recovery carries into the next.", r, n,
+                "rec-lag", "Charge → Next-day charge",
+                "How much one day's charge carries into the next.", r, n,
             ),
         )
     }

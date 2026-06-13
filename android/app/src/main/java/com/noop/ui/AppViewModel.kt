@@ -160,7 +160,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Only treat a row as "today" if its date is the phone's ACTUAL local calendar day.
                 // Was days.lastOrNull() — the newest stored row regardless of date — so after importing
                 // historical data the newest import (e.g. months old) showed as today's synthesis (#23).
-                val todayKey = java.time.LocalDate.now().toString()   // ISO yyyy-MM-dd, local
+                // Resolve via the LOGICAL day (rolls at 04:00 local), so between midnight and 4am we keep
+                // showing the prior logical day's row instead of an empty new-calendar-day row (#144).
+                // Presentation-only: stored row keys are untouched.
+                val todayKey = logicalDayKeyNow()   // ISO yyyy-MM-dd, local logical day
                 _today.value = days.lastOrNull { it.day == todayKey }
                 val previousAlert = _healthAlert.value
                 _healthAlert.value =
@@ -251,6 +254,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         heightCm = profileStore.heightCm,
         age = profileStore.age.toDouble(),
         sex = profileStore.sex,
+        stepTicksPerStep = profileStore.stepTicksPerStep,
     )
 
     // MARK: - HR smoothing (median filter)

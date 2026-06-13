@@ -93,4 +93,42 @@ class StepsAnalyticsTest {
         val s = listOf(step(0, 100), step(60, 150), step(120, 220)) // 50 + 70 = 120
         assertEquals(120, AnalyticsEngine.analyzeDay(day = dayUtc, steps = s, profile = profile).daily.steps)
     }
+
+    // MARK: - Step-scale calibration (#139). Mirrors the Swift StepsDailyTests vectors.
+
+    private fun stepsFor(samples: List<StepSample>, ticksPerStep: Double): Int? =
+        AnalyticsEngine.analyzeDay(
+            day = dayUtc, steps = samples, profile = UserProfile(stepTicksPerStep = ticksPerStep),
+        ).daily.steps
+
+    @Test
+    fun ticksPerStepTwoHalvesTheTotal() {
+        // 120 raw ticks at 2.0 ticks/step => 60 steps.
+        val s = listOf(step(0, 100), step(60, 150), step(120, 220))
+        assertEquals(60, stepsFor(s, ticksPerStep = 2.0))
+    }
+
+    @Test
+    fun ticksPerStepHalvingRoundsToNearest() {
+        // 121 raw ticks at 2.0 => 60.5, rounded to nearest => 61.
+        val s = listOf(step(0, 100), step(60, 150), step(120, 221))
+        assertEquals(61, stepsFor(s, ticksPerStep = 2.0))
+    }
+
+    @Test
+    fun ticksPerStepDefaultIsRawPassThrough() {
+        // Default 1.0 (and an explicit 1.0) must leave the total untouched — no behavior
+        // change until the user calibrates.
+        val s = listOf(step(0, 100), step(60, 150), step(120, 220))
+        assertEquals(120, stepsFor(s))
+        assertEquals(120, stepsFor(s, ticksPerStep = 1.0))
+    }
+
+    @Test
+    fun ticksPerStepClampsAtFloor() {
+        // A divisor below the 0.5 floor clamps: it can at most double the total, never
+        // explode it. 120 / 0.5 = 240 even when the profile says 0.1.
+        val s = listOf(step(0, 100), step(60, 150), step(120, 220))
+        assertEquals(240, stepsFor(s, ticksPerStep = 0.1))
+    }
 }

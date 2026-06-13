@@ -104,13 +104,15 @@ class RawHistoryArchive(
      * Re-decode every archived frame through the CURRENT decoder and insert whatever now decodes. The
      * strap freed these records when they were acked, so this archive is the ONLY way banked history
      * backfills after a newly-landed layout (e.g. WHOOP 4.0 v25). Idempotent: offloaded rows dedupe by
-     * (deviceId, ts), so a re-run can't double-insert. Runs at most ONCE per [decoderVersion] via a small
-     * persisted marker. Returns the rows recovered (for logging). Port of the macOS replay + BLEManager
-     * version gate (#151).
+     * (deviceId, ts), so a re-run can't double-insert. Runs ONCE per [appVersion] (no manual
+     * decoder-version constant to forget to bump — the archive is small, so the once-per-update cost is
+     * negligible), and the gate advances ONLY when every insert succeeded: a failed insert leaves the
+     * gate un-advanced so these records (whose only surviving copy is this archive) retry next launch.
+     * Returns the rows recovered (for logging). Port of the macOS replay + BLEManager gate (#151, #152).
      */
-    suspend fun replayIfNeeded(repository: WhoopRepository, deviceId: String, decoderVersion: Int): Int {
+    suspend fun replayIfNeeded(repository: WhoopRepository, deviceId: String, appVersion: String): Int {
         val prefs = context.getSharedPreferences(REPLAY_PREFS, Context.MODE_PRIVATE)
-        if (prefs.getInt(KEY_REPLAYED_VERSION, 0) >= decoderVersion) return 0
+        if (prefs.getString(KEY_REPLAYED_APP_VERSION, null) == appVersion) return 0
         val archived = readAll()
         var rows = 0
         for (family in archived.map { it.second }.toSet()) {
@@ -118,10 +120,17 @@ class RawHistoryArchive(
             // type-47 records carry their own real-unix ts (clock offset ignored), so an identity clock
             // ref is correct here — the same fallback the Backfiller uses when clockRef is nil.
             val decoded = extractHistoricalStreams(frames, 0, 0, family)
-            rows += decoded.gravity.size
-            runCatching { repository.insert(decoded, deviceId) }
+            // Count rows ACTUALLY inserted, not decoded: under the per-app-version gate the archive
+            // replays every release, and dedupe makes those re-runs insert 0 — counting decoded rows
+            // would log a false "retro-decoded N" success on every update. (#152)
+            rows += try {
+                repository.insert(decoded, deviceId).gravity
+            } catch (t: Throwable) {
+                // Do NOT advance the gate — retry the whole replay next launch (inserts are idempotent).
+                return rows
+            }
         }
-        prefs.edit().putInt(KEY_REPLAYED_VERSION, decoderVersion).apply()
+        prefs.edit().putString(KEY_REPLAYED_APP_VERSION, appVersion).apply()
         return rows
     }
 
@@ -132,9 +141,9 @@ class RawHistoryArchive(
         /** ~5 MB cap; above this [append] reports success without writing (frames tracked as unarchived). */
         const val REJECTED_ARCHIVE_MAX_BYTES = 5L * 1024 * 1024
 
-        /** Where the once-per-decoder-version replay marker lives. */
+        /** Where the once-per-app-version replay marker lives. */
         const val REPLAY_PREFS = "noop_reject_replay"
-        const val KEY_REPLAYED_VERSION = "replayed_decoder_version"
+        const val KEY_REPLAYED_APP_VERSION = "replayed_app_version"
 
         /**
          * Parse one archive JSONL line to (frame, family); null if malformed. Pure (no I/O) so the

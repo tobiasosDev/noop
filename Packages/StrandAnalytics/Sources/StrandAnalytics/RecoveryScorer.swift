@@ -9,11 +9,19 @@ import WhoopProtocol
 // WHOOP-identical (WHOOP's model is proprietary). It is a transparent,
 // HRV-dominant, baseline-normalized proxy.
 //
-// Weighting (documented, grounded, explainable):
-//   higher HRV vs baseline       → higher recovery  (W_HRV   = 0.60, dominant)
-//   lower resting HR vs baseline → higher recovery  (W_RHR   = 0.20)
-//   lower resp vs baseline       → higher recovery  (W_RESP  = 0.05)
-//   higher sleep performance     → higher recovery  (W_SLEEP = 0.15)
+// Weighting (documented, grounded, explainable; this is "Charge" in the UI):
+//   higher HRV vs baseline       → higher recovery  (W_HRV       = 0.55, dominant)
+//   lower resting HR vs baseline → higher recovery  (W_RHR       = 0.20)
+//   higher rest quality (sleep)  → higher recovery  (W_SLEEP     = 0.15)
+//   lower resp vs baseline       → higher recovery  (W_RESP      = 0.05)
+//   skin-temp deviation from 0   → lower recovery   (W_SKIN_TEMP = 0.05)
+//
+// The Charge/Effort/Rest redesign folds skin temperature in (illness/overreach
+// signal): HRV dropped 0.60 → 0.55 to make room for W_SKIN_TEMP = 0.05. The
+// skin-temp term is a SYMMETRIC penalty on the ±°C deviation (−|dev|/scale), so any
+// drift away from the personal baseline — hot or cold — lowers Charge. It is added
+// ONLY when a skin-temp deviation is supplied; when nil the term drops and the
+// weights renormalize, leaving the no-skin-temp score IDENTICAL to before.
 //
 // Each metric is standardized to a robust z-score against the personal baseline
 // (mean + EWMA-abs-dev spread). Missing terms are dropped and the weights
@@ -28,10 +36,17 @@ public enum RecoveryScorer {
 
     // MARK: - Constants (recovery.py)
 
-    public static let wHRV: Double = 0.60
+    public static let wHRV: Double = 0.55
     public static let wRHR: Double = 0.20
     public static let wResp: Double = 0.05
     public static let wSleep: Double = 0.15
+    /// Skin-temperature deviation weight (Charge/Effort/Rest redesign). HRV gave up
+    /// 0.05 (0.60 → 0.55) to fund it.
+    public static let wSkinTemp: Double = 0.05
+
+    /// Skin-temp penalty scale (°C): a 1 °C deviation from baseline costs ≈1 z-unit of
+    /// penalty before weighting. Symmetric — sign of the deviation does not matter.
+    public static let skinTempScaleC: Double = 1.0
 
     /// Logistic spread: ±2 z-units ≈ full Red–Green band (15%–95%).
     public static let logisticK: Double = 1.6
@@ -143,7 +158,12 @@ public enum RecoveryScorer {
     ///   - hrvBaseline: HRV baseline (required for a score).
     ///   - rhrBaseline: resting-HR baseline; nil drops the RHR term.
     ///   - respBaseline: respiration baseline; nil drops the resp term.
-    ///   - sleepPerf: sleep-performance proxy (efficiency 0..1); nil drops the term.
+    ///   - sleepPerf: Rest quality (Rest composite ÷100, 0..1; was raw efficiency);
+    ///     nil drops the term.
+    ///   - skinTempDev: skin-temperature deviation from the personal baseline (±°C,
+    ///     `DailyMetric.skinTempDevC`). Entered as a SYMMETRIC penalty −|dev|/scale,
+    ///     weight wSkinTemp. nil drops the term and the weights renormalize so the
+    ///     no-skin-temp score is identical to before.
     ///   - hrvBaselineUsable: whether the HRV baseline has enough nights
     ///     (BaselineState.usable). When false, returns nil (cold-start).
     public static func recovery(hrv: Double,
@@ -153,6 +173,7 @@ public enum RecoveryScorer {
                                 rhrBaseline: DriverBaseline?,
                                 respBaseline: DriverBaseline?,
                                 sleepPerf: Double?,
+                                skinTempDev: Double? = nil,
                                 hrvBaselineUsable: Bool = true) -> Double? {
         // Cold-start gate: HRV is the dominant driver; if its baseline isn't
         // usable, refuse to score (more honest than a fabricated value).
@@ -172,9 +193,14 @@ public enum RecoveryScorer {
         if let r = resp, let b = respBaseline {
             terms.append((zScore(b.mean, mean: r, spread: b.spread), wResp))
         }
-        // Sleep-performance term: no baseline needed; centered at SLEEP_PERF_CENTER.
+        // Sleep-performance / Rest-quality term: no baseline needed; centered at SLEEP_PERF_CENTER.
         if let sp = sleepPerf {
             terms.append(((sp - sleepPerfCenter) / sleepPerfScale, wSleep))
+        }
+        // Skin-temp term: SYMMETRIC penalty on |deviation| (illness/overreach). Any
+        // drift from the personal baseline lowers Charge; added only when supplied.
+        if let dev = skinTempDev {
+            terms.append((-abs(dev) / skinTempScaleC, wSkinTemp))
         }
 
         guard !terms.isEmpty else { return nil }
@@ -194,7 +220,8 @@ public enum RecoveryScorer {
                                 hrvBaseline: BaselineState,
                                 rhrBaseline: BaselineState?,
                                 respBaseline: BaselineState?,
-                                sleepPerf: Double?) -> Double? {
+                                sleepPerf: Double?,
+                                skinTempDev: Double? = nil) -> Double? {
         recovery(hrv: hrv,
                  rhr: rhr,
                  resp: resp,
@@ -202,6 +229,7 @@ public enum RecoveryScorer {
                  rhrBaseline: rhrBaseline.map(DriverBaseline.init),
                  respBaseline: respBaseline.map(DriverBaseline.init),
                  sleepPerf: sleepPerf,
+                 skinTempDev: skinTempDev,
                  hrvBaselineUsable: hrvBaseline.usable)
     }
 }

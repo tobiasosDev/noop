@@ -129,9 +129,9 @@ public enum StrandPalette {
         sample(stops: recoveryStops, at: score / 100.0)
     }
 
-    /// Sample the strain gradient at a strain value on the 0...21 Whoop scale.
+    /// Sample the strain ("Effort") gradient at a value on NOOP's 0...100 Effort scale.
     public static func strainColor(_ strain: Double) -> Color {
-        sample(stops: strainStops, at: strain / 21.0)
+        sample(stops: strainStops, at: strain / 100.0)
     }
 
     /// The state word for a recovery score, per spec §9.3.

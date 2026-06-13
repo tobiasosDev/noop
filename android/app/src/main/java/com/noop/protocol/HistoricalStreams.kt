@@ -4,6 +4,7 @@ import com.noop.data.BatteryRow
 import com.noop.data.EventEntry
 import com.noop.data.GravityRow
 import com.noop.data.HrRow
+import com.noop.data.PpgHrRow
 import com.noop.data.RespRow
 import com.noop.data.RrRow
 import com.noop.data.SkinTempRow
@@ -41,6 +42,13 @@ private fun ByteArray.histU8(off: Int): Int? = if (off + 1 <= size) this[off].to
 
 private fun ByteArray.histU16(off: Int): Int? =
     if (off + 2 <= size) (this[off].toInt() and 0xFF) or ((this[off + 1].toInt() and 0xFF) shl 8) else null
+
+/** Signed little-endian i16 (two's complement) -> Int. null when out of range. Mirrors Swift `readI16`. */
+private fun ByteArray.histI16(off: Int): Int? {
+    if (off + 2 > size) return null
+    val u = (this[off].toInt() and 0xFF) or ((this[off + 1].toInt() and 0xFF) shl 8)
+    return if (u >= 0x8000) u - 0x10000 else u
+}
 
 private fun ByteArray.histU32(off: Int): Long? {
     if (off + 4 > size) return null
@@ -261,6 +269,34 @@ private fun decodeWhoop5Historical(frame: ByteArray): Map<String, Any?>? {
 }
 
 /**
+ * WHOOP 5.0/MG type-47 **layout v26** PPG-waveform decode (#156). Mirror of Swift
+ * `decodeWhoop5HistoricalV26`. v26 is NOT a per-second biometric summary like v18 — it is a 24 Hz
+ * optical PPG buffer: **24 little-endian i16 samples at frame bytes [27:75]**, one record per second,
+ * with the record's own unix u32 LE @15 (the v18 slot). WHOOP stores no per-second HR in v26 (HR is
+ * PPG-derived on-device), so the win here is the waveform itself, which [PpgHr] turns into HR.
+ *
+ * Returns the record's wall-second [unix] and the 24 raw ADC [samples], or null when the frame is not
+ * a v26 HISTORICAL_DATA record or the waveform region is truncated. The bytes before [27]
+ * (header + optical-channel index @21) and the footer after [75] are intentionally not mapped here.
+ */
+private data class V26Record(val unix: Int, val samples: List<Int>)
+
+private fun decodeWhoop5HistoricalV26(frame: ByteArray): V26Record? {
+    if (frame.histU8(8) != PacketType.HISTORICAL_DATA.rawValue) return null
+    if (frame.histU8(9) != 26) return null
+    val unix = frame.histU32(15)?.toInt() ?: return null
+    val samples = ArrayList<Int>(24)
+    var off = 27
+    while (off < 75) {
+        val v = frame.histI16(off) ?: break
+        samples.add(v)
+        off += 2
+    }
+    if (samples.isEmpty()) return null
+    return V26Record(unix = unix, samples = samples)
+}
+
+/**
  * The HISTORICAL_DATA (type-47) record frames in [rawFrames] that genuinely FAIL to decode — a CRC
  * failure, or an unmapped firmware layout whose v24 plausibility gate (see [decodeHistorical]) also
  * rejects it. These are exactly the record frames [extractHistoricalStreams] silently drops: their
@@ -394,6 +430,8 @@ fun extractHistoricalStreams(
     val gravity = ArrayList<GravityRow>()
     val events = ArrayList<EventEntry>()
     val battery = ArrayList<BatteryRow>()
+    // v26 PPG samples accumulate across the chunk, then get turned into HR after the loop (#156).
+    val ppgSamples = ArrayList<PpgHr.Sample>()
 
     for (frame in rawFrames) {
         // Packet type byte: WHOOP 5/MG's longer puffin envelope puts it at frame[8]; WHOOP 4 at frame[4].
@@ -401,6 +439,20 @@ fun extractHistoricalStreams(
                 else if (frame.size > 4) frame[4].toInt() and 0xFF else -1
         when (t) {
             PacketType.HISTORICAL_DATA.rawValue -> {
+                // WHOOP 5/MG layout v26 = the 24 Hz optical PPG buffer. It carries no per-second HR
+                // (HR is PPG-derived on-device), so [decodeHistorical] returns null for it; instead we
+                // accumulate its waveform samples here and derive HR after the loop via [PpgHr] (#156).
+                // One v26 record == one strap second == 24 samples, appended in wire (time) order so the
+                // concatenated stream is contiguous at 24 Hz. The whole-second `ts` is the record's unix
+                // (sub-second resolution isn't needed — [PpgHr] indexes by sample position, not ts, and
+                // the emitted HR is per-second). The unix gets the same grossly-stale-RTC correction
+                // (FIX #72) as every other stream.
+                if (family == DeviceFamily.WHOOP5) {
+                    decodeWhoop5HistoricalV26(frame)?.let { rec ->
+                        val baseTs = correctedWall(rec.unix.toLong() and 0xFFFFFFFFL)
+                        for (v in rec.samples) ppgSamples.add(PpgHr.Sample(ts = baseTs, value = v))
+                    }
+                }
                 // type-47 carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
                 // (FIX #72); a normal strap is unchanged (offset < threshold).
                 val p = decodeHistorical(frame, family) ?: continue
@@ -476,9 +528,14 @@ fun extractHistoricalStreams(
         }
     }
 
+    // Derive HR from the accumulated v26 PPG waveform (8 s / 24 Hz autocorrelation, conf>=0.3). Empty
+    // unless the strap sent v26 records; falls back gracefully (no rows) on noise (#156).
+    val ppgHr = PpgHr.estimate(ppgSamples).map { PpgHrRow(ts = it.ts, bpm = it.bpm, conf = it.conf) }
+
     return StreamBatch(
         hr = hr, rr = rr, events = events, battery = battery,
         spo2 = spo2, skinTemp = skinTemp, resp = resp, gravity = gravity, steps = steps,
+        ppgHr = ppgHr,
     )
 }
 

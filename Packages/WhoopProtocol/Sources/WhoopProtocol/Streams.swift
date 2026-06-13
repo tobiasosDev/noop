@@ -95,16 +95,19 @@ public struct Streams: Equatable, Codable {
     public var resp: [RespSample]
     public var gravity: [GravitySample]
     public var steps: [StepSample]
+    /// PPG-derived per-second HR from the WHOOP 5.0 v26 optical buffer (issue #156). Kept separate from
+    /// `hr` (the measured stream) so consumers can COALESCE without conflating the two sources.
+    public var ppgHr: [PpgHrSample]
     public var events: [WhoopEvent]
     public var battery: [BatterySample]
     public init(hr: [HRSample] = [], rr: [RRInterval] = [],
                 spo2: [SpO2Sample] = [], skinTemp: [SkinTempSample] = [],
                 resp: [RespSample] = [], gravity: [GravitySample] = [],
-                steps: [StepSample] = [],
+                steps: [StepSample] = [], ppgHr: [PpgHrSample] = [],
                 events: [WhoopEvent] = [], battery: [BatterySample] = []) {
         self.hr = hr; self.rr = rr
         self.spo2 = spo2; self.skinTemp = skinTemp; self.resp = resp; self.gravity = gravity
-        self.steps = steps
+        self.steps = steps; self.ppgHr = ppgHr
         self.events = events; self.battery = battery
     }
 
@@ -113,11 +116,13 @@ public struct Streams: Equatable, Codable {
     /// diagnostic in `Backfiller.finishChunk` (#77).
     public var isEmpty: Bool {
         hr.isEmpty && rr.isEmpty && spo2.isEmpty && skinTemp.isEmpty && resp.isEmpty
-            && gravity.isEmpty && steps.isEmpty && events.isEmpty && battery.isEmpty
+            && gravity.isEmpty && steps.isEmpty && ppgHr.isEmpty && events.isEmpty && battery.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
-        case hr, rr, spo2, skinTemp = "skin_temp", resp, gravity, steps, events, battery
+        case hr, rr, spo2, skinTemp = "skin_temp", resp, gravity, steps
+        case ppgHr = "ppg_hr"
+        case events, battery
     }
 
     // Custom decode so older fixtures (streams_golden.json / historical_golden.json) that
@@ -131,6 +136,7 @@ public struct Streams: Equatable, Codable {
         resp = try c.decodeIfPresent([RespSample].self, forKey: .resp) ?? []
         gravity = try c.decodeIfPresent([GravitySample].self, forKey: .gravity) ?? []
         steps = try c.decodeIfPresent([StepSample].self, forKey: .steps) ?? []
+        ppgHr = try c.decodeIfPresent([PpgHrSample].self, forKey: .ppgHr) ?? []
         events = try c.decodeIfPresent([WhoopEvent].self, forKey: .events) ?? []
         battery = try c.decodeIfPresent([BatterySample].self, forKey: .battery) ?? []
     }

@@ -31,6 +31,9 @@ object DemoSeeder {
     private const val APPLE = "apple-health"
     private const val DAYS = 120
 
+    /** Effort rescale factor: the old 0–21 strain scale → the new 0–100 Effort scale (100/21). */
+    private const val STRAIN_SCALE = 100.0 / 21.0
+
     private val SPORTS = listOf(
         "Running", "Cycling", "Strength", "HIIT", "Swimming", "Yoga", "Walking", "Rowing"
     )
@@ -91,11 +94,12 @@ object DemoSeeder {
                     (rhr - 55) * 1.4 - disturbances * 0.8 + gauss(rng, 0.0, 5.0)
                 ).coerceIn(8.0, 99.0)
 
-            // --- strain: workout-driven ---
+            // --- strain (Effort): workout-driven, rescaled 0–21 → 0–100 (×100/21) so demo
+            // Effort sits on the new scale ---
             val strain = (
-                if (nWorkouts == 0) gauss(rng, 7.5, 1.8)
-                else gauss(rng, 13.5, 2.4) + (nWorkouts - 1) * 2.5
-                ).coerceIn(3.0, 21.0)
+                (if (nWorkouts == 0) gauss(rng, 7.5, 1.8)
+                else gauss(rng, 13.5, 2.4) + (nWorkouts - 1) * 2.5) * STRAIN_SCALE
+                ).coerceIn(3.0 * STRAIN_SCALE, 100.0)
 
             daily.add(
                 DailyMetric(
@@ -171,7 +175,9 @@ object DemoSeeder {
                         durationS = round1(durSec),
                         energyKcal = round1((durSec / 60) * gauss(rng, 9.0, 2.0)),
                         avgHr = avg, maxHr = (avg + gauss(rng, 22.0, 6.0)).toInt(),
-                        strain = round1((strain * gauss(rng, 0.6, 0.1)).coerceIn(4.0, 21.0)),
+                        // strain is already 0–100 (daily Effort), so the per-workout share keeps
+                        // the 0–100 scale; bounds rescaled from the old 4–21 (×100/21).
+                        strain = round1((strain * gauss(rng, 0.6, 0.1)).coerceIn(4.0 * STRAIN_SCALE, 100.0)),
                         distanceM = if (sport in distanceSports)
                             round1(gauss(rng, 6500.0, 2500.0).coerceAtLeast(500.0)) else null,
                         // Only WHOOP-sourced rows carry zones (matching real imports — Apple Health

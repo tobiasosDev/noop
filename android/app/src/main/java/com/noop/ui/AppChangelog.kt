@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "2.0"
+    const val CURRENT_VERSION = "2.6.10"
 
     data class Release(
         val version: String,
@@ -36,6 +36,178 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "2.6.10",
+            title = "WHOOP 5/MG deep data: live confirmation it's working",
+            date = "June 2026",
+            items = listOf(
+                "New (iPhone and Android, experimental): the WHOOP 5/MG deep-data (R22) section now shows live confirmation of what the strap is doing — \"strap accepted 15/15 R22 flags\" the moment you send the enable sequence, and a count of deep packets if the strap starts streaming them. So you can see whether it's working without reading a log. A real 5/MG accepting the full sequence is now hardware-confirmed (#174) — the remaining step is seeing the deep packets actually flow, and this makes that obvious the instant it happens.",
+            ),
+        ),
+        Release(
+            version = "2.6.9",
+            title = "iPhone polish: What's New fits, Today cards align",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iPhone): the What's New screen shown after an update was sized for a desktop window, so it ran off the edges of the phone — you couldn't read the notes or reach the Got it button. It now fits the screen. Thanks @sebastianwoo (#185).",
+                "Fixed (iPhone): in Today's Synthesis, the Charge read-out card is now the same height as the ring card beside it, so the two line up instead of leaving a gap. Thanks @sebastianwoo (#186).",
+            ),
+        ),
+        Release(
+            version = "2.6.8",
+            title = "iPhone import: handle iCloud and large export files",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iPhone): importing a WHOOP or Apple Health export could still fail right after you picked the file. NOOP now copies the file out of iCloud Drive / Files into local storage first — so a not-yet-downloaded iCloud file or a very large export actually opens — and then imports it. Thanks @adrnxq and @Chopin85 (#179).",
+            ),
+        ),
+        Release(
+            version = "2.6.7",
+            title = "More-tab icons stop flickering colour",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iPhone): the icons on the More tab briefly flashed from green to blue a second after the screen opened. They now stay the app's accent green. Thanks @sebastianwoo (#184).",
+            ),
+        ),
+        Release(
+            version = "2.6.6",
+            title = "iPhone Workouts table fits the screen",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iPhone): the Workouts → All Sessions table ran off the side of the screen, clipping the Sport, distance and source columns. It now scrolls sideways so every column is reachable, with a hint that you press-and-hold a workout to re-label, edit or delete it. Thanks @sebastianwoo (#183).",
+            ),
+        ),
+        Release(
+            version = "2.6.5",
+            title = "Broadcast your heart rate to Garmin, Zwift and gym kit",
+            date = "June 2026",
+            items = listOf(
+                "New (iPhone and Android, experimental): Broadcast heart rate — your WHOOP 5.0/MG can now advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge or watch), Zwift, Peloton or a gym machine can read it directly during a workout. Turn it on under Settings → Experimental; it's opt-in and reversible, applied each time the strap connects. WHOOP 5.0/MG only (a Mac can't write to a 5/MG). Thanks @mornepousse (#181).",
+            ),
+        ),
+        Release(
+            version = "2.6.4",
+            title = "Tidier workout names, correct Rest duration",
+            date = "June 2026",
+            items = listOf(
+                "Fixed: workout names from your strap now read as proper words — Traditional Strength Training instead of TraditionalStrengthTraining — on the Today tiles, the Workouts breakdown cards and the session list, on all platforms. Thanks @RichrdJ (#175).",
+                "Fixed: the Intelligence tab's Rest duration could read an hour too high (a 5h 39m night showed as 6h 39m) because the hours were rounded up instead of truncated. It now matches the Sleep tab and dashboard exactly. Thanks @FrostDev7 (#180).",
+            ),
+        ),
+        Release(
+            version = "2.6.3",
+            title = "Universal Mac build + iPhone import fix",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac): the download was accidentally an Apple-Silicon-only build, so it could not launch on Intel Macs at all. It now ships as a true universal binary that runs natively on both Intel and Apple Silicon. Thanks @stnnnts (#177, #165).",
+                "Fixed (iPhone): importing a WHOOP export or Apple Health .zip on a sideloaded build — the file picker was greying out the .zip so nothing could be selected. iOS now offers only the file types it can actually open, so the .zip is selectable again. Thanks @adrnxq (#179).",
+                "New (iPhone): an AltStore / SideStore source for one-tap updates on sideloaded installs — add https://raw.githubusercontent.com/NoopApp/noop/main/altstore-source.json as a source in AltStore or SideStore. Reimplemented from @RazvanRex (#178).",
+            ),
+        ),
+        Release(
+            version = "2.6.2",
+            title = "iPhone button-label polish",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iPhone): action buttons that were wrapping mid-word on a narrow screen — the Live screen's Re-scan / Buzz strap / Disconnect row and the Backup Export / Import / Export CSV row now keep each label on one line, shrinking to fit instead of breaking to one character per line. Thanks @marceauboul (#175).",
+            ),
+        ),
+        Release(
+            version = "2.6.1",
+            title = "Effort scale fix for imported data",
+            date = "June 2026",
+            items = listOf(
+                "Fixed: imported WHOOP Day Strain and workout strain now correctly land on NOOP's 0-100 Effort axis (the 0-21 to 0-100 rescale was defined in v2.6.0 but not wired up), so imported and on-device Effort finally share one scale. And NOOP's own CSV export now writes Effort on WHOOP's 0-21 scale, so re-importing your own export round-trips losslessly.",
+            ),
+        ),
+        Release(
+            version = "2.6.0",
+            title = "Charge, Effort & Rest — NOOP's own scores, out of 100",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android): NOOP now has its own daily scores, all out of 100 — Charge (how recovered and ready you are), Effort (the day cardiovascular + movement load), and Rest (last night sleep quality). They are computed on-device across WHOOP 4.0 and 5.0/MG from published sports-science methods (no WHOOP cloud): Charge folds HRV, resting heart rate, respiration, your skin-temperature deviation and Rest into one readiness number; Effort is your cardiovascular load curve; Rest weighs how long you slept versus your need, efficiency, restorative (deep + REM) sleep and consistency. Renamed from Recovery/Strain/Sleep and rescaled so everything reads on the same 0-100 axis. Imported WHOOP history is rescaled to match. They are honest approximations, not WHOOP scores.",
+            ),
+        ),
+        Release(
+            version = "2.5.0",
+            title = "Experimental: unlocking WHOOP 5.0/MG deep data",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android, experimental): a WHOOP 5.0/MG \"deep data\" unlock under Settings → Experimental. 5/MG straps give a fresh third-party app only live heart rate; the official app switches on the deeper streams by writing a set of feature flags. NOOP can now send that exact, documented sequence to your strap (opt-in, one button, only when worn + bonded). It writes to the strap but is reversible — it just changes which data the strap emits — and it is the same thing the official app does. Experimental: it may do nothing on your firmware yet. If you have a 5/MG, turning it on and sharing your strap log is exactly what we need to finish 5.0/MG support. iPhone/Android only (a Mac cannot write to a 5/MG). Built on the public protocol work of judes.club, Asherlc/dofek and b-nnett/goose. (#174)",
+            ),
+        ),
+        Release(
+            version = "2.4.0",
+            title = "A small, honest ask",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android): a small card on the Today screen — at most once every 12 hours — asking whether NOOP is proving useful, with the honest numbers: a WHOOP membership runs $300–480 a year, NOOP is free, and 5,000+ downloads in, 7 people have donated. \"Later\" snoozes it 12 hours; \"Don't ask again\" turns it off forever. It's a card in the flow, never a pop-over, and the stats are baked in at release time — the app still never touches the network.",
+            ),
+        ),
+        Release(
+            version = "2.3.2",
+            title = "Split sleep: every block counted, one night per day",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and iOS): on a Bluetooth-only setup (no import), a day recorded as multiple sleep blocks showed only one block — the others were silently hidden. All blocks are now read from both sources, and a split day reads as ONE night: totals summed, the gap between blocks preserved in the hypnogram, and the \"N nights ago\" label counts days, not blocks. A night crossing midnight shows its span (e.g. \"Fri 13 → Sat 14 Jun\"). Implemented from PR #173 — thanks @FrostDev7. Android equivalent follows shortly (its day totals were already correct).",
+            ),
+        ),
+        Release(
+            version = "2.3.1",
+            title = "Skin temperature unblocked on Mac/iOS, plus export fixes",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac and iOS): skin temperature from the strap was being read on the wrong scale, which made every real night look impossibly cold and silently discarded it — so the nightly skin-temp deviation never appeared. Real nights now read correctly (matching Android), and your deviation builds after a few nights of wear. (#166, PR #97 review — thanks @tigercraft4)",
+                "Fixed (Mac and iOS): the strap log no longer prints a stale \"layout v25/v26 … doesn't decode yet\" warning for layouts NOOP has decoded for a while. (#156, thanks @sudden-break)",
+                "Fixed (all platforms): the CSV export wrote the sleep-disturbance count into the \"Awake duration (min)\" column — the cell is now left empty rather than carrying the wrong unit. Also: workouts present as both an import and an on-device detection are no longer exported twice, free-text fields are guarded against spreadsheet formula injection, and a failed export on macOS can no longer destroy your previous export file. (PR #97 review — thanks @tigercraft4)",
+            ),
+        ),
+        Release(
+            version = "2.3.0",
+            title = "HR from the optical waveform, an early-morning day rollover, and clearer terms",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android): on WHOOP 5.0/MG, NOOP now derives a per-second heart rate from the strap's optical (PPG) waveform to fill gaps where a stored HR isn't available. It's heart-rate continuity only — it does not reconstruct HRV — and a measured HR always takes priority over a derived one. (#156, thanks @j0b-dev)",
+                "Fixed (Mac, iOS and Android): your day now rolls over in the early morning (~4am) instead of at midnight, so a late-night workout or a 1am glance still counts toward the right day rather than resetting underneath you. (#144)",
+                "Improved (Mac, iOS and Android): nights with more than one sleep block (naps, split sleep) are now grouped by day, so each block is shown and navigated correctly. (#160)",
+                "New (Android): an \"All other apps\" toggle under Notifications → Behaviour now buzzes your wrist for any app that isn't in the curated list (e.g. BeReal). Opt-in and off by default; quiet hours and only-when-worn still apply. (#168)",
+                "Fixed (Mac): the Today heart-rate trend chart no longer bleeds its gradient down the page behind the cards beneath it.",
+                "Updated terms (v1.1): added plain-English, explicitly non-clinical notes for the Mind mood check-in, nutrition import, and the iOS \"Export for Shortcuts\" path. You'll be asked to re-acknowledge once on first launch.",
+            ),
+        ),
+        Release(
+            version = "2.2.1",
+            title = "Shortcuts-export duplicates fixed; nutrition & mood reach Android charts",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iOS): the \"Export for Shortcuts\" file is now truncated when there's nothing new, so a Shortcut automation firing on every app close can't re-import the previous rows into Apple Health — exports are strictly differential. (#167, thanks @alexsas00)",
+                "Fixed (Android): imported nutrition (calories-in, protein, carbs, fat) and your Mood series now appear in Explore and Compare with proper names and units — they were stored but invisible to the metric pickers.",
+            ),
+        ),
+        Release(
+            version = "2.2.0",
+            title = "Mind — a daily mood check-in — and nutrition import",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android): Mind — a one-tap daily mood check-in (five faces) on the Insights screen. Over time it shows, privately and on-device, how your mood tracks with your HRV, sleep and recovery (e.g. \"on days your HRV is higher, your mood averages higher\"). It's self-tracking, not a clinical assessment — and nothing leaves your device.",
+                "New (Mac, iOS and Android): import a nutrition CSV (Cronometer, MacroFactor, or a generic export) — your daily calories-in, protein, carbs and fat land alongside your strain and recovery in Explore and Compare, so you can finally see calories-in next to calories-out. Offline, file-based, optional.",
+            ),
+        ),
+        Release(
+            version = "2.1.0",
+            title = "Browse past nights, smarter Coach, workout times, battery & more",
+            date = "June 2026",
+            items = listOf(
+                "New (Mac, iOS and Android): the Sleep screen now lets you browse past nights — tap ◀/▶ on the hypnogram to step back through every recorded night, not just last night. (#160, thanks @FrostDev7)",
+                "Fixed (Android): the AI Coach now sees the recovery, strain, sleep and HRV that NOOP computes on-device for live-strap users — it was only reading imported rows, so a Bluetooth-only user's Coach wrongly said it had no data. (#124)",
+                "Fixed (Android): your imported step count now updates for TODAY, not just past days — NOOP refreshes today's Health Connect steps when you open the app. (#150)",
+                "New (Mac, iOS and Android): workouts now show their start–end time (e.g. 13:00–13:30), and the Today screen shows your strap's battery level. (#157, #159)",
+                "New (Mac, iOS and Android): a Step calibration setting — if your step count runs high on a WHOOP 5.0/MG, set how many motion-counter ticks equal one real step (the default leaves counts unchanged). (#139)",
+                "New (Mac, iOS and Android): Breathe sessions now show your HRV response — how much your RMSSD rose from start to finish, and the peak — so you can see the calming effect land.",
+                "New (iOS): an opt-in \"Export for Shortcuts\" that writes your heart rate, HRV and steps to a file an Apple Shortcut can log into Apple Health — a HealthKit-free path for sideloaded installs. (#155, thanks @alexsas00)",
+                "Hardened (Mac, iOS and Android): the archived-sleep retro-decode now retries on the next launch if a save fails midway, instead of giving up — so recovered history is never lost to a transient error. (#152, thanks @ryanbr)",
+            ),
+        ),
         Release(
             version = "2.0",
             title = "Clearer answers when your strap isn't banking history",

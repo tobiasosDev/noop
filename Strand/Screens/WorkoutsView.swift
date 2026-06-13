@@ -256,7 +256,7 @@ struct WorkoutsView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(StrandPalette.accent)
                         .frame(width: 22, alignment: .center)
-                    Text(g.sport)
+                    Text(WorkoutSource.displaySport(g.sport))
                         .font(StrandFont.headline)
                         .foregroundStyle(StrandPalette.textPrimary)
                         .lineLimit(1)
@@ -358,8 +358,8 @@ struct WorkoutsView: View {
                 // 402pt iPhone. ViewThatFits keeps the wide canvas pixel-identical
                 // (the flexible table fits, so the Spacer still pushes SOURCE to the
                 // trailing edge) and falls back to a single horizontally-scrolling
-                // table on iPhone, where header and rows scroll together and stay
-                // column-aligned.
+                // table on iPhone (#183), where header and rows scroll together and
+                // stay column-aligned instead of clipping SPORT / DIST / SOURCE.
                 ViewThatFits(in: .horizontal) {
                     // Pin a minWidth floor so the first child reliably reports its
                     // natural 644pt width through the lazy, Spacer-greedy rows —
@@ -375,6 +375,14 @@ struct WorkoutsView: View {
                     }
                 }
             }
+            #if os(iOS)
+            // The per-row actions live in a long-press context menu, which isn't discoverable on
+            // iPhone without a nudge (#183).
+            Text("Press and hold a workout to re-label, edit or delete it.")
+                .font(StrandFont.caption)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.horizontal, 4)
+            #endif
         }
     }
 
@@ -430,7 +438,7 @@ struct WorkoutsView: View {
                 Text(dateLabel(row.startTs))
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textPrimary)
-                Text(timeLabel(row.startTs))
+                Text(timeRangeLabel(row.startTs, row.endTs))
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
             }
@@ -633,6 +641,11 @@ struct WorkoutsView: View {
     }
     private func timeLabel(_ ts: Int) -> String {
         Self.timeFmt.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
+    /// "HH:mm–HH:mm" when the row carries a real end, start-only otherwise (#157).
+    private func timeRangeLabel(_ start: Int, _ end: Int) -> String {
+        end > start ? "\(timeLabel(start))–\(timeLabel(end))" : timeLabel(start)
     }
 
     private func durationLabel(_ s: Double?) -> String {

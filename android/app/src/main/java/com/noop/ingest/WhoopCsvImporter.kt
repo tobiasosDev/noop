@@ -53,6 +53,15 @@ object WhoopCsvImporter {
     /** Per-CSV uncompressed ceiling (zip-bomb guard). Mirrors Swift maxEntryBytes = 256 MB. */
     private const val MAX_ENTRY_BYTES = 256L shl 20
 
+    /**
+     * Charge/Effort/Rest redesign (2026-06-12): WHOOP "Day Strain" is on WHOOP's 0–21 scale, but
+     * NOOP's "Effort" score lives on 0–100 (StrainScorer.maxStrain = 100). Rescale an imported Day
+     * Strain by 100/21 when writing the `strain` metric so imported history sits on the same axis as
+     * live-computed Effort. Keep byte-identical to Swift
+     * (WhoopExportImporter.dayStrainToEffortScale).
+     */
+    private const val DAY_STRAIN_TO_EFFORT_SCALE = 100.0 / 21.0
+
     private val DAY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     /**
@@ -314,7 +323,9 @@ object WhoopCsvImporter {
                     restingHr = restingHr?.roundToInt(),
                     avgHrv = avgHrv,
                     recovery = recovery,
-                    strain = strain,
+                    // Rescale WHOOP's 0–21 Day Strain onto NOOP's 0–100 Effort axis (see
+                    // DAY_STRAIN_TO_EFFORT_SCALE). nil passes through.
+                    strain = strain?.let { it * DAY_STRAIN_TO_EFFORT_SCALE },
                     exerciseCount = null, // not present in physiological_cycles.csv
                     spo2Pct = spo2,
                     skinTempDevC = skinTemp,
@@ -445,7 +456,9 @@ object WhoopCsvImporter {
             val startTs = workoutStart ?: cycleStart ?: workoutEnd!!
             val sport = row.cell("activity_name") ?: "Workout" // PK component; never blank.
 
-            val strain = row.double("activity_strain")
+            // Workout strain is also WHOOP's 0–21 scale → rescale onto NOOP's 0–100 Effort axis so
+            // imported workouts match detected/manual ones (StrainScorer now scores 0–100).
+            val strain = row.double("activity_strain")?.let { it * DAY_STRAIN_TO_EFFORT_SCALE }
             val energyKcal = row.double("energy_burned_cal") // CSV "(cal)" == kcal
             val avgHr = row.double("average_hr_bpm", "average_heart_rate_bpm")
             val maxHr = row.double("max_hr_bpm", "max_heart_rate_bpm")

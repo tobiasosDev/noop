@@ -330,7 +330,7 @@ private fun SportCard(g: SportGroup) {
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    g.sport,
+                    WorkoutEditing.displaySport(g.sport),
                     style = NoopType.headline,
                     color = Palette.textPrimary,
                     maxLines = 1,
@@ -466,8 +466,9 @@ private fun SessionHeaderRow() {
             .padding(horizontal = Metrics.cardPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ColHeader("Date", Modifier.weight(1.4f), TextAlign.Start)
-        ColHeader("Sport", Modifier.weight(1.6f), TextAlign.Start)
+        // Weights mirror SessionRow (#157: Date widened for the time range, taken from Sport).
+        ColHeader("Date", Modifier.weight(1.7f), TextAlign.Start)
+        ColHeader("Sport", Modifier.weight(1.3f), TextAlign.Start)
         ColHeader("Dur", Modifier.weight(1f), TextAlign.End)
         ColHeader("HR", Modifier.weight(0.9f), TextAlign.End)
         ColHeader("Kcal", Modifier.weight(1f), TextAlign.End)
@@ -508,13 +509,14 @@ private fun SessionRow(
             .padding(start = Metrics.cardPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Date + time.
-        Column(modifier = Modifier.weight(1.4f)) {
+        // Date + time range (#157). The 0.3f comes out of Sport: "HH:mm–HH:mm" clips at footnote
+        // size in the old 1.4f, while sport names already ellipsize gracefully.
+        Column(modifier = Modifier.weight(1.7f)) {
             Text(dateLabel(row.startTs), style = NoopType.subhead, color = Palette.textPrimary, maxLines = 1)
-            Text(timeLabel(row.startTs), style = NoopType.footnote, color = Palette.textTertiary, maxLines = 1)
+            Text(timeRangeLabel(row.startTs, row.endTs), style = NoopType.footnote, color = Palette.textTertiary, maxLines = 1)
         }
         // Sport ("detected" reads as "Activity").
-        Row(modifier = Modifier.weight(1.6f), verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.weight(1.3f), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 sportIcon(row.sport),
                 contentDescription = null,
@@ -938,6 +940,10 @@ private val timeFmt: DateTimeFormatter =
 
 private fun dateLabel(ts: Long): String = dateFmt.format(Instant.ofEpochSecond(ts))
 private fun timeLabel(ts: Long): String = timeFmt.format(Instant.ofEpochSecond(ts))
+
+/** Session span "HH:mm–HH:mm"; start-only when the end isn't after the start (#157). */
+private fun timeRangeLabel(startTs: Long, endTs: Long): String =
+    if (endTs > startTs) "${timeLabel(startTs)}–${timeLabel(endTs)}" else timeLabel(startTs)
 
 private fun durationLabel(s: Double?): String {
     if (s == null || s <= 0.0) return "–"

@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.dp
  * `Terms.currentVersion`. The full text ships in TERMS.md.
  */
 object Terms {
-    const val CURRENT_VERSION = "1.0"
+    const val CURRENT_VERSION = "1.1"
 
     /** Plain-English summary of TERMS.md §1–§6 — kept identical to the macOS `Terms.points`. */
     val points: List<Pair<String, String>> = listOf(
@@ -41,7 +41,7 @@ object Terms {
         "Using NOOP may breach WHOOP's Terms of Service" to
             "Use it only with a device you own, to read your own data. Whether to use it — and any effect on your WHOOP account, subscription, device, or warranty — is your decision, and your risk alone.",
         "Experimental — at your own risk" to
-            "NOOP talks to your strap's firmware over an unofficial, reverse-engineered protocol. There is a residual risk to the device, its data, and its connection to official services. You assume that risk.",
+            "NOOP talks to your strap's firmware over an unofficial, independently-mapped protocol. There is a residual risk to the device, its data, and its connection to official services. You assume that risk.",
         "Not a medical device, not medical advice" to
             "Every metric is an unvalidated approximation. Don't use NOOP to diagnose, treat, or make any health decision. Always consult a qualified professional.",
         "No warranty; liability limited" to

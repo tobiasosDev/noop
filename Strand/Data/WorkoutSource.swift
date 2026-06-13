@@ -24,8 +24,22 @@ enum WorkoutSource: Equatable {
     }
 
     /// Sport-cell text. The detector stores the machine token "detected"; show it as a neutral
-    /// "Activity" (we don't claim a sport we didn't actually classify).
-    static func displaySport(_ sport: String) -> String { sport == "detected" ? "Activity" : sport }
+    /// "Activity" (we don't claim a sport we didn't actually classify). WHOOP sport names arrive as
+    /// concatenated camelCase (e.g. "TraditionalStrengthTraining"), which reads as one long
+    /// unbreakable word and truncates badly — split it into words on the lower→Upper boundary so it
+    /// renders "Traditional Strength Training". Already-spaced labels (manual/edited) pass through. (#175)
+    static func displaySport(_ sport: String) -> String {
+        if sport == "detected" { return "Activity" }
+        if sport.isEmpty || sport.contains(" ") { return sport }
+        var out = ""
+        var prev: Character?
+        for ch in sport {
+            if let p = prev, ch.isUppercase, !p.isUppercase { out.append(" ") }
+            out.append(ch)
+            prev = ch
+        }
+        return out
+    }
 
     // MARK: - Dismissed detected bouts (durable across re-detection)
     //

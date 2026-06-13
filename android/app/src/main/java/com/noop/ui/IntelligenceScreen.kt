@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Intelligence — NOOP's own recovery / strain / sleep scores, presented with the
+ * Intelligence — NOOP's own Charge / Effort / Rest scores, presented with the
  * WHOOP-model explanation so the read-out is legible rather than a black box.
  *
  * Ports macOS Strand/Screens/IntelligenceView.swift. The macOS build runs an
@@ -51,7 +51,7 @@ fun IntelligenceScreen(vm: AppViewModel) {
 
     ScreenScaffold(
         title = "Intelligence",
-        subtitle = "Recovery, strain and sleep — scored with the model, explained in plain terms.",
+        subtitle = "Charge, effort and rest — scored with the model, explained in plain terms.",
     ) {
         ExplainerCard()
         ModelBreakdownCard()
@@ -90,12 +90,12 @@ private fun ExplainerCard() {
                 Text("How this works", style = NoopType.headline, color = Palette.textPrimary)
             }
             Text(
-                "Recovery weighs your heart-rate variability against your personal baseline " +
-                    "(~60%), resting heart rate (~20%), sleep performance (~15%) and respiration " +
-                    "(~5%). Day strain is a 0–21 cardiovascular load from time spent in each " +
-                    "heart-rate zone. Sleep is staged from movement and heart rate. The full " +
-                    "on-device recompute from the strap's raw streams is a later port; the scores " +
-                    "below are read from each day's cached metrics.",
+                "Charge weighs your heart-rate variability against your personal baseline " +
+                    "(~55%), resting heart rate (~20%), rest quality (~15%), respiration (~5%) " +
+                    "and skin-temperature deviation (~5%). Effort is a 0–100 cardiovascular load " +
+                    "from time spent in each heart-rate zone. Rest is staged from movement and " +
+                    "heart rate. The full on-device recompute from the strap's raw streams is a " +
+                    "later port; the scores below are read from each day's cached metrics.",
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )
@@ -119,8 +119,8 @@ private fun EmptyNote() {
                 modifier = Modifier.size(18.dp),
             )
             Text(
-                "No scored days yet. Sync your strap to collect raw streams — recovery, " +
-                    "strain and sleep are scored once a day's data is in.",
+                "No scored days yet. Sync your strap to collect raw streams — charge, " +
+                    "effort and rest are scored once a day's data is in.",
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )
@@ -130,32 +130,33 @@ private fun EmptyNote() {
 
 // MARK: - Model weighting breakdown
 //
-// Makes the recovery formula concrete: the four weighted inputs plus the 0–21
-// strain scale. Pure presentation of the model the macOS engine uses — no per-day
+// Makes the Charge formula concrete: the five weighted inputs plus the 0–100
+// Effort scale. Pure presentation of the model the macOS engine uses — no per-day
 // data, so it's always legible even before any day is scored.
 
 @Composable
 private fun ModelBreakdownCard() {
     NoopCard(padding = 20.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Overline("Recovery model")
-            WeightRow("Heart-rate variability", "~60%", 0.60f, Palette.metricPurple)
+            Overline("Charge model")
+            WeightRow("Heart-rate variability", "~55%", 0.55f, Palette.metricPurple)
             WeightRow("Resting heart rate", "~20%", 0.20f, Palette.metricRose)
-            WeightRow("Sleep performance", "~15%", 0.15f, Palette.metricCyan)
+            WeightRow("Rest quality", "~15%", 0.15f, Palette.metricCyan)
             WeightRow("Respiration", "~5%", 0.05f, Palette.accent)
+            WeightRow("Skin-temperature deviation", "~5%", 0.05f, Palette.metricAmber)
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Day strain",
+                    "Effort",
                     style = NoopType.subhead,
                     color = Palette.textSecondary,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    "0–21 scale",
+                    "0–100 scale",
                     style = NoopType.captionNumber,
                     color = Palette.metricCyan,
                 )
@@ -204,8 +205,8 @@ private fun Meter(fraction: Float, color: Color) {
 // MARK: - Per-day card (ported from IntelligenceView.dayCard)
 //
 // Header = the day + a NOOP-computed source badge; a row of the five headline
-// scores (Recovery / Strain / Sleep / HRV / RHR) tinted to the design-system metric
-// colors, then a thin strain meter for at-a-glance load.
+// scores (Charge / Effort / Rest / HRV / RHR) tinted to the design-system metric
+// colors, then a thin Effort meter for at-a-glance load.
 
 @Composable
 private fun DayCard(d: DailyMetric) {
@@ -223,19 +224,19 @@ private fun DayCard(d: DailyMetric) {
 
             Row(modifier = Modifier.fillMaxWidth()) {
                 DayStat(
-                    "Recovery",
+                    "Charge",
                     d.recovery?.let { "${it.roundToInt()}%" } ?: "—",
                     d.recovery?.let { recoveryStatColor(it) } ?: Palette.textSecondary,
                     Modifier.weight(1f),
                 )
                 DayStat(
-                    "Strain",
+                    "Effort",
                     d.strain?.let { String.format(Locale.US, "%.1f", it) } ?: "—",
                     Palette.metricCyan,
                     Modifier.weight(1f),
                 )
                 DayStat(
-                    "Sleep",
+                    "Rest",
                     sleepValue(d.totalSleepMin),
                     Palette.metricPurple,
                     Modifier.weight(1f),
@@ -254,10 +255,10 @@ private fun DayCard(d: DailyMetric) {
                 )
             }
 
-            // Strain load meter (0–21), tinted along the strain ramp.
+            // Effort load meter (0–100), tinted along the strain ramp.
             d.strain?.let { s ->
                 Meter(
-                    fraction = (s / 21.0).toFloat(),
+                    fraction = (s / 100.0).toFloat(),
                     color = Palette.strainColor(s),
                 )
             }

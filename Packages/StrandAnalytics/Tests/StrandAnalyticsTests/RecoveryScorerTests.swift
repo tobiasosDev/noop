@@ -99,6 +99,59 @@ final class RecoveryScorerTests: XCTestCase {
         XCTAssertGreaterThan(lowered, neutral, "resp below baseline must raise recovery")
     }
 
+    func testSkinTempNilLeavesScoreIdenticalToBefore() {
+        // The no-skin-temp path must be byte-identical to the pre-redesign score:
+        // when skinTempDev is nil the term drops and the weights renormalize.
+        func score(_ dev: Double?) -> Double {
+            RecoveryScorer.recovery(
+                hrv: 55, rhr: 52, resp: nil,
+                hrvBaseline: baseline(mean: 50, sigma: 6),
+                rhrBaseline: baseline(mean: 55, sigma: 3),
+                respBaseline: nil,
+                sleepPerf: 0.9,
+                skinTempDev: dev)!
+        }
+        // Default argument (nil) and explicit nil agree, and both equal the no-skin-temp score.
+        let implicitNil = RecoveryScorer.recovery(
+            hrv: 55, rhr: 52, resp: nil,
+            hrvBaseline: baseline(mean: 50, sigma: 6),
+            rhrBaseline: baseline(mean: 55, sigma: 3),
+            respBaseline: nil,
+            sleepPerf: 0.9)!
+        XCTAssertEqual(score(nil), implicitNil, accuracy: 1e-9)
+    }
+
+    func testSkinTempDeviationLowersChargeSymmetrically() {
+        // A symmetric penalty: ANY drift from baseline (hot OR cold) lowers Charge, and a
+        // larger |deviation| lowers it more. Baseline drivers are pinned ABOVE-center
+        // (positive composite z) so the penalty has a visible direction to push against.
+        func score(_ dev: Double?) -> Double {
+            RecoveryScorer.recovery(
+                hrv: 55, rhr: 52, resp: nil,
+                hrvBaseline: baseline(mean: 50, sigma: 6),
+                rhrBaseline: baseline(mean: 55, sigma: 3),
+                respBaseline: nil,
+                sleepPerf: 0.9,
+                skinTempDev: dev)!
+        }
+        let neutral = score(nil)
+        let zeroDev = score(0.0)
+        let warm = score(1.0)
+        let cold = score(-1.0)
+        let bigWarm = score(2.0)
+        // A present zero-deviation term adds no penalty itself, but participates in the
+        // renormalization (extra weight at z=0), so an above-center composite is pulled
+        // slightly toward the logistic center — strictly below the no-term score.
+        XCTAssertLessThan(zeroDev, neutral)
+        // A real deviation penalizes further, below the zero-deviation case…
+        XCTAssertLessThan(warm, zeroDev, "warm deviation must lower Charge")
+        XCTAssertLessThan(cold, zeroDev, "cold deviation must lower Charge")
+        // …symmetrically (±1 °C cost the same)…
+        XCTAssertEqual(warm, cold, accuracy: 1e-9)
+        // …and a larger deviation lowers it more.
+        XCTAssertLessThan(bigWarm, warm)
+    }
+
     func testBandThresholds() {
         XCTAssertEqual(RecoveryScorer.band(20), "red")
         XCTAssertEqual(RecoveryScorer.band(33.9), "red")

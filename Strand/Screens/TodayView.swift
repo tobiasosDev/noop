@@ -65,7 +65,7 @@ struct TodayView: View {
                     if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
                     DataPendingNote(
                         title: "Live now. Your scores are building.",
-                        message: "Your live heart rate is working from the strap, and recovery, strain and sleep build from it over your next few nights of wear, sharpening as it learns your baseline. Want your full history instantly? Import your WHOOP export in Data Sources and it backfills in about a minute."
+                        message: "Your live heart rate is working from the strap, and charge, effort and rest build from it over your next few nights of wear, sharpening as it learns your baseline. Want your full history instantly? Import your WHOOP export in Data Sources and it backfills in about a minute."
                     )
                 }
                 ringsSection
@@ -73,6 +73,8 @@ struct TodayView: View {
                 monitorSection
                 goalsSection
                 myDaySection
+                // Honest, dismissible 12-hourly donation ask — a card in the flow, never a modal.
+                DonationNudgeCard()
             }
         } trailing: {
             HStack(spacing: 14) {
@@ -245,7 +247,10 @@ struct TodayView: View {
     // MARK: (3) Monitor 2-up — Readiness + Strain Coach, expandable in place.
 
     private var monitorSection: some View {
-        let r = ReadinessEngine.evaluate(days: repo.days, today: Repository.localDayKey(Date()))
+        // Logical-day anchor (rolls at 04:00, #144) so the small hours after midnight still read
+        // yesterday's row rather than an empty new-calendar-day one. Adopted from upstream's
+        // readiness section (v2.6 logicalDay rollover).
+        let r = ReadinessEngine.evaluate(days: repo.days, today: Repository.logicalDayKey(Date()))
         let hasReadiness = r.level != .insufficient
         // Wide canvas: side by side. Compact: stacked full-width.
         return ViewThatFits(in: .horizontal) {
@@ -581,8 +586,11 @@ struct TodayView: View {
     private func loadAll() async {
         workouts = await repo.workoutRows()
 
-        // Today's HR trend — 5-minute bucket means from local midnight → now.
-        let startOfToday = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        // Today's HR trend — 5-minute bucket means from the LOGICAL day's local midnight → now. The
+        // logical day rolls at 04:00 (Repository.logicalDayStart), so in the small hours after midnight
+        // the window still starts at yesterday's midnight and the chart keeps the evening's curve rather
+        // than blanking to an empty new-calendar-day axis (#144).
+        let startOfToday = Int(Repository.logicalDayStart(Date()).timeIntervalSince1970)
         let nowTs = Int(Date().timeIntervalSince1970)
         hrPoints = await repo.hrBuckets(from: startOfToday, to: nowTs, bucketSeconds: 300)
             .map { TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm) }
@@ -630,7 +638,8 @@ struct TodayView: View {
     }()
 
     /// Local wall-clock time ("HH:mm") for the HR trend's x-axis / tooltip — the chart spans one day,
-    /// so it must show times, not the day-granularity default ("EEE d MMM").
+    /// so it must show times, not the day-granularity default ("EEE d MMM"). Also formats the
+    /// workout-tile caption's time range (#157).
     static let hrTimeFmt: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")

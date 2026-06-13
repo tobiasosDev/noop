@@ -1,0 +1,113 @@
+{
+  "name": "NOOP",
+  "subtitle": "A standalone WHOOP app — your strap, your device, fully offline.",
+  "description": "An AltStore / SideStore source for NOOP, the independent open-source WHOOP companion. Add this source to get one-tap updates for the sideloaded iOS build.\n\nNOOP is not affiliated with WHOOP. It reads a strap you own, directly over Bluetooth, on your own device — no WHOOP app, no subscription, no cloud.",
+  "iconURL": "https://raw.githubusercontent.com/NoopApp/noop/main/Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png",
+  "website": "https://github.com/NoopApp/noop",
+  "tintColor": "44E2B0",
+  "apps": [
+    {
+      "name": "NOOP",
+      "bundleIdentifier": "com.noopapp.noop",
+      "developerName": "NoopApp",
+      "subtitle": "Read your own WHOOP strap, fully offline.",
+      "localizedDescription": "NOOP talks to a WHOOP 4.0 / 5.0 / MG strap you own directly over Bluetooth — no WHOOP app, no subscription, no cloud. Live heart rate, history sync, and NOOP's own Charge / Effort / Rest scores, all computed on-device and stored only on your iPhone.\n\nIndependent and experimental; not affiliated with WHOOP. Source: https://github.com/NoopApp/noop",
+      "iconURL": "https://raw.githubusercontent.com/NoopApp/noop/main/Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png",
+      "tintColor": "44E2B0",
+      "category": "healthcare-fitness",
+      "screenshotURLs": [],
+      "versions": [
+        {
+          "version": "2.6.10",
+          "buildVersion": "41",
+          "date": "2026-06-12",
+          "localizedDescription": "5/MG deep-data: live R22 flag-accept + deep-packet confirmation.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.10/NOOP-v2.6.10-ios.ipa",
+          "size": 5574022,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.9",
+          "buildVersion": "40",
+          "date": "2026-06-12",
+          "localizedDescription": "What's New screen fits iPhone; Today's Synthesis cards align.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.9/NOOP-v2.6.9-ios.ipa",
+          "size": 5570768,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.8",
+          "buildVersion": "39",
+          "date": "2026-06-12",
+          "localizedDescription": "iPhone import now handles iCloud + large export files.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.8/NOOP-v2.6.8-ios.ipa",
+          "size": 5570192,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.7",
+          "buildVersion": "38",
+          "date": "2026-06-12",
+          "localizedDescription": "More-tab icons no longer flicker green to blue.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.7/NOOP-v2.6.7-ios.ipa",
+          "size": 5563111,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.6",
+          "buildVersion": "37",
+          "date": "2026-06-12",
+          "localizedDescription": "iPhone Workouts table now fits the screen (scrolls sideways).",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.6/NOOP-v2.6.6-ios.ipa",
+          "size": 5563120,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.5",
+          "buildVersion": "36",
+          "date": "2026-06-12",
+          "localizedDescription": "Broadcast heart rate to Garmin/Zwift/gym (WHOOP 5.0/MG, opt-in).",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.5/NOOP-v2.6.5-ios.ipa",
+          "size": 5562685,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.4",
+          "buildVersion": "35",
+          "date": "2026-06-12",
+          "localizedDescription": "Workout names now read as proper words; Intelligence Rest duration fixed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.4/NOOP-v2.6.4-ios.ipa",
+          "size": 5560368,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "2.6.3",
+          "buildVersion": "34",
+          "date": "2026-06-12",
+          "localizedDescription": "Universal Mac build (Intel + Apple Silicon); iPhone import .zip fix; AltStore source added.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.3/NOOP-v2.6.3-ios.ipa",
+          "size": 5557963,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.healthkit"
+        ],
+        "privacy": {
+          "NSBluetoothAlwaysUsageDescription": "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device.",
+          "NSHealthShareUsageDescription": "NOOP reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device.",
+          "NSHealthUpdateUsageDescription": "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
+        }
+      },
+      "version": "2.6.10",
+      "buildVersion": "41",
+      "versionDate": "2026-06-12",
+      "versionDescription": "5/MG deep-data: live R22 flag-accept + deep-packet confirmation.",
+      "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.10/NOOP-v2.6.10-ios.ipa",
+      "size": 5574022,
+      "minOSVersion": "17.0"
+    }
+  ],
+  "news": []
+}

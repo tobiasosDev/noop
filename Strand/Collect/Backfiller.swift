@@ -208,9 +208,14 @@ final class Backfiller {
             // bails out of decode entirely — no HR, no R-R, no GRAVITY — so sleep (which is gravity/
             // motion-driven) can never be computed from it, even though the offload "completes". Surface
             // each unmapped version once so the user's strap log reveals what their firmware emits.
+            // "Decoded nothing" must cover every mapped layout's signature field: v18 emits heart_rate,
+            // v25 emits gravity_x (no per-second HR — it's PPG-derived), v26 emits ppg_waveform (no HR
+            // either) — checking heart_rate alone false-flagged v25/v26 as unmapped (#156, sudden-break).
             for p in parsed {
                 guard let v = p.parsed["hist_version"]?.intValue,
-                      p.parsed["heart_rate"] == nil,            // decoded nothing → unmapped layout
+                      p.parsed["heart_rate"] == nil,
+                      p.parsed["gravity_x"] == nil,
+                      p.parsed["ppg_waveform"] == nil,
                       !loggedUnmappedVersions.contains(v) else { continue }
                 loggedUnmappedVersions.insert(v)
                 log?("Historical records use firmware layout v\(v), which NOOP doesn't decode yet — no motion data, so sleep can't be computed from the strap. Please report this (issue #30).")

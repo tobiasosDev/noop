@@ -128,8 +128,9 @@ final class AnalyticsEngineTests: XCTestCase {
             tSec += rrMs / 1000.0
             rr.append(RRInterval(ts: n.start + Int(tSec), rrMs: Int(rrMs)))
         }
-        // Worn in-bed skin temp at 34 °C across the whole night (raw = °C × 128, Swift scale).
-        let skin = (0..<(n.end - n.start)).map { SkinTempSample(ts: n.start + $0, raw: 4352) }
+        // Worn in-bed skin temp at 34 °C across the whole night (raw = °C × 100, the firmware's
+        // centidegree scale — see SkinTempAnalyticsTests' SCALE NOTE).
+        let skin = (0..<(n.end - n.start)).map { SkinTempSample(ts: n.start + $0, raw: 3400) }
         // Step counter: morning movement after wake, inside the same UTC day → 250 steps.
         let steps = [StepSample(ts: n.end + 600, counter: 100),
                      StepSample(ts: n.end + 1200, counter: 350)]
@@ -160,5 +161,99 @@ final class AnalyticsEngineTests: XCTestCase {
         XCTAssertNil(result.daily.steps)
         XCTAssertNil(result.daily.skinTempDevC)
         XCTAssertNil(result.nightlySkinTempC)
+    }
+
+    // MARK: - Rest composite (Charge/Effort/Rest)
+
+    func testRestCompositePerfectNight() {
+        // 8 h asleep over 8 h in bed (eff 1.0), 4 h deep+REM (50% restorative), perfect
+        // consistency, need 8 h → every sub-score saturates → 100.
+        let r = AnalyticsEngine.Rest.composite(
+            tstSeconds: 8 * 3600, inBedSeconds: 8 * 3600, efficiency: 1.0,
+            restorativeSeconds: 4 * 3600, needHours: 8.0, consistency: 1.0)
+        XCTAssertEqual(r, 100.0, accuracy: 1e-9)
+    }
+
+    func testRestCompositeDurationDominatedAndClamped() {
+        // Duration term alone: 8 h asleep vs 8 h need → 1.0 × 0.50 weight = 50, all other
+        // sub-scores 0. Confirms the 0.50 duration weight and that over-need clamps at 1.0.
+        let r = AnalyticsEngine.Rest.composite(
+            tstSeconds: 8 * 3600, inBedSeconds: 99_999, efficiency: 0.0,
+            restorativeSeconds: 0.0, needHours: 8.0, consistency: 0.0)
+        XCTAssertEqual(r, 50.0, accuracy: 1e-9)
+        // Sleeping well over need does not push duration past 1.0.
+        let over = AnalyticsEngine.Rest.composite(
+            tstSeconds: 12 * 3600, inBedSeconds: 12 * 3600, efficiency: 1.0,
+            restorativeSeconds: 6 * 3600, needHours: 8.0, consistency: 1.0)
+        XCTAssertEqual(over, 100.0, accuracy: 1e-9)
+    }
+
+    func testRestCompositeNilConsistencyIsNeutral() {
+        // A single day carries no regularity signal → nil consistency scores the neutral 0.5.
+        let withNil = AnalyticsEngine.Rest.composite(
+            tstSeconds: 4 * 3600, inBedSeconds: 5 * 3600, efficiency: 0.8,
+            restorativeSeconds: 1 * 3600, needHours: 8.0, consistency: nil)
+        let withHalf = AnalyticsEngine.Rest.composite(
+            tstSeconds: 4 * 3600, inBedSeconds: 5 * 3600, efficiency: 0.8,
+            restorativeSeconds: 1 * 3600, needHours: 8.0, consistency: 0.5)
+        XCTAssertEqual(withNil, withHalf, accuracy: 1e-9)
+        XCTAssertEqual(withNil, 56.0, accuracy: 1e-9)
+    }
+
+    func testAnalyzeDayPopulatesRestAndConfidence() {
+        // A normal night yields a Rest score and a Rest confidence that is at least
+        // .building (a session exists). With no HRV baseline, Charge is .calibrating;
+        // 7 h of 1 Hz HR makes Effort .solid.
+        let day = "2021-06-23"
+        let n = night(endDay: day, hours: 7)
+        let result = AnalyticsEngine.analyzeDay(
+            day: day, hr: n.hr, rr: n.rr, gravity: n.gravity, profile: UserProfile(age: 30))
+        XCTAssertNotNil(result.restScore)
+        XCTAssertGreaterThan(result.restScore!, 0)
+        XCTAssertLessThanOrEqual(result.restScore!, 100)
+        XCTAssertNotEqual(result.restConfidence, .calibrating)  // a session exists
+        XCTAssertEqual(result.chargeConfidence, .calibrating)   // no HRV baseline
+        XCTAssertEqual(result.effortConfidence, .solid)         // 7 h of 1 Hz HR ≫ 1 h
+    }
+
+    func testNoMatchingNightLeavesRestNilAndCalibrating() {
+        let n = night(endDay: "2021-06-24", hours: 7)
+        let result = AnalyticsEngine.analyzeDay(
+            day: "2021-06-25", hr: n.hr, rr: n.rr, gravity: n.gravity, profile: UserProfile(age: 30))
+        XCTAssertNil(result.restScore)
+        XCTAssertEqual(result.restConfidence, .calibrating)
+    }
+
+    // MARK: - ScoreConfidence boundaries
+
+    func testChargeConfidenceTiers() {
+        let trusted = BaselineState(baseline: 50, spread: 5, nValid: 14,
+                                    nightsSinceUpdate: 0, status: .trusted)
+        let provisional = BaselineState(baseline: 50, spread: 5, nValid: 5,
+                                        nightsSinceUpdate: 0, status: .provisional)
+        let calibrating = BaselineState(baseline: 50, spread: 5, nValid: 2,
+                                        nightsSinceUpdate: 0, status: .calibrating)
+        // Score present + trusted baseline → solid.
+        XCTAssertEqual(ScoreConfidence.charge(recovery: 60, hrvBaseline: trusted), .solid)
+        // Score present + provisional baseline → building.
+        XCTAssertEqual(ScoreConfidence.charge(recovery: 60, hrvBaseline: provisional), .building)
+        // No score → calibrating regardless of baseline.
+        XCTAssertEqual(ScoreConfidence.charge(recovery: nil, hrvBaseline: trusted), .calibrating)
+        // Unusable baseline → calibrating.
+        XCTAssertEqual(ScoreConfidence.charge(recovery: 60, hrvBaseline: calibrating), .calibrating)
+        XCTAssertEqual(ScoreConfidence.charge(recovery: 60, hrvBaseline: nil), .calibrating)
+    }
+
+    func testEffortConfidenceTiers() {
+        // No strain → calibrating. Thin HR window → building. Dense → solid (boundary at 3600).
+        XCTAssertEqual(ScoreConfidence.effort(strain: nil, hrSampleCount: 10_000), .calibrating)
+        XCTAssertEqual(ScoreConfidence.effort(strain: 40, hrSampleCount: 3599), .building)
+        XCTAssertEqual(ScoreConfidence.effort(strain: 40, hrSampleCount: 3600), .solid)
+    }
+
+    func testRestConfidenceTiers() {
+        XCTAssertEqual(ScoreConfidence.rest(hasSession: false, hasStagedSleep: false), .calibrating)
+        XCTAssertEqual(ScoreConfidence.rest(hasSession: true, hasStagedSleep: false), .building)
+        XCTAssertEqual(ScoreConfidence.rest(hasSession: true, hasStagedSleep: true), .solid)
     }
 }

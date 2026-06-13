@@ -23,7 +23,9 @@ GitHub Release.
 
 > **Unsigned-app note.** NOOP ships anonymously with no Apple Developer ID, so it isn't notarized.
 > Homebrew can't strip the quarantine flag for an un-notarized app, so on **first launch** Gatekeeper
-> blocks it — right-click NOOP in `/Applications` → **Open** → **Open** (once). The cask's `caveats`
+> blocks it. On **macOS 15 Sequoia and later**: try to open NOOP once, then **System Settings →
+> Privacy & Security**, scroll down, and click **"Open Anyway"** next to NOOP. (On macOS 14 and
+> earlier you can right-click NOOP in `/Applications` → **Open** → **Open**.) The cask's `caveats`
 > says this. Updates after that are just `brew upgrade`.
 
 ## How it stays current

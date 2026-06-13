@@ -31,15 +31,31 @@ extension WhoopStore {
     /// Downsampled HR for charting: mean bpm per `bucketSeconds`-wide bucket over `[from, to]`,
     /// keyed by the bucket's start (floor(ts/bucket)*bucket). Aggregates in SQL so a 24h window
     /// returns ~`(to-from)/bucketSeconds` rows instead of every ~1 Hz sample. Ascending by time.
+    ///
+    /// COALESCEs the measured `hrSample` with the v26 PPG-derived `ppgHrSample` (#156): every measured
+    /// second wins, and any second with NO hrSample row falls back to its PPG estimate so the chart
+    /// stays continuous through v26-heavy stretches. The fallback rows are `bpm REAL` and only appear
+    /// where the device genuinely had no measured HR for that second (anti-join), never doubling a beat.
     public func hrBuckets(deviceId: String, from: Int, to: Int, bucketSeconds: Int) async throws -> [HRBucket] {
         let bucket = max(1, bucketSeconds)
         return try syncRead { db in
             try Row.fetchAll(db, sql: """
-                SELECT (ts / ?) * ? AS bucket, AVG(bpm) AS avgBpm FROM hrSample
-                WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                SELECT (ts / ?) * ? AS bucket, AVG(bpm) AS avgBpm FROM (
+                    SELECT ts, bpm FROM hrSample
+                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                    UNION ALL
+                    SELECT p.ts, p.bpm FROM ppgHrSample p
+                    WHERE p.deviceId = ? AND p.ts >= ? AND p.ts <= ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM hrSample h
+                        WHERE h.deviceId = p.deviceId AND h.ts = p.ts)
+                )
                 GROUP BY ts / ?
                 ORDER BY bucket ASC
-                """, arguments: [bucket, bucket, deviceId, from, to, bucket])
+                """, arguments: [bucket, bucket,
+                                 deviceId, from, to,
+                                 deviceId, from, to,
+                                 bucket])
                 .map { HRBucket(ts: $0["bucket"], bpm: $0["avgBpm"]) }
         }
     }

@@ -1,6 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import StrandDesign
+import StrandImport
+import WhoopStore
 
 struct DataSourcesView: View {
     @EnvironmentObject var model: AppModel
@@ -8,12 +10,18 @@ struct DataSourcesView: View {
     @EnvironmentObject var live: LiveState
     @State private var showingImporter = false
     @State private var importTarget: ImportTarget = .whoop
+    // Nutrition CSV import state — local to this screen (the import is a quick, self-contained
+    // metric-series write; it doesn't need AppModel's heavyweight import pipeline).
+    @State private var nutritionImporting = false
+    @State private var nutritionSummary: String?
+    @State private var nutritionFailed = false
 
     var body: some View {
         ScreenScaffold(title: "Data Sources",
                        subtitle: "Everything stays on this Mac. Bring your history in once, then it's yours.") {
             whoopCard
             appleHealthCard
+            nutritionCard
             liveCard
         }
         // A single target-aware importer avoids SwiftUI collapsing competing importers on the same screen.
@@ -38,7 +46,7 @@ struct DataSourcesView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(StrandPalette.accent)
-                .disabled(model.hasActiveImport)
+                .disabled(model.hasActiveImport || nutritionImporting)
                 if importingWhoop { ProgressView().controlSize(.small) }
             }
             if let s = model.whoopImportSummary {
@@ -60,12 +68,31 @@ struct DataSourcesView: View {
                         .padding(.horizontal, 6)
                 }
                 .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
-                .disabled(model.hasActiveImport)
+                .disabled(model.hasActiveImport || nutritionImporting)
                 if importingAppleHealth { ProgressView().controlSize(.small) }
             }
             if let s = model.appleHealthImportSummary {
                 Text(s).font(StrandFont.subhead)
                     .foregroundStyle(model.appleHealthImportFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+            }
+        }
+    }
+
+    private var nutritionCard: some View {
+        card(title: "Nutrition (.csv)", icon: "fork.knife",
+             subtitle: "Import daily nutrition totals — calories in, protein, carbs, fat (and weight if present) — from a Cronometer or MacroFactor CSV export. Other trackers work too if the file has a date column and daily totals.") {
+            HStack(spacing: 12) {
+                Button { presentImporter(.nutrition) } label: {
+                    Label(nutritionImporting ? "Importing…" : "Choose .csv…", systemImage: "tray.and.arrow.down")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
+                .disabled(model.hasActiveImport || nutritionImporting)
+                if nutritionImporting { ProgressView().controlSize(.small) }
+            }
+            if let s = nutritionSummary {
+                Text(s).font(StrandFont.subhead)
+                    .foregroundStyle(nutritionFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
             }
         }
     }
@@ -82,19 +109,76 @@ struct DataSourcesView: View {
             model.importWhoop(url: url)
         case .appleHealth:
             model.importAppleHealth(url: url)
+        case .nutrition:
+            importNutrition(url: url)
+        }
+    }
+
+    /// Parse a daily-nutrition CSV and upsert it into the metric-series store under the
+    /// dedicated "nutrition-csv" source, then refresh so Explore/Insights see the new keys.
+    private func importNutrition(url: URL) {
+        nutritionImporting = true
+        nutritionSummary = nil
+        nutritionFailed = false
+        Task {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                let result = NutritionCsvImporter.parse(data: data)
+                guard result.importedDays > 0 else {
+                    nutritionSummary = "No usable rows found — check the file has a date column (yyyy-MM-dd) and daily totals."
+                    nutritionFailed = true
+                    nutritionImporting = false
+                    return
+                }
+                guard let store = await repo.storeHandle() else {
+                    nutritionSummary = "Couldn't open the local store."
+                    nutritionFailed = true
+                    nutritionImporting = false
+                    return
+                }
+                let points = result.metricPoints.map { MetricPoint(day: $0.day, key: $0.key, value: $0.value) }
+                try await store.upsertMetricSeries(points, deviceId: NutritionCsvImporter.sourceId)
+                await repo.refresh()
+                var msg = "Imported \(result.importedDays) days (\(points.count) values)"
+                if let a = result.earliestDay, let b = result.latestDay, a != b { msg += " · \(a) – \(b)" }
+                if result.skippedRows > 0 { msg += " · \(result.skippedRows) rows skipped" }
+                nutritionSummary = msg
+                nutritionFailed = false
+            } catch {
+                nutritionSummary = "Import failed: \(error.localizedDescription)"
+                nutritionFailed = true
+            }
+            nutritionImporting = false
         }
     }
 
     private enum ImportTarget {
         case whoop
         case appleHealth
+        case nutrition
 
         var allowedContentTypes: [UTType] {
+            // `.folder` lets macOS users point at an *unzipped* export directory. On iOS the Files
+            // picker can't meaningfully pick a folder here, and including `UTType.folder` in the type
+            // list greys out the .zip itself — so the picker opens but nothing is selectable
+            // (issue #179). iOS therefore offers only the concrete file types.
             switch self {
             case .whoop:
+                #if os(macOS)
                 return [.zip, .folder]
+                #else
+                return [.zip]
+                #endif
             case .appleHealth:
+                #if os(macOS)
                 return [.zip, .xml, .folder]
+                #else
+                return [.zip, .xml]
+                #endif
+            case .nutrition:
+                return [.commaSeparatedText, .plainText]
             }
         }
     }
