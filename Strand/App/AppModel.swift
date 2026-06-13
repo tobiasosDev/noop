@@ -334,6 +334,12 @@ final class AppModel: ObservableObject {
     }
     /// Stop the realtime stream (the lightweight 0x2A37 HR keeps recording regardless).
     func stopRealtimeHR() { ble.stopRealtime() }
+
+    /// App is leaving the foreground (iOS). Disarm any armed R10/R11 raw stream so the strap banks
+    /// overnight instead of going dark — see `BLEManager.pauseRealtimeForBackground()`.
+    func pauseRealtimeForBackground() { ble.pauseRealtimeForBackground() }
+    /// App returned to the foreground (iOS). Re-arm realtime only if we paused it on backgrounding.
+    func resumeRealtimeAfterForeground() { ble.resumeRealtimeIfPaused() }
     /// Ask the strap for a fresh battery reading.
     func getBattery() { ble.refreshBattery() }
 

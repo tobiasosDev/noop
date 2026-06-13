@@ -81,11 +81,17 @@ struct StrandiOSApp: App {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 model.drainPendingIntents()
+                model.resumeRealtimeAfterForeground()
                 Task {
                     await health.sync()
                     WidgetSnapshot.publish(from: model)
                 }
             } else if phase == .background {
+                // Overnight-data-loss fix: if the user fell asleep on the Live tab, the R10/R11 raw
+                // stream is armed; left armed across the suspend-then-drop it blocks the strap from
+                // banking the night (PR #13). Disarm it here so the strap banks to flash and the next
+                // connect+offload recovers the night. The link + wake keep-alive are unaffected.
+                model.pauseRealtimeForBackground()
                 // #155: refresh the Documents/noop_sync.txt drop file the user's Siri Shortcut logs
                 // into Apple Health. Gated inside writeIfEnabled on the opt-in default (OFF) — a
                 // no-op until the user turns on Shortcuts Export.

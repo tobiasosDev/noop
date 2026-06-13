@@ -894,6 +894,34 @@ public final class BLEManager: NSObject, ObservableObject {
         send(.sendR10R11Realtime, payload: [0x00])
     }
 
+    /// True while the Live-tab realtime stream is paused *because the app left the foreground*.
+    /// Distinct from the user leaving the Live tab (that path just calls `stopRealtime`).
+    private var realtimePausedForBackground = false
+
+    /// App lifecycle (iOS scenePhase `.background`): if the Live-tab realtime stream is armed when the
+    /// app is backgrounded, DISARM the R10/R11 raw burst now. Leaving R10/R11 armed across the
+    /// suspend-then-drop is exactly what stops the strap banking type-47 history overnight (PR #13) —
+    /// the confirmed cause of the "app closed all night = no HR = no sleep" data loss. We keep the BLE
+    /// link (periodic offload + wake keep-alive still work); only the heavy raw stream stops, so the
+    /// strap reverts to banking the night to flash, recoverable by the next connect+offload. Remembered
+    /// so `resumeRealtimeIfPaused()` can re-arm it when the user returns.
+    public func pauseRealtimeForBackground() {
+        guard wantsRealtime else { return }
+        realtimePausedForBackground = true
+        log("App backgrounded with live HR on — disarming R10/R11 so the strap banks overnight (PR #13)")
+        stopRealtime()
+    }
+
+    /// App lifecycle (iOS scenePhase `.active`): re-arm the realtime stream ONLY if we paused it on
+    /// backgrounding (so we never arm it when the user wasn't on the Live tab). `startRealtime` also
+    /// sets `wantsRealtime`, so if the link dropped while suspended the connect handshake re-arms it.
+    public func resumeRealtimeIfPaused() {
+        guard realtimePausedForBackground else { return }
+        realtimePausedForBackground = false
+        log("App foregrounded — re-arming live HR")
+        startRealtime()
+    }
+
     /// EXPERIMENTAL R22 telemetry (#174): give the user (and us) live proof of what the strap is doing.
     /// (1) Every `COMMAND_RESPONSE` (type 0x24) to a `SET_CONFIG` (0x78) is the strap ACKing one
     ///     `enable_r22_*` flag — hardware-confirmed in sebastianwoo's capture. 15 ACKs = full acceptance.
@@ -1477,7 +1505,14 @@ extension BLEManager: CBCentralManagerDelegate {
         puffinRecorder.flush()   // persist any buffered puffin capture frames before reconnect
         Task { @MainActor in await collector?.flushStandardHR() }   // persist any buffered 0x2A37 HR
         if !intentionalDisconnect {
-            log("Disconnected\(error.map { " — \($0.localizedDescription)" } ?? ""); rescanning in 3s")
+            // Register an IMMEDIATE pending connect to the same peripheral. Unlike the 3s retry below
+            // (a DispatchQueue timer that only fires while the app is awake), a pending
+            // central.connect(peripheral) survives app suspension: iOS relaunches us via
+            // willRestoreState when the strap re-advertises, so an overnight drop can reconnect and
+            // resume the offload without the user reopening the app. Harmless if still foreground
+            // (CoreBluetooth dedupes the pending connect with the 3s retry's connect()).
+            central.connect(peripheral, options: nil)
+            log("Disconnected\(error.map { " — \($0.localizedDescription)" } ?? ""); pending reconnect armed, rescanning in 3s")
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let self, !self.intentionalDisconnect else { return }
                 self.connect()
