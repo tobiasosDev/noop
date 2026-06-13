@@ -1,0 +1,24 @@
+Strand/App/AppModel.swift
+  s_c4c0aeebd06cf5::t_1315b7e0c8b7db 337-342
+StrandiOS/App/StrandiOSApp.swift
+  s_c4c0aeebd06cf5::t_8bab12ab8955a8 84,90-94
+Strand/BLE/BLEManager.swift
+  s_c4c0aeebd06cf5::t_6b38709c6a2763 897-924
+  s_c4c0aeebd06cf5::t_752d756494b72c 1508-1515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "81f3034d37c58066cb71cda399bfd6a3fb521270",
+  "prompts": {},
+  "sessions": {
+    "s_c4c0aeebd06cf5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b02fdd13-80ab-42a0-bb33-2fcedecc04a1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
