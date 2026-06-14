@@ -1,0 +1,20 @@
+Packages/StrandImport/Sources/StrandImport/LiftingImporter.swift
+  s_40b83793ad3010::t_b1ef80e70499e9 263-265
+  s_40b83793ad3010::t_3d38cd51b85479 414-419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "181f14c339ff2f0fd71e03db2fd4b2b4cb1dfac5",
+  "prompts": {},
+  "sessions": {
+    "s_40b83793ad3010": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bac4da91-6a87-47f4-a46f-5b5ec3a54f91",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
