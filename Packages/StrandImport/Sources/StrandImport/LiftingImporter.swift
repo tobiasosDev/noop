@@ -260,8 +260,9 @@ public enum LiftingImporter {
             let entryUnit = (entry["unit"] as? String)?.lowercased()
             let setList = (entry["sets"] as? [Any]) ?? []
             for case let set as [String: Any] in setList {
-                // A logged set has completed reps; templates without `completedReps` are skipped.
-                guard let r = liftosaurInt(set["completedReps"] ?? set["reps"]), r > 0 else { continue }
+                // A logged set has completed reps; templates carrying only planned `reps` (no
+                // `completedReps`) are skipped — falling back to `reps` would count un-performed sets.
+                guard let r = liftosaurInt(set["completedReps"]), r > 0 else { continue }
                 sets += 1
                 reps += r
                 if let w = liftosaurWeightKg(set, entryUnit: entryUnit), w > 0 {
@@ -410,6 +411,12 @@ extension LiftingImporter {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.locale = Locale(identifier: "en_US_POSIX")
+        // en_US_POSIX carries no grouping separator, so force the English thousands comma
+        // explicitly — the note is a fixed-English string and must group deterministically
+        // (e.g. 12400 -> "12,400") regardless of host locale.
+        f.usesGroupingSeparator = true
+        f.groupingSeparator = ","
+        f.groupingSize = 3
         f.maximumFractionDigits = 0
         return f
     }()
