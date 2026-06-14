@@ -1,0 +1,30 @@
+StrandiOSShared/WidgetSnapshot.swift
+  s_40b83793ad3010::t_4435888d7bccc6 25
+ExportOptions.plist
+  s_40b83793ad3010::t_37e5027213df40 1-18
+StrandiOSWidgets/NOOPWidgets.entitlements
+  s_40b83793ad3010::t_4045c16c38e8d4 7
+project.yml
+  s_40b83793ad3010::t_1fdfb026d96f32 21
+  s_40b83793ad3010::t_fd7cb41ebba5e5 198
+  s_40b83793ad3010::t_5206e29dbdf2f6 194
+  s_40b83793ad3010::t_cbd53caf9c6a32 235,238
+StrandiOS/Resources/NOOP.entitlements
+  s_40b83793ad3010::t_4045c16c38e8d4 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e3154274d396b80b094e1f974ca837548717ac4c",
+  "prompts": {},
+  "sessions": {
+    "s_40b83793ad3010": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bac4da91-6a87-47f4-a46f-5b5ec3a54f91",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
