@@ -22,7 +22,7 @@ public struct WidgetSnapshot: Codable, Equatable {
     /// entitlement on both targets. If the entitlement is missing on either side, `UserDefaults(suiteName:)`
     /// returns nil and every consumer (PendingIntents, WidgetSnapshot.publish, Live Activity) silently
     /// no-ops — see `assertGroupProvisioned` for the debug-time canary.
-    public static let suiteName = "group.com.noopapp.noop"
+    public static let suiteName = "group.com.tecminds.noop"
     public static let storageKey = "noop.widget.snapshot"
 
     /// Debug-only canary: trips on the first run after a misprovisioning so the silent no-op gets

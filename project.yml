@@ -18,7 +18,7 @@ settings:
     # String Catalog on build (the English (US) base entries).
     SWIFT_EMIT_LOC_STRINGS: YES
     SWIFT_STRICT_CONCURRENCY: minimal
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "48XAPJ6DGL"
     CODE_SIGN_STYLE: Automatic
     # Build for both Apple Silicon and Intel so the release runs on every Mac.
     ARCHS: "$(ARCHS_STANDARD)"
@@ -191,11 +191,11 @@ targets:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
         com.apple.security.application-groups:
-          - group.com.noopapp.noop
+          - group.com.tecminds.noop
     settings:
       base:
         CURRENT_PROJECT_VERSION: "72"
-        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop
+        PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop
         PRODUCT_NAME: NOOP
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
@@ -232,10 +232,10 @@ targets:
       path: StrandiOSWidgets/NOOPWidgets.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.noopapp.noop
+          - group.com.tecminds.noop
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop.widgets
         PRODUCT_NAME: NOOPWidgets
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
