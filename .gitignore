@@ -72,3 +72,7 @@ export.zip
 # Python bytecode
 __pycache__/
 *.pyc
+
+# local xcodebuild output dirs (not for VCS)
+build-*/
+.superpowers/
