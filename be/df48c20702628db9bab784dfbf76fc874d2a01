@@ -1,0 +1,45 @@
+Strand/Screens/AutomationsView.swift
+  s_40b83793ad3010::t_156a41942c70d9 139-142,145,154
+Strand/Data/BehaviorStore.swift
+  s_40b83793ad3010::t_9351b1a0b560fe 66
+  s_40b83793ad3010::t_28c0437f65fccd 30-33
+  s_40b83793ad3010::t_852f2b3f3d27b4 49
+StrandiOS/Resources/NOOP.entitlements
+  s_40b83793ad3010::t_a52d1212bfae94 9-10
+project.yml
+  s_40b83793ad3010::t_e9399a73c96fac 250
+  s_40b83793ad3010::t_caecbf3bb68880 204
+  s_40b83793ad3010::t_bcbe3303fc98ae 162-165
+  s_40b83793ad3010::t_de07a6eecfac9c 197-199
+Strand/BLE/WakeAlarmScheduler.swift
+  s_40b83793ad3010::t_fd55edeaadddce 1-44
+StrandTests/WakeAlarmSchedulerTests.swift
+  s_40b83793ad3010::t_fd55edeaadddce 1-56
+Strand/System/WakeAlarmNotifier.swift
+  s_40b83793ad3010::t_fd55edeaadddce 1-52
+Strand/App/AppModel.swift
+  s_40b83793ad3010::t_bdfaa629dadb89 351-355,357-364,370-377
+Strand/BLE/BLEManager.swift
+  s_40b83793ad3010::t_c34a23762f6b66 1139
+  s_40b83793ad3010::t_366cef0ed557c7 1942
+  s_40b83793ad3010::t_5663a032fa5376 1354-1435
+  s_40b83793ad3010::t_23599a5e000cd8 172-186
+StrandiOS/Resources/Info.plist
+  s_40b83793ad3010::t_6faafc6e343aee 23-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "bedf48c20702628db9bab784dfbf76fc874d2a01",
+  "prompts": {},
+  "sessions": {
+    "s_40b83793ad3010": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bac4da91-6a87-47f4-a46f-5b5ec3a54f91",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
