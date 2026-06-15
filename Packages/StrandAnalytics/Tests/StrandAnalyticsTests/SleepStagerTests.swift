@@ -103,6 +103,195 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertTrue(sessions.isEmpty)
     }
 
+    // MARK: - Daytime false-positive guard (personal-floor evidence gate)
+
+    /// A UTC midnight, so `start + hour*3600` lands the run at a known local hour (tz=0).
+    private let dayBase: Int = (1_700_000_000 / 86_400) * 86_400
+
+    private func gyroStream(start: Int, durationS: Int, speedDegS: Double) -> [GyroSample] {
+        (0..<durationS).map { GyroSample(ts: start + $0, speedDegS: speedDegS) }
+    }
+
+    func testDaytimeStillAwakeIsRejected() {
+        // 14:45 local, perfectly still, but HR sits at quiet-wake (64) — never drops to
+        // the personal asleep floor (52). The reported false positive.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testSameStillHourAtNightIsAccepted() {
+        // Identical stillness + HR=64, but at 01:45 local → night gate (legacy) accepts.
+        // Demonstrates the guard is surgical to daytime and never tightens nights.
+        let start = dayBase + 1 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeRealNapIsAccepted() {
+        // 14:45 local nap where HR genuinely drops to the asleep floor (52) → accepted.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeGyroFidgetIsRejected() {
+        // HR drops to the floor (would pass) but gyro shows sustained rotational fidget
+        // (10 deg/s) → not lying motionless → rejected.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let gyro = gyroStream(start: start, durationS: dur, speedDegS: 10)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, gyro: gyro, options: opts).isEmpty)
+    }
+
+    func testDaytimeGyroStillNapAccepted() {
+        // Same low-HR nap but gyro confirms rotational stillness (0 deg/s) → accepted.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let gyro = gyroStream(start: start, durationS: dur, speedDegS: 0)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, gyro: gyro, options: opts).count, 1)
+    }
+
+    func testDefaultOptionsStillApplyDaytimeGuard() {
+        // No tz / no floor → the personal-floor evidence gate is OFF, but the baseline
+        // daytime false-sleep guard (#90) still governs (its clock defaults to UTC).
+        // A flat-HR still 90-min daytime window with no genuine dip below the day median
+        // must NOT be logged as sleep.
+        // NOTE: this supersedes the pre-merge local expectation that default options
+        // preserved the pre-guard behaviour (acceptance) — keeping that default would
+        // re-open the exact false positive both guards exist to close. Legacy behaviour
+        // for NIGHT windows is pinned by testSameStillHourAtNightIsAccepted and
+        // testOvernightShortWindowUnchanged.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 50)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav).isEmpty)
+    }
+
+    /// HR alternating between two values each second → high 10-min SD.
+    private func hrAlternating(start: Int, durationS: Int, _ a: Int, _ b: Int) -> [HRSample] {
+        (0..<durationS).map { HRSample(ts: start + $0, bpm: $0 % 2 == 0 ? a : b) }
+    }
+
+    func testDaytimeLowHRButHighVariabilityRejected() {
+        // 14:45 local, still, mean HR ~54 (at the floor band) BUT HR swings 47↔61 → 10-min
+        // SD ≈ 7 bpm > 6. Quiet wake keeps HR variable even when motionless; real sleep does
+        // not. The Topalidis low-variability gate rejects this without needing gyro.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrAlternating(start: start, durationS: dur, 47, 61)  // mean 54, SD 7
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testDaytimeMainSleepUsesLegacyGate() {
+        // A 5 h daytime still run = night-shift MAIN sleep (≥ dayMaxNapDurationS). It must NOT
+        // be strict-gated: even at HR 64 (above the nap floor band) the legacy gate accepts it,
+        // so shifted-schedule sleepers are not regressed.
+        let start = dayBase + 13 * 3_600
+        let dur = 5 * 3_600
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1)
+    }
+
+    func testDaytimeNapRejectedWhenNoTrustworthyFloor() {
+        // New user (no baseline) + a window with NO night samples → the floor cannot be
+        // trusted (would be minted from awake HR), so a daytime still hour is NOT logged as
+        // sleep even at low HR. Conservative until a real asleep floor exists.
+        let start = dayBase + 14 * 3_600
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: nil, tzOffsetS: 0)  // no baseline
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty)
+    }
+
+    func testDaytimeNapAcceptedViaNightDerivedFloor() {
+        // Window spans a real night (02:00, HR 50 → night-derived floor 50) AND a daytime nap
+        // (14:00, HR 52). With no explicit baseline, the daytime nap is vetted against the
+        // night-derived floor and accepted → both sessions detected.
+        let night = dayBase + 2 * 3_600
+        let nightDur = 6 * 3_600
+        let nap = dayBase + 14 * 3_600
+        let napDur = 90 * 60
+        let grav = stillGravity(start: night, durationS: nightDur) + stillGravity(start: nap, durationS: napDur)
+        let hr = hrStream(start: night, durationS: nightDur, bpm: 50) + hrStream(start: nap, durationS: napDur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: nil, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 2)
+    }
+
+    // MARK: - Lenient night-window edges (morning/evening desk false positives)
+
+    /// A still MORNING desk stretch (08:30–11:15 local, quiet-wake HR 65, never dipping
+    /// to the asleep floor) must NOT be logged as sleep. Field case 2026-06-11: a real
+    /// 08:24–11:11 desk session passed because its midpoint (09:48) fell inside the old
+    /// lenient night window [20, 11) and was never strict-gated.
+    func testMorningDeskStillAwakeIsRejected() {
+        let start = dayBase + 8 * 3_600 + 30 * 60   // 08:30 local, midpoint ≈ 09:52
+        let dur = 165 * 60                          // 2¾ h < dayMaxNapDurationS
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 65)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty,
+                      "a quiet-wake morning desk stretch must be strict-gated and rejected")
+    }
+
+    /// A still EVENING couch stretch (18:50–21:40 local, HR 66) must NOT be logged: its
+    /// midpoint (20:15) sat just inside the old lenient window start (20). Field case
+    /// 2026-06-10 18:48–21:38.
+    func testEveningCouchStillAwakeIsRejected() {
+        let start = dayBase + 18 * 3_600 + 50 * 60  // 18:50 local, midpoint ≈ 20:15
+        let dur = 170 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 66)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertTrue(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).isEmpty,
+                      "a quiet-wake evening couch stretch must be strict-gated and rejected")
+    }
+
+    /// A REAL morning re-sleep (06:30, 90 min, HR at the asleep floor) still registers:
+    /// it is strict-gated under the narrowed window but passes on genuine HR evidence.
+    func testMorningRealReSleepIsAccepted() {
+        let start = dayBase + 6 * 3_600 + 30 * 60   // 06:30 local, midpoint ≈ 07:15
+        let dur = 90 * 60
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 52)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1,
+                       "a real morning re-sleep with a genuine HR dip must still register")
+    }
+
+    /// Core-night leniency is preserved: a 22:30–02:00 still run at HR 64 (above the nap
+    /// floor band) keeps the legacy gate — the narrowed window must not tighten real nights.
+    func testCoreNightLenientGateUnchanged() {
+        let start = dayBase + 22 * 3_600 + 30 * 60  // 22:30 local, midpoint ≈ 00:15
+        let dur = 210 * 60                          // 3½ h < dayMaxNapDurationS
+        let grav = stillGravity(start: start, durationS: dur)
+        let hr = hrStream(start: start, durationS: dur, bpm: 64)
+        let opts = SleepDetectionOptions(sleepFloorHR: 52, tzOffsetS: 0)
+        XCTAssertEqual(SleepStager.detectSleep(hr: hr, gravity: grav, options: opts).count, 1,
+                       "a core-night run must keep the lenient legacy gate")
+    }
+
     // MARK: - Daytime false-sleep guard (#90)
 
     /// A 70-min still, LOW-HR daytime window is rejected: even though its HR dips, it is
@@ -287,6 +476,110 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertTrue(rrv.isNaN)
     }
 
+    // MARK: - Stage 2/3 deep & REM (regression guards for the 0%-deep bug)
+
+    /// Build one EpochFeatures with sensible defaults; override only what a test needs.
+    private func feat(clock: Double, hr: Double = 55, hrVar: Double = 1,
+                      rmssd: Double = 40, rrv: Double = .nan, moveFrac: Double = 0,
+                      index: Int = 0) -> SleepStager.EpochFeatures {
+        SleepStager.EpochFeatures(index: index, midTs: 0, count: 0, moveFrac: moveFrac,
+                                  ckSleep: true, hr: hr, hrVar: hrVar, rmssd: rmssd,
+                                  sdnn: 40, respRate: .nan, rrv: rrv, clock: clock)
+    }
+
+    /// THE regression guard: deep must survive past the first wall-clock third.
+    /// The old `deep && clock > 1/3 → light` rule zeroed this user's back-half SWS.
+    func testDeepSurvivesLateInNight() {
+        // 200 epochs (×30 s = 100 min). Deep block at epochs 70–110 (clock ~0.35–0.55),
+        // i.e. past both the first wall-clock third AND the absolute first-N3 latency.
+        let n = 200
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        var labels = [String](repeating: "light", count: n)
+        for i in 70...110 { labels[i] = "deep" }
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[90], "deep", "back-half deep wiped — the 0%-deep regression")
+        XCTAssertEqual(out[110], "deep")  // clock ~0.55, well past the old 1/3 cut
+        XCTAssertTrue(out.contains("deep"))
+    }
+
+    /// Finding 2 guard: the first-N3 latency is ABSOLUTE minutes, so onset-adjacent epochs are
+    /// not called deep even on a short nap (where a span-relative guard would shrink to ~1 min).
+    func testDeepOnsetLatencyIsAbsolute() {
+        let n = 150  // 75-min session
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        var labels = [String](repeating: "light", count: n)
+        labels[6] = "deep"    // 3 min post-onset — inside the 10-min latency → demote
+        labels[30] = "deep"   // 15 min post-onset — past latency → keep
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[6], "light", "deep within first-N3 latency must be demoted")
+        XCTAssertEqual(out[30], "deep", "deep past first-N3 latency must survive")
+    }
+
+    /// Finding 1 guard: a session-relative gate with no wall-clock cap can over-mint deep on a
+    /// single-arm (NaN-RRV) night. The soft ceiling demotes the LATEST deep first (front-loaded),
+    /// bounding total N3 while preserving the early consolidated block.
+    func testDeepPlausibilityCeiling() {
+        let n = 200
+        let features = (0..<n).map { feat(clock: Double($0) / Double(n - 1), index: $0) }
+        // Gate over-called: 120/200 asleep epochs deep (60%), all past the latency window.
+        var labels = [String](repeating: "light", count: n)
+        for i in 30..<150 { labels[i] = "deep" }
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        let deepCount = out.filter { $0 == "deep" }.count
+        let maxDeep = Int(Double(n) * SleepStager.deepPlausibleMaxFraction)  // asleep == n here
+        XCTAssertLessThanOrEqual(deepCount, maxDeep, "deep ceiling not enforced")
+        XCTAssertGreaterThan(deepCount, 0, "ceiling must not zero deep")
+        // Front-loading preserved: the EARLIEST deep (epoch 30) survives, a LATE one is demoted.
+        XCTAssertEqual(out[30], "deep", "earliest deep should be kept")
+        XCTAssertEqual(out[149], "light", "latest deep should be demoted first")
+    }
+
+    /// Deep fires via EITHER parasympathetic arm (high RMSSD OR measured-regular respiration),
+    /// requires low HR, and never collides with REM (REM sits in the wake-like HR band).
+    func testDeepDisjunctionAndExclusivity() {
+        // thresholds: hrLo 55, hrHi 65, rmssdHi 60, hrvarHi 5, rrvHi 6, rrvLo 3, hrMid 58
+        func classify(_ f: SleepStager.EpochFeatures) -> String {
+            SleepStager.classifyOne(f, hrLo: 55, hrHi: 65, rmssdHi: 60, hrvarHi: 5,
+                                    rrvHi: 6, rrvLo: 3, hrMid: 58)
+        }
+        // (a) RMSSD arm: low HR + high RMSSD + unknown (NaN) respiration → deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 80, rrv: .nan)), "deep")
+        // (b) regular-respiration arm: low HR + low RMSSD + measured-regular RRV → deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 30, rrv: 2.0)), "deep")
+        // (c) high HR + irregular respiration → REM, never deep
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 70, hrVar: 10, rmssd: 30, rrv: 9.0)), "rem")
+        // NaN RRV must NOT vacuously satisfy deep when RMSSD is low (would over-call N3).
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, rmssd: 30, rrv: .nan)), "light")
+    }
+
+    /// REM is suppressed for the first 60 min after onset (physiologic first-REM latency).
+    func testREMLatencyGuard() {
+        let n = 200
+        let features = (0..<n).map { feat(clock: 0.5, index: $0) }  // clock 0.5 → no deep-cut interference
+        let labels = [String](repeating: "rem", count: n)
+        let out = SleepStager.reimposePhysiology(labels, features: features,
+                                                 onsetIdx: 0, finalWakeIdx: n - 1)
+        XCTAssertEqual(out[60], "light")  // 30 min post-onset (60 epochs × 30 s) → demoted
+        XCTAssertEqual(out[130], "rem")   // 65 min post-onset → kept
+    }
+
+    /// On NaN-RRV nights the REM fallback fires on the DoG-HR surge, but only in the
+    /// wake-like HR band (≥ median) — below median it must stay light (mutual exclusivity).
+    func testREMFallbackFiresBelowWakeHRBand() {
+        // hrLo 45, hrHi 65, rmssdHi 60, hrvarHi 5, rrvHi 6, rrvLo 3, hrMid 55
+        func classify(_ f: SleepStager.EpochFeatures) -> String {
+            SleepStager.classifyOne(f, hrLo: 45, hrHi: 65, rmssdHi: 60, hrvarHi: 5,
+                                    rrvHi: 6, rrvLo: 3, hrMid: 55)
+        }
+        // HR 60 ∈ [median 55, wake 65), high DoG-HR variability, NaN RRV → REM
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 60, hrVar: 10, rmssd: 30, rrv: .nan)), "rem")
+        // HR 50 < median → not the REM band, and not low enough for deep (hrLo 45) → light
+        XCTAssertEqual(classify(feat(clock: 0.5, hr: 50, hrVar: 10, rmssd: 30, rrv: .nan)), "light")
+    }
+
     // #127 / #129: a depth-signature epoch (still, low HR, regular breathing) must be classed DEEP
     // even when per-epoch RMSSD is missing — sparse R-R (common on BLE-offloaded nights, esp. 5/MG)
     // used to hard-block deep, so those nights decoded 0 m of deep sleep. A MEASURABLE-but-low RMSSD
@@ -294,7 +587,7 @@ final class SleepStagerTests: XCTestCase {
     private func depthEpoch(rmssd: Double) -> SleepStager.EpochFeatures {
         SleepStager.EpochFeatures(index: 0, midTs: 0, count: 0, moveFrac: 0,   // still
                                   ckSleep: true, hr: 50, hrVar: 0, rmssd: rmssd, sdnn: 0,
-                                  respRate: 14, rrv: .nan,            // missing resp → regular (pro-deep)
+                                  respRate: 14, rrv: .nan,            // missing resp → both-arms fallback (pro-deep)
                                   clock: 0.5)
     }
 
@@ -309,224 +602,4 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertNotEqual(withLowRmssd, "deep", "a measurable-but-low RMSSD epoch must still clear the high-tone bar")
     }
 
-    // #127 (follow-up): the "deep is front-loaded" re-imposition zeroed deep entirely on nights whose
-    // whole deep block lands after the first third (clock > 1/3). It must only re-impose late "deep" to
-    // light when there's deep in the first third to anchor it; otherwise keep the best estimate.
-    private func clockEpoch(_ clock: Double) -> SleepStager.EpochFeatures {
-        SleepStager.EpochFeatures(index: 0, midTs: 0, count: 0, moveFrac: 0, ckSleep: true,
-                                  hr: 50, hrVar: 0, rmssd: 60, sdnn: 0, respRate: 14, rrv: .nan, clock: clock)
-    }
-
-    func testDeepReimpositionKeepsLateDeepWhenNoEarlyDeep() {
-        let labels = ["deep", "deep", "deep", "deep"]
-        // Early deep present (clock 0.2): the later deep (> 1/3) is re-imposed to light.
-        let withEarly = SleepStager.reimposePhysiology(labels,
-            features: [clockEpoch(0.2), clockEpoch(0.5), clockEpoch(0.7), clockEpoch(0.9)],
-            onsetIdx: 0, finalWakeIdx: 3)
-        XCTAssertEqual(withEarly, ["deep", "light", "light", "light"])
-        // No early deep (all clocks > 1/3): the late deep is KEPT rather than zeroed to 0 m. (#127)
-        let allLate = SleepStager.reimposePhysiology(labels,
-            features: [clockEpoch(0.5), clockEpoch(0.6), clockEpoch(0.7), clockEpoch(0.9)],
-            onsetIdx: 0, finalWakeIdx: 3)
-        XCTAssertEqual(allLate, ["deep", "deep", "deep", "deep"])
-    }
-
-    // MARK: - Fragment merge / hypnogram smoothing (#274)
-
-    /// Expand a [(stage, epochs)] run-list into a flat per-epoch label array.
-    private func expand(_ runs: [(String, Int)]) -> [String] {
-        var out: [String] = []
-        for (s, n) in runs { out.append(contentsOf: repeatElement(s, count: n)) }
-        return out
-    }
-    /// Collapse a flat label array back into [(stage, epochs)] runs for terse assertions.
-    private func runs(_ labels: [String]) -> [(String, Int)] {
-        var out: [(String, Int)] = []
-        for s in labels {
-            if let last = out.last, last.0 == s { out[out.count - 1].1 += 1 }
-            else { out.append((s, 1)) }
-        }
-        return out
-    }
-    private func assertRuns(_ labels: [String], _ expected: [(String, Int)],
-                            _ msg: String = "", file: StaticString = #filePath, line: UInt = #line) {
-        let got = runs(labels)
-        XCTAssertEqual(got.count, expected.count, "\(msg) run count — got \(got)", file: file, line: line)
-        for i in 0..<min(got.count, expected.count) {
-            XCTAssertEqual(got[i].0, expected[i].0, "\(msg) run \(i) stage", file: file, line: line)
-            XCTAssertEqual(got[i].1, expected[i].1, "\(msg) run \(i) len", file: file, line: line)
-        }
-    }
-
-    func testMergeFragmentsAbsorbsSameStageBridge() {
-        // A 2-epoch "deep" fleck (< 6-epoch threshold) bridged by light on both sides is
-        // absorbed: the choppy light→deep→light blip becomes one continuous light block.
-        let input = expand([("light", 8), ("deep", 2), ("light", 8)])
-        let out = SleepStager.mergeFragments(input)
-        XCTAssertEqual(out.count, input.count, "length preserved")
-        assertRuns(out, [("light", 18)], "same-stage bridge")
-    }
-
-    func testMergeFragmentsPreservesGenuineTransition() {
-        // Three real multi-minute blocks (each ≥ 6 epochs = 3 min) — a genuine cycle, not
-        // noise — pass through completely untouched.
-        let input = expand([("light", 10), ("deep", 10), ("rem", 10)])
-        let out = SleepStager.mergeFragments(input)
-        assertRuns(out, [("light", 10), ("deep", 10), ("rem", 10)], "genuine transition")
-    }
-
-    func testMergeFragmentsBiasesLighterOnTie() {
-        // A 3-epoch "deep" fleck between equal-length light and rem neighbours (8 vs 8) is a
-        // tie; the lighter stage (light, rank 1 < rem rank 2) wins so smoothing never inflates
-        // deep/REM. The deep fleck must NOT survive and must NOT become rem.
-        let input = expand([("light", 8), ("deep", 3), ("rem", 8)])
-        let out = SleepStager.mergeFragments(input)
-        assertRuns(out, [("light", 11), ("rem", 8)], "tie → lighter neighbour")
-        XCTAssertFalse(out.contains("deep"), "a stray deep fleck must not survive a tie merge")
-    }
-
-    func testMergeFragmentsFoldsIntoLongerNeighbour() {
-        // A short rem fleck (2) with a longer light neighbour (8) on one side and a short deep
-        // run (4, itself sub-threshold) on the other collapses entirely into light — the longer
-        // neighbour dominates and the trailing short deep folds back too. No deep/REM inflation.
-        let input = expand([("light", 8), ("rem", 2), ("deep", 4)])
-        let out = SleepStager.mergeFragments(input)
-        assertRuns(out, [("light", 14)], "fold into longer neighbour")
-    }
-
-    func testMergeFragmentsLeadingAndTrailingFlecks() {
-        // A leading deep fleck folds forward into light; a trailing rem fleck folds back into
-        // light. Edge runs with only one neighbour are still smoothed.
-        let input = expand([("deep", 2), ("light", 10), ("rem", 2)])
-        let out = SleepStager.mergeFragments(input)
-        assertRuns(out, [("light", 14)], "leading + trailing flecks")
-    }
-
-    func testMergeFragmentsThresholdConstant() {
-        // The threshold is the named 3-min constant, i.e. 6 epochs at 30 s.
-        XCTAssertEqual(SleepStager.fragmentMergeEpochs, 6)
-        // A run exactly AT the threshold (6 epochs) is a real transition and is preserved.
-        let input = expand([("light", 10), ("deep", 6), ("light", 10)])
-        let out = SleepStager.mergeFragments(input)
-        assertRuns(out, [("light", 10), ("deep", 6), ("light", 10)], "at-threshold run kept")
-    }
-
-    func testMergeFragmentsDegenerateInputs() {
-        // Empty and single-run inputs pass through unchanged (nothing to merge into).
-        XCTAssertTrue(SleepStager.mergeFragments([]).isEmpty)
-        let single = expand([("light", 3)])  // sub-threshold but no neighbours
-        assertRuns(SleepStager.mergeFragments(single), [("light", 3)], "single run kept")
-    }
-
-    // MARK: - Sparse-gravity robustness (#308)
-
-    /// Still gravity sampled sparsely — one sample every `everyS` seconds (constant orientation,
-    /// so every inter-sample delta is 0 → "still"). Reproduces the WHOOP 5.0 v18/v26 backfill where
-    /// gravity is clumped/sparse, leaving multiple >maxGapMin gaps across the night.
-    private func sparseStillGravity(start: Int, durationS: Int, everyS: Int) -> [GravitySample] {
-        stride(from: 0, to: durationS, by: everyS).map { GravitySample(ts: start + $0, x: 0, y: 0, z: 1.0) }
-    }
-
-    func testSparseGravityNightNotShredded() {
-        // A ~6 h overnight window: DENSE 1 Hz sleep-band HR (50 bpm) but SPARSE gravity — one still
-        // sample every 25 min, so every inter-sample gap (1500 s) exceeds maxGapMin (1200 s). Before
-        // #308 buildRuns broke the run at every gap and detectSleep dropped every <60-min fragment,
-        // collapsing the night to ~0. Now the sparse path keeps it as ONE continuous ~6 h session.
-        let start = nightStart(01)                  // 01:00, center stays overnight
-        let dur = 6 * 60 * 60                        // 6 h
-        let grav = sparseStillGravity(start: start, durationS: dur, everyS: 25 * 60)
-        let hr = hrStream(start: start, durationS: dur, bpm: 50)
-
-        // The gate must classify this gravity as sparse (median gap 1500 s > 1200 s).
-        XCTAssertTrue(SleepStager.isGravitySparse(grav, hr: hr), "clumped gravity must read as sparse")
-
-        let sessions = SleepStager.detectSleep(hr: hr, gravity: grav)
-        XCTAssertEqual(sessions.count, 1, "a sparse-gravity night must be ONE session, not shredded")
-        let s = sessions[0]
-        // One ~6 h span (bounded by first/last gravity sample), not a sub-60-min fragment.
-        XCTAssertGreaterThan(Double(s.end - s.start), 5.0 * 60 * 60,
-                             "the bridged session must be ~6 h, not a sub-hour fragment")
-        XCTAssertEqual(s.restingHR, 50)
-    }
-
-    func testDenseGravityNightUnchangedBySparsePath() {
-        // Snapshot/regression guard for the 4.0 path: a DENSE 1 Hz still gravity night must NOT be
-        // classified sparse, and must produce the SAME single stable session it did before #308 —
-        // identical start, end and resting HR. Proves the sparse branches never touch the dense path.
-        let start = nightStart(02)
-        let dur = 6 * 60 * 60
-        let grav = stillGravity(start: start, durationS: dur)    // dense 1 Hz
-        let hr = hrStream(start: start, durationS: dur, bpm: 50)
-
-        XCTAssertFalse(SleepStager.isGravitySparse(grav, hr: hr), "dense 1 Hz gravity must NOT read as sparse")
-
-        let sessions = SleepStager.detectSleep(hr: hr, gravity: grav)
-        XCTAssertEqual(sessions.count, 1)
-        let s = sessions[0]
-        // Stable bounds: dense gravity tiles the whole window, so the session is [start, last sample].
-        XCTAssertEqual(s.start, start)
-        XCTAssertEqual(s.end, start + dur - 1)   // last 1 Hz sample is at start+dur-1
-        XCTAssertEqual(s.restingHR, 50)
-    }
-
-    func testBuildRunsDenseGravityByteIdenticalToLegacy() {
-        // Direct byte-identity proof: buildRuns with the sparse override OFF (the default) returns
-        // exactly the same runs as passing sparse:false, on a gravity stream with a real >maxGapMin
-        // gap. The legacy two-arg call and the sparse=false call must be indistinguishable.
-        let start = 5_000_000
-        // Two still blocks separated by a 30-min (>20 min) gap → legacy buildRuns splits them.
-        let blockA = stillGravity(start: start, durationS: 40 * 60)
-        let gapStart = start + 40 * 60 + 30 * 60
-        let blockB = stillGravity(start: gapStart, durationS: 40 * 60)
-        let grav = blockA + blockB
-        let deltas = SleepStager.gravityDeltas(grav)
-        let flags = SleepStager.classifyStill(grav, deltas)
-
-        let legacy = SleepStager.buildRuns(grav, flags)                      // default sparse:false
-        let explicit = SleepStager.buildRuns(grav, flags, sparse: false)
-        XCTAssertEqual(legacy.count, explicit.count)
-        for (a, b) in zip(legacy, explicit) {
-            XCTAssertEqual(a.stage, b.stage); XCTAssertEqual(a.start, b.start); XCTAssertEqual(a.end, b.end)
-        }
-        // The dense >20-min gap still splits the night (a real wake), so there are ≥2 runs.
-        XCTAssertGreaterThanOrEqual(legacy.count, 2, "a real >20-min gap must still split the dense path")
-    }
-
-    func testGravitySparseGateConditions() {
-        // The gate trips on EITHER a short gravity span vs HR span OR a large median gravity gap.
-        let start = 6_000_000
-        let hr = hrStream(start: start, durationS: 6 * 60 * 60, bpm: 50)
-
-        // (a) Span test: gravity confined to the first 30 min of a 6 h HR window (< 0.5 frac).
-        let clumped = stillGravity(start: start, durationS: 30 * 60)
-        XCTAssertTrue(SleepStager.isGravitySparse(clumped, hr: hr), "short gravity span → sparse")
-
-        // (b) Median-gap test: gravity spans the night but every gap is 25 min (> 20 min).
-        let bigGaps = sparseStillGravity(start: start, durationS: 6 * 60 * 60, everyS: 25 * 60)
-        XCTAssertTrue(SleepStager.isGravitySparse(bigGaps, hr: hr), "large median gap → sparse")
-
-        // (c) Dense gravity over the same span is NOT sparse.
-        let dense = stillGravity(start: start, durationS: 6 * 60 * 60)
-        XCTAssertFalse(SleepStager.isGravitySparse(dense, hr: hr), "dense gravity → not sparse")
-
-        // (d) Degenerate HR (<2 samples) keeps the dense path regardless of gravity.
-        XCTAssertFalse(SleepStager.isGravitySparse(bigGaps, hr: []), "no HR span → keep dense path")
-    }
-
-    func testSessionAvgHRVRejectsEctopicSpikes() {
-        // A 5-min window of steady ~900 ms beats (≈67 bpm) with a +600 ms ectopic
-        // spike every 15th beat — the shape of PPG-derived 0x2A37 RR on a WHOOP 5/MG.
-        // rMSSD is built from SUCCESSIVE differences, so the spikes would inflate the
-        // session HRV if left in. cleanRR's Malik ectopic rejection drops them, so the
-        // cleaned series is steady → HRV ≈ 0. Pre-fix (rangeFilter only) this path
-        // returned ~200 ms; this guards the #262/#235 fix against regression.
-        var rr: [RRInterval] = []
-        let start = 1000, end = start + 300
-        for i in 0..<300 {
-            rr.append(RRInterval(ts: start + i, rrMs: (i % 15 == 0) ? 1500 : 900))
-        }
-        let hrv = SleepStager.sessionAvgHRV(start: start, end: end, rr: rr)
-        XCTAssertNotNil(hrv)
-        XCTAssertLessThan(hrv!, 50, "ectopic spikes must be rejected before rMSSD")
-    }
 }
