@@ -26,6 +26,44 @@ import WhoopProtocol
 // (the Python source explicitly derives these "robustly ourselves" too, so this
 // path is a faithful port rather than an approximation). The classifier seam,
 // percentile bands, smoothing, and physiology rules are reproduced exactly.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// TODO (staging-accuracy roadmap — after the 1.72 deep/REM fix). The 0%-deep bug
+// is closed; these are the next genuine accuracy gains, in value/effort order.
+// All on-device, no GPU, no model blob unless noted. The EEG-free ceiling is
+// ~65–73% epoch agreement (Walch 2019), so tune to approach it, don't chase past.
+//
+//   1. HMM / Viterbi smoothing (Stage 3) — HIGHEST VALUE, no training data.
+//      Today: each epoch is classified in isolation (classifyOne) then majority-
+//      smoothed (smoothLabels) + hard physiology rules (reimposePhysiology).
+//      Replace/augment with a Viterbi pass over a 4×4 stage transition matrix so
+//      implausible jumps (e.g. wake→deep direct) are forbidden and noise is
+//      denoised by sequence likelihood, not a 5-epoch vote. Emission probs can be
+//      derived from the same percentile bands. Pure CPU, deterministic.
+//
+//   2. Poincaré SD1/SD2 (+ pNN50) as per-epoch features — CHEAP, on-target.
+//      SD1/SD2 is the geometric form of the "HRV regularity" that separates deep
+//      (low SD1/SD2, tight) from REM (scattered) — exactly the deep/REM seam this
+//      stager keys on. Just RR math (no scipy): SD1=√(½·SDSD²), SD2=√(2·SDNN²−½·SDSD²).
+//      Add to EpochFeatures + feed classifyOne. LF/HF would need an on-device FFT
+//      (no scipy) — defer; SD1/SD2 captures most of the same regularity signal.
+//
+//   3. Validate/tune against the user's OWN labelled nights — DO REGARDLESS.
+//      ~204 official-WHOOP nights (deviceId `my-whoop`, ≈deep 23% / REM 24%) are a
+//      noisy-but-real personal label set. Use RealNightValidationTests as the
+//      harness to tune the percentile-band constants (stageHR*Pct etc.) to THIS
+//      user's physiology instead of literature defaults — or to fit a small
+//      per-user calibration.
+//
+//   4. Gradient-boosted trees (XGBoost/LightGBM) classifier — DEFER until 1–3 done.
+//      Likely beats hand-tuned bands, BUT needs a labelled-PSG training pipeline
+//      (Walch ~31 nights), ships a model artifact, and loses the current
+//      interpretability — for marginal gain under the EEG-free ceiling. Low
+//      priority; revisit only if 1–3 plateau below the WHOOP baseline.
+//
+// Keep the Android twin (android/.../analytics/SleepStager.kt) in lockstep on any
+// of these, same as the 1.72 fix.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // MARK: - Public output shapes
 
@@ -55,6 +93,35 @@ public struct SleepSession: Equatable, Sendable {
                 restingHR: Int?, avgHRV: Double?) {
         self.start = start; self.end = end; self.efficiency = efficiency
         self.stages = stages; self.restingHR = restingHR; self.avgHRV = avgHRV
+    }
+}
+
+/// A per-sample gyroscope (rotational) motion magnitude. Sourced from the strap's
+/// type-43 live IMU stream (gyroX/Y/Z, deg/s); `speedDegS` is the L2 angular speed.
+///
+/// Gyro catches rotational fidget that the 1 Hz gravity-orientation vector is blind
+/// to (small head/hand/phone movements that barely change tilt), so it separates
+/// "lying motionless asleep" from "sitting still but awake". Live-only: it is NOT in
+/// the type-47 historical offload, so it corroborates the live daytime case only.
+public struct GyroSample: Equatable, Sendable {
+    public let ts: Int            // wall-clock unix seconds
+    public let speedDegS: Double  // angular-speed magnitude (deg/s)
+    public init(ts: Int, speedDegS: Double) { self.ts = ts; self.speedDegS = speedDegS }
+}
+
+/// Tuning inputs that personalise sleep detection and enable the daytime guard.
+public struct SleepDetectionOptions: Sendable {
+    /// Personal asleep HR floor (bpm) — e.g. the trailing-night resting-HR baseline.
+    /// Used by the daytime gate as the level a real sleep period must drop toward.
+    /// nil → derived from the lowest 5-min rolling HR across the input window.
+    public var sleepFloorHR: Double?
+    /// Seconds to add to UTC for the user's local wall clock, used for circadian
+    /// gating. nil → circadian gating disabled (every run uses the legacy night gate,
+    /// preserving prior behaviour; production callers always supply this).
+    public var tzOffsetS: Int?
+    public init(sleepFloorHR: Double? = nil, tzOffsetS: Int? = nil) {
+        self.sleepFloorHR = sleepFloorHR
+        self.tzOffsetS = tzOffsetS
     }
 }
 
@@ -116,28 +183,58 @@ public enum SleepStager {
     /// Consecutive sleep epochs required to declare onset.
     public static let onsetPersistEpochs: Int = 3
 
-    // MARK: - Sparse-gravity robustness (#308)
+    // MARK: - Daytime false-positive guard (issue: still+relaxed daytime hour logged as sleep)
+    //
+    // The legacy spine confirms a still run as sleep when its mean HR ≤ day-median × 1.05.
+    // The day median is contaminated by sedentary hours and 1.05 is loose, so a quiet awake
+    // hour passes. Actigraphy's documented failure mode: high sleep-sensitivity, low wake-
+    // SPECIFICITY (Marino 2013: wake specificity 0.329; van Hees 2015 raw-stillness rule:
+    // 45% specificity, +31 min sleep overestimate), and it is WORSE in the daytime (Gao 2022:
+    // daytime wake specificity 0.35–0.54 vs night 0.37–0.62). The fix follows the evidence:
+    // keep NIGHT runs on the legacy gate, and for DAYTIME runs require POSITIVE evidence of
+    // sleep (Marino's recommendation), not mere stillness:
+    //   • HR drops to the personal asleep floor — the sleep/wake HR gap is ≈20 bpm / ~24%
+    //     (Liu 2020: wake 87 → sleep 66; this user: ~71 → ~52).
+    //   • HR is LOW-VARIABILITY there — a 10-min rolling SD of HR ≤ 6 bpm marks sleep vs
+    //     quiet wake (Topalidis 2022). This is the discriminator that needs no motion data,
+    //     so it works on the historical offload where gyro is absent.
+    //   • A nap-length DURATION CAP so a night-shift worker's daytime MAIN sleep is not
+    //     strict-gated (it routes to the legacy gate instead).
+    //   • The asleep floor is taken from the personal baseline or NIGHT-window samples only —
+    //     never self-derived from the daytime window being judged (which would mint a
+    //     permissive floor from the awake HR and disarm the guard).
+    // Gyro stays an OPTIONAL corroborator (live-only; weakly evidenced — keep but don't rely).
 
-    // On an un-unlocked WHOOP 5.0 the strap backfills mostly v18/v26 records where gravity is
-    // sparse/clumped (~25% coverage), so the gravity-only Stage-0 spine fragments the night at
-    // every >maxGapMin gravity gap and detectSleep drops every <minSleepMin fragment — collapsing
-    // a ~6 h night to ~1 h. The fix derives the in-bed spine from a sustained low-HR stretch and
-    // uses gravity stillness only to REFINE it, but is GATED ENTIRELY behind a "gravity is sparse"
-    // condition so dense WHOOP-4.0 nights stay BYTE-IDENTICAL (a 4.0 regression is unacceptable).
-
-    /// Gravity is "sparse" when its timespan covers less than this fraction of the HR-sample
-    /// timespan. A dense 4.0 night has gravity spanning the whole HR window (≈1.0) and never
-    /// trips this; a 5.0 backfill clumps gravity into a fraction of the night.
-    public static let sparseGravitySpanFrac: Double = 0.5
-    /// When sparse, HR drives the in-bed spine: an HR sample is "sleep-band" when its bpm ≤
-    /// baseline × this. Reuses the overnight HR-confirmation multiplier so the band is the same
-    /// one detectSleep already trusts to confirm a run.
-    public static let hrSleepBandMult: Double = hrSleepBaselineMult
-    /// When sparse, two adjacent sleep runs separated ONLY by a gravity gap up to this many
-    /// minutes are merged if the intervening HR stays in the sleep band — so a real night is not
-    /// shredded into sub-minSleepMin fragments by gravity dropouts. Sized at the daytime-nap
-    /// floor (a real continuous night never has a true >90 min wake bridge mid-sleep).
-    public static let sparseBridgeGapMin: Int = 90
+    /// Local clock hours [start, end) treated as the personal night window. A run whose
+    /// midpoint falls inside uses the lenient legacy gate; outside uses the strict gate.
+    /// Narrowed from [20, 11) to [21, 6): the wide band let still quiet-wake stretches at
+    /// the edges (a morning desk session 08:24–11:11, an evening couch 18:48–21:38) reach
+    /// the lenient gate via their midpoints. The core night keeps leniency; edge runs are
+    /// safe to strict-gate because real main sleep ≥ dayMaxNapDurationS routes to the
+    /// legacy gate regardless of hour, and real short morning/evening sleep passes the
+    /// strict gate on genuine HR evidence (floor dip + low variability).
+    public static let nightWindowStartHour: Int = 21
+    public static let nightWindowEndHour: Int = 6
+    /// Daytime runs at/above this duration are treated as MAIN sleep (e.g. a night-shift
+    /// sleeper) → legacy gate, not the strict nap gate. Below it → strict nap gate.
+    public static let dayMaxNapDurationS: Int = 4 * 3_600
+    /// A daytime run's lowest 5-min-mean HR must reach within this margin (bpm) of the
+    /// personal asleep floor. Asleep floor ≈ 52, quiet-wake ≈ 64+ → a 5-bpm band sits well
+    /// below quiet wake while still admitting real naps (which reach the floor).
+    public static let dayFloorMarginBpm: Double = 5.0
+    /// 10-min rolling SD-of-HR (bpm) ceiling marking low cardiac variability of true sleep
+    /// vs quiet wake (Topalidis 2022). A 5-min window only counts as "asleep-like" when its
+    /// mean is at the floor AND its surrounding HR variability is ≤ this.
+    public static let hrSDMaxBpm: Double = 6.0
+    public static let hrSDWindowS: Int = 10 * 60
+    /// Fraction of a daytime run's 5-min windows that must be asleep-like (low HR + low HR
+    /// variability) for it to count as sleep.
+    public static let dayAsleepFraction: Double = 0.40
+    /// Gyro angular speed (deg/s) at/below which a sample is rotationally still.
+    /// EMPIRICAL — not literature-validated; tune on labelled data. Optional corroborator.
+    public static let gyroStillThresholdDegS: Double = 3.0
+    /// When gyro is present, a daytime run must be gyro-still for ≥ this fraction. EMPIRICAL.
+    public static let gyroStillFraction: Double = 0.90
 
     // MARK: - Stage 1–3 constants (sleep_features.py)
 
@@ -149,29 +246,30 @@ public enum SleepStager {
     public static let hrDogSigma1S: Double = 120.0
     public static let hrDogSigma2S: Double = 600.0
 
-    public static let stageHRLowPct: Double = 25.0
-    public static let stageHRHighPct: Double = 70.0
-    public static let stageHRVHighPct: Double = 70.0
-    public static let stageHRVarHighPct: Double = 65.0
-    public static let stageRRVHighPct: Double = 65.0
-    public static let stageRRVLowPct: Double = 50.0
+    public static let stageHRLowPct: Double = 40.0    // deep low-HR band (was 25): narrow-HR nights under-admit true bradycardic N3 at p25
+    public static let stageHRHighPct: Double = 60.0   // REM activated-HR band (was 70): REM HR elevation is milder than wake
+    public static let stageHRVHighPct: Double = 50.0  // deep parasympathetic (RMSSD) band (was 70): N3 needs above-median vagal tone, not extreme top-tail
+    public static let stageHRVarHighPct: Double = 55.0 // REM DoG-HR-variability band (was 65)
+    public static let stageRRVHighPct: Double = 55.0   // REM irregular-respiration band (was 65)
+    public static let stageRRVLowPct: Double = 50.0    // deep regular-respiration band
     public static let stageWakeMoveFrac: Double = 0.15
     public static let stageStillMoveFrac: Double = 0.10
 
     public static let smoothEpochs: Int = 5
-    public static let noREMAfterOnsetMin: Double = 15.0
+    public static let noREMAfterOnsetMin: Double = 60.0
+    // Retained for API/ABI compatibility but NO LONGER GATES DEEP (see reimposePhysiology):
+    // it encoded a wall-clock time-in-bed cutoff that wrongly proxied NREM-cycle position.
     public static let deepFirstFraction: Double = 1.0 / 3.0
-
-    /// Fragment-merge threshold (#274). A staged run shorter than this is "noise": the
-    /// WHOOP 5/MG banks sparse motion, so the stager emits lots of sub-minute stage flecks
-    /// and the hypnogram reads choppier than WHOOP's. mergeFragments (a DISPLAY/scoring
-    /// smoothing applied AFTER staging, never to the underlying detection) absorbs runs
-    /// below this into their neighbours. 3 min is conservative — long enough to clear the
-    /// fleck noise, short enough to leave a genuine stage transition (a real deep or REM
-    /// block runs many minutes) untouched.
-    public static let fragmentMergeMin: Double = 3.0
-    /// fragmentMergeMin expressed in 30 s epochs (6). A run with < this many epochs merges.
-    public static let fragmentMergeEpochs: Int = Int((fragmentMergeMin * 60.0 / epochS).rounded())
+    // Physiologic first-N3 latency: deep does not appear in the first minutes after onset
+    // (that descent is N1/N2). Absolute minutes — does NOT scale with session length, so it
+    // protects short naps as well as full nights (replaces the old span-relative pre-sleep cap).
+    public static let deepOnsetLatencyMin: Double = 10.0
+    // Plausibility ceiling on total N3 as a fraction of asleep epochs. Healthy-adult N3 tops out
+    // ~25-35% of TST; with no wall-clock cap, a session-relative gate on a single-arm (NaN-RRV)
+    // night can over-mint deep. This is a SOFT cap: excess deep is demoted LATEST-first (SWS is
+    // front-loaded, so late deep is least likely to be true N3). A ceiling, never a floor — it
+    // cannot re-introduce the 0%-deep failure mode.
+    public static let deepPlausibleMaxFraction: Double = 0.35
 
     /// te Lindert 30 s Cole–Kripke weights [A₋₄..A₊₂]. SI = 0.001·Σ wᵢ·Aᵢ; sleep iff SI<1.
     public static let ckWeights: [Double] = [106.0, 54.0, 58.0, 76.0, 230.0, 74.0, 67.0]
@@ -220,48 +318,6 @@ public enum SleepStager {
         return max(minWindowSamples, Int(Double(stillWindowMin * 60) / interval))
     }
 
-    // MARK: - Sparse-gravity gate (#308)
-
-    /// Median spacing between consecutive timestamps with NO upper cap (unlike medianIntervalS,
-    /// which restricts to <300 s to infer a sample rate). Used to detect clumped/sparse gravity
-    /// where the dropouts themselves are the signal. 0 for <2 samples.
-    static func medianGapS(_ times: [Int]) -> Double {
-        guard times.count >= 2 else { return 0 }
-        var gaps: [Double] = []
-        for i in 0..<(times.count - 1) {
-            let g = Double(times[i + 1] - times[i])
-            if g > 0 { gaps.append(g) }
-        }
-        guard !gaps.isEmpty else { return 0 }
-        gaps.sort()
-        return gaps[gaps.count / 2]
-    }
-
-    /// True when gravity is too sparse for the gravity-only spine to be trusted across gaps:
-    /// the gravity timespan covers < sparseGravitySpanFrac of the HR-sample timespan, OR the
-    /// median gravity inter-sample gap exceeds maxGapMin. Requires a real HR span to compare
-    /// against — with no/degenerate HR the dense path is kept (false), so a 4.0 with absent HR
-    /// is never reclassified as sparse.
-    static func isGravitySparse(_ grav: [GravitySample], hr: [HRSample]) -> Bool {
-        if grav.count < 2 || hr.count < 2 { return false }
-        let hrSpan = Double(hr[hr.count - 1].ts - hr[0].ts)
-        if hrSpan <= 0 { return false }
-        let gravSpan = Double(grav[grav.count - 1].ts - grav[0].ts)
-        if gravSpan < sparseGravitySpanFrac * hrSpan { return true }
-        return medianGapS(grav.map { $0.ts }) > Double(maxGapMin * 60)
-    }
-
-    /// True when HR stays in the sleep band (≤ baseline × hrSleepBandMult) across (a, b], used to
-    /// decide whether a pure gravity gap is a real wake or just a dropout. With no baseline or no
-    /// HR in the interval, the answer is false (cannot vouch for the gap → treat as a real break).
-    static func hrSleepBandAcross(_ a: Int, _ b: Int, hr: [HRSample], baseline: Double?) -> Bool {
-        guard let baseline = baseline else { return false }
-        let seg = hr.filter { $0.ts > a && $0.ts <= b }
-        if seg.isEmpty { return false }
-        let meanHR = Double(seg.reduce(0) { $0 + $1.bpm }) / Double(seg.count)
-        return meanHR <= baseline * hrSleepBandMult
-    }
-
     /// Per-record sleep flags from a rolling fraction of "still" samples.
     static func classifyStill(_ grav: [GravitySample], _ deltas: [Double]) -> [Bool] {
         let n = grav.count
@@ -289,13 +345,7 @@ public enum SleepStager {
 
     /// Collapse per-record flags into contiguous runs, breaking on class change
     /// or a gap > maxGapMin minutes.
-    ///
-    /// When `sparse` (gravity is too clumped to bridge gaps — #308), a PURE gravity data-gap
-    /// (no contrary motion) does NOT close a SLEEP run while HR stays in the sleep band across
-    /// the gap: the strap simply banked no motion there, not a wake. A class change always still
-    /// closes the run, and the dense path (`sparse == false`) is byte-identical to the original.
-    static func buildRuns(_ grav: [GravitySample], _ flags: [Bool],
-                          sparse: Bool = false, hr: [HRSample] = [], baseline: Double? = nil) -> [Period] {
+    static func buildRuns(_ grav: [GravitySample], _ flags: [Bool]) -> [Period] {
         let n = grav.count
         if n == 0 { return [] }
         let times = grav.map { $0.ts }
@@ -309,13 +359,7 @@ public enum SleepStager {
                 close = true
             } else {
                 let classChanged = flags[i] != flags[runStart]
-                var gapExceeded = (times[i] - times[i - 1]) > maxGapS
-                // Sparse override: a pure gravity gap (no class change) does not break a sleep
-                // run when HR stays in the sleep band across it — the gap is a dropout, not a wake.
-                if sparse && gapExceeded && !classChanged && flags[runStart]
-                    && hrSleepBandAcross(times[i - 1], times[i], hr: hr, baseline: baseline) {
-                    gapExceeded = false
-                }
+                let gapExceeded = (times[i] - times[i - 1]) > maxGapS
                 close = classChanged || gapExceeded
             }
             if close {
@@ -362,31 +406,6 @@ public enum SleepStager {
         return merged
     }
 
-    /// Sparse-gravity bridge (#308): merge two adjacent SLEEP runs separated ONLY by a gap up to
-    /// sparseBridgeGapMin minutes when the intervening HR stays in the sleep band — so a real night
-    /// fragmented by gravity dropouts is re-stitched into one continuous in-bed span BEFORE the
-    /// minSleepMin gate drops the pieces. Active runs and over-threshold gaps are left untouched;
-    /// the span between two bridged sleep runs (an "active"/gap run, if present) is absorbed.
-    /// A no-op when `sparse == false`, so the dense 4.0 path is unchanged.
-    static func bridgeSparseSleep(_ periods: [Period], sparse: Bool,
-                                  hr: [HRSample], baseline: Double?) -> [Period] {
-        if !sparse || periods.isEmpty { return periods }
-        let bridgeGapS = sparseBridgeGapMin * 60
-        var out: [Period] = []
-        for p in periods {
-            if let last = out.last, last.stage == "sleep", p.stage == "sleep" {
-                let gap = p.start - last.end
-                if gap >= 0 && gap <= bridgeGapS
-                    && hrSleepBandAcross(last.end, p.start, hr: hr, baseline: baseline) {
-                    out[out.count - 1] = Period(stage: "sleep", start: last.start, end: p.end)
-                    continue
-                }
-            }
-            out.append(p)
-        }
-        return out
-    }
-
     // MARK: - HR refinement
 
     static func rowsBetween<T>(_ rows: [T], start: Int, end: Int, ts: (T) -> Int) -> [T] {
@@ -408,6 +427,107 @@ public enum SleepStager {
         return meanHR <= baseline * hrSleepBaselineMult
     }
 
+    // MARK: - Daytime guard
+
+    /// Local clock hour [0,23] of a unix-second timestamp given a UTC offset (seconds).
+    static func localHour(_ ts: Int, _ off: Int) -> Int {
+        let secOfDay = (((ts + off) % 86_400) + 86_400) % 86_400
+        return secOfDay / 3_600
+    }
+
+    /// True when an hour-of-day falls in the personal night window (handles the 20→11 wrap).
+    static func isNightHour(_ h: Int) -> Bool {
+        if nightWindowStartHour <= nightWindowEndHour {
+            return h >= nightWindowStartHour && h < nightWindowEndHour
+        }
+        return h >= nightWindowStartHour || h < nightWindowEndHour
+    }
+
+    /// True when the run's local-clock midpoint is inside the night window.
+    /// nil tz → treated as night (legacy gate; production always passes a tz).
+    static func isNightRun(_ p: Period, tzOffsetS: Int?) -> Bool {
+        guard let off = tzOffsetS else { return true }
+        return isNightHour(localHour((p.start + p.end) / 2, off))
+    }
+
+    /// Per-5-min-window (mean HR, local 10-min SD of HR) over [start, end); empty windows skipped.
+    static func hrWindowStats(_ hr: [HRSample], start: Int, end: Int) -> [(mean: Double, sd: Double)] {
+        let wMean = 5 * 60
+        var out: [(Double, Double)] = []
+        var t = start
+        while t < end {
+            let win = hr.filter { $0.ts >= t && $0.ts < t + wMean }
+            if !win.isEmpty {
+                let mean = Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count)
+                let sdWin = hr.filter { $0.ts >= t && $0.ts < t + hrSDWindowS }.map { Double($0.bpm) }
+                out.append((mean, standardDeviation(sdWin)))
+            }
+            t += wMean
+        }
+        return out
+    }
+
+    /// Personal asleep floor derived ONLY from night-window HR (never from the daytime run
+    /// being judged). Lowest 5-min mean HR over samples whose local hour is night. nil when
+    /// tz is unknown or no night samples exist — caller must then refuse the strict accept.
+    static func derivedNightFloor(_ hr: [HRSample], tzOffsetS: Int?) -> Double? {
+        guard let off = tzOffsetS,
+              let lo = hr.map({ $0.ts }).min(), let hi = hr.map({ $0.ts }).max(), hi >= lo
+        else { return nil }
+        let wMean = 5 * 60
+        var nightMeans: [Double] = []
+        var t = lo
+        while t <= hi {
+            let win = hr.filter { $0.ts >= t && $0.ts < t + wMean }
+            if !win.isEmpty, isNightHour(localHour(t, off)) {
+                nightMeans.append(Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count))
+            }
+            t += wMean
+        }
+        return nightMeans.min()
+    }
+
+    /// Fraction of gyro samples in the run that are rotationally still (live-only corroborator).
+    static func gyroStillFractionInRun(_ p: Period, gyro: [GyroSample]) -> Double? {
+        let seg = rowsBetween(gyro, start: p.start, end: p.end) { $0.ts }
+        guard !seg.isEmpty else { return nil }
+        let still = seg.filter { $0.speedDegS <= gyroStillThresholdDegS }.count
+        return Double(still) / Double(seg.count)
+    }
+
+    /// Decide whether a still run is genuine sleep. NIGHT / unknown-tz / daytime MAIN-sleep
+    /// (≥ dayMaxNapDurationS) → legacy gate (unchanged behaviour). Daytime NAP-length runs →
+    /// require positive evidence: HR drops to the personal floor, stays low-HR + low-variability
+    /// for a sustained fraction, and (if gyro present) is rotationally still.
+    static func acceptRun(_ p: Period, hr: [HRSample], gyro: [GyroSample],
+                          baseline: Double?, options: SleepDetectionOptions) -> Bool {
+        // Night, no timezone, or a long daytime run (night-shift main sleep) → legacy gate.
+        if isNightRun(p, tzOffsetS: options.tzOffsetS)
+            || (p.end - p.start) >= dayMaxNapDurationS {
+            return confirmSleepWithHR(p, hr: hr, baseline: baseline)
+        }
+        // ── Daytime nap-length run: positive evidence of sleep required. ──
+        let seg = rowsBetween(hr, start: p.start, end: p.end) { $0.ts }
+        if seg.count < hrRefineMinSamples { return false }   // can't vet without HR → reject
+        // Trustworthy floor: personal baseline, else night-window-derived. Never daytime-derived.
+        guard let floor = options.sleepFloorHR ?? derivedNightFloor(hr, tzOffsetS: options.tzOffsetS)
+        else { return false }                                // no real floor → don't log daytime sleep
+
+        let stats = hrWindowStats(seg, start: p.start, end: p.end)
+        guard let runMin = stats.map({ $0.mean }).min() else { return false }
+
+        // (1) HR must genuinely drop to the personal asleep floor (Liu 2020 HR-dip).
+        if runMin > floor + dayFloorMarginBpm { return false }
+        // (2) sustained asleep-like: low HR AND low HR variability (Topalidis 2022 10-min SD).
+        let asleep = stats.filter { $0.mean <= floor + dayFloorMarginBpm && $0.sd <= hrSDMaxBpm }.count
+        if Double(asleep) / Double(stats.count) < dayAsleepFraction { return false }
+        // (3) gyro corroboration when available (live-only; optional).
+        if let gf = gyroStillFractionInRun(p, gyro: gyro), gf < gyroStillFraction { return false }
+        return true
+    }
+
+    // MARK: - Daytime false-sleep guard (#90) — upstream backstop
+
     /// True when the run's CENTER, shifted to LOCAL time by tzOffsetSeconds, lands in the
     /// daytime band [daytimeBandStartHour, daytimeBandEndHour). The center (not the edges)
     /// is used so a window straddling a band edge is classified once, by where it mostly is.
@@ -425,6 +545,7 @@ public enum SleepStager {
     /// True when a run's ONSET (start), in LOCAL time, falls OUTSIDE the daytime band — i.e.
     /// the sleep began at night, not during the day. Anchors a continuous-sleep chain: only a
     /// chain that began overnight may carry its tail past the daytime-band start (a late wake).
+    /// Reimplemented from @vulnix0x4's PR #353.
     static func isOvernightOnset(_ start: Int, tzOffsetSeconds: Int) -> Bool {
         let local = start + tzOffsetSeconds
         let secOfDay = ((local % secondsPerDay) + secondsPerDay) % secondsPerDay
@@ -432,9 +553,15 @@ public enum SleepStager {
         return !(hour >= daytimeBandStartHour && hour < daytimeBandEndHour)
     }
 
-    /// Stricter bar for a daytime-centered window (#90). A real daytime nap clears it; a
+    /// Stricter bar for a daytime-centered window (#90). A real daytime sleep clears it; a
     /// long sedentary still stretch (the false-positive this guards) does not, because it
     /// is either too short or never shows a genuine cardiac dip below the day median.
+    /// Composed with acceptRun: when the tz is KNOWN, daytime nap-length runs are vetted
+    /// by the strict positive-evidence gate above and daytime MAIN-sleep runs
+    /// (≥ dayMaxNapDurationS, e.g. a night-shift sleeper) are deliberately legacy-gated —
+    /// neither is re-gated here. detectSleep applies this bar only on the UNKNOWN-tz path
+    /// (clock defaulting to UTC), where acceptRun's strict gate is disarmed and the loose
+    /// legacy gate would otherwise log sedentary daytime stillness as sleep.
     /// Overnight windows never reach here. Returns true = keep, false = reject.
     ///
     /// `restingHR` is the window's own lowest 5-min rolling-mean HR (the sleep-depth proxy
@@ -454,45 +581,41 @@ public enum SleepStager {
     /// Detect sleep sessions from biometric streams. Empty/absent gravity → [].
     /// Gravity-only input degrades gracefully (HR/RR/resp refinements skipped).
     ///
-    /// `tzOffsetSeconds` is the wall-clock UTC offset (TimeZone.current.secondsFromGMT)
-    /// used ONLY to place each window's center on a LOCAL clock for the daytime
-    /// false-sleep guard (#90). It defaults to 0 so the pure function and its tests stay
-    /// UTC; the live call site (IntelligenceEngine) passes the device's real offset.
+    /// `gyro` (optional) is the live rotational-motion stream used to corroborate
+    /// daytime stillness; `options` carries the personal asleep-HR floor and the
+    /// wall-clock UTC offset (TimeZone.current.secondsFromGMT) that places each run
+    /// on a LOCAL clock for BOTH daytime false-sleep guards (the strict nap gate and
+    /// the #90 backstop). With everything at its default the detector behaves exactly
+    /// as before (legacy night gate; circadian gating disabled). The live call site
+    /// (IntelligenceEngine) passes the device's real offset.
     public static func detectSleep(hr: [HRSample] = [],
                                    rr: [RRInterval] = [],
                                    resp: [RespSample] = [],
                                    gravity: [GravitySample],
-                                   tzOffsetSeconds: Int = 0) -> [SleepSession] {
+                                   gyro: [GyroSample] = [],
+                                   options: SleepDetectionOptions = SleepDetectionOptions()) -> [SleepSession] {
         let grav = gravity.sorted { $0.ts < $1.ts }
         if grav.count < 2 { return [] }
 
         let hrS = hr.sorted { $0.ts < $1.ts }
         let rrS = rr.sorted { $0.ts < $1.ts }
         let respS = resp.sorted { $0.ts < $1.ts }
-
-        let baseline = hrBaseline(hrS)
-        // Sparse-gravity gate (#308): an un-unlocked WHOOP 5.0 backfills mostly v18/v26 records
-        // where gravity is clumped (~25% coverage), so the gravity-only spine fragments the night.
-        // ONLY when sparse do the three robustness branches engage; a dense 4.0 night is `false`
-        // here and follows the exact original path (byte-identical).
-        let sparse = isGravitySparse(grav, hr: hrS)
+        let gyroS = gyro.sorted { $0.ts < $1.ts }
 
         let deltas = gravityDeltas(grav)
         let flags = classifyStill(grav, deltas)
-        var runs = buildRuns(grav, flags, sparse: sparse, hr: hrS, baseline: baseline)
+        var runs = buildRuns(grav, flags)
         runs = mergePeriods(runs)
-        // Re-stitch sleep runs fragmented by pure gravity dropouts (sparse only) before minSleepMin.
-        runs = bridgeSparseSleep(runs, sparse: sparse, hr: hrS, baseline: baseline)
 
+        let baseline = hrBaseline(hrS)
         let minSleepS = minSleepMin * 60
 
         var sessions: [SleepSession] = []
-        // Continuous-sleep chain tracking so a real overnight sleep that runs PAST the daytime-band
-        // start (a late wake, or a brief morning stir then back to sleep that leaves the tail as its
-        // own daytime-centered run) is NOT mistaken for an isolated daytime nap and rejected — which
-        // truncated the displayed wake time to ~late morning. A daytime run skips the nap guard ONLY
-        // when it directly continues (≤ nightContinuationGap) a chain that BEGAN overnight; isolated
-        // daytime stillness (hours after waking) still faces the full guard.
+        // #353 night-continuation: a real overnight sleep that runs PAST the daytime-band start
+        // (a late wake, or a brief morning stir then back to sleep whose tail centers in the
+        // daytime band) must NOT be rejected as an isolated nap — which truncated the displayed
+        // wake time to late morning. A daytime-centered tail skips the nap backstop ONLY when it
+        // directly continues (≤ nightContinuationGap) an accepted chain that BEGAN overnight.
         // Reimplemented from @vulnix0x4's PR #353.
         let continuationGapS = nightContinuationGapMin * 60
         var chainPrevEnd: Int? = nil       // end of the last accepted sleep run
@@ -500,14 +623,31 @@ public enum SleepStager {
         for p in runs {
             if p.stage != "sleep" { continue }
             if (p.end - p.start) <= minSleepS { continue }
-            if !confirmSleepWithHR(p, hr: hrS, baseline: baseline) { continue }
-            // Daytime false-sleep guard (#90): a window centered in the local daytime band
-            // must clear a stricter bar (≥daytimeMinSleepMin AND a real resting-HR dip).
-            // Overnight windows skip this entirely. restingHR is computed here (reused below).
+            // Composed gate — both daytime false-sleep guards:
+            //  1. acceptRun routes night / unknown-tz runs to the legacy HR gate, holds
+            //     daytime NAP-length runs to the strict positive-evidence bar (personal
+            //     HR floor + low HR variability + optional gyro stillness), and
+            //     deliberately routes daytime MAIN-sleep-length runs (≥ dayMaxNapDurationS,
+            //     night-shift sleepers) back through the lenient legacy gate.
+            if !acceptRun(p, hr: hrS, gyro: gyroS, baseline: baseline, options: options) { continue }
+            //  2. Daytime false-sleep guard (#90, upstream) backstops the one path the
+            //     strict gate cannot see: unknown-tz callers, whom acceptRun routes
+            //     through the loose 1.05× legacy gate. Its clock defaults to UTC, so an
+            //     all-day sedentary stretch is still held to the daytime minimum length
+            //     and a genuine resting-HR dip below the day median. When the tz IS
+            //     known, daytime nap-length runs were already vetted by the strict gate
+            //     (which must stay authoritative — it ACCEPTS floor-reaching naps the
+            //     median-dip bar would wrongly reject), and daytime MAIN-sleep runs are
+            //     deliberately legacy-gated (night-shift sleepers must not be regressed),
+            //     so the backstop never re-gates known-tz runs.
+            //     restingHR is computed here and reused for the session below.
             let resting = sessionRestingHR(start: p.start, end: p.end, hr: hrS)
+            // Is this run the TAIL of an overnight chain (continues an accepted, overnight-onset
+            // chain within the continuation gap)? If so it is the night's tail, not a daytime nap.
             let continuesChain = chainPrevEnd.map { p.start - $0 <= continuationGapS } ?? false
-            let isNightTail = continuesChain && chainFromOvernight   // the night's tail, not a nap
-            if isDaytimeCenter(p, tzOffsetSeconds: tzOffsetSeconds),
+            let isNightTail = continuesChain && chainFromOvernight
+            if options.tzOffsetS == nil,
+               isDaytimeCenter(p, tzOffsetSeconds: 0),
                !passesDaytimeGuard(p, restingHR: resting, baseline: baseline),
                !isNightTail { continue }
             let stages = stageSession(start: p.start, end: p.end, grav: grav,
@@ -517,11 +657,25 @@ public enum SleepStager {
             sessions.append(SleepSession(start: p.start, end: p.end, efficiency: eff,
                                          stages: stages, restingHR: resting, avgHRV: avgHrv))
             // A run that does NOT continue the chain re-anchors it on this run's onset.
-            if !continuesChain { chainFromOvernight = isOvernightOnset(p.start, tzOffsetSeconds: tzOffsetSeconds) }
+            if !continuesChain {
+                chainFromOvernight = isOvernightOnset(p.start, tzOffsetSeconds: options.tzOffsetS ?? 0)
+            }
             chainPrevEnd = p.end
         }
         sessions.sort { $0.start < $1.start }
         return sessions
+    }
+
+    /// Upstream-compatible convenience (#90 call sites): maps the bare wall-clock
+    /// `tzOffsetSeconds` onto SleepDetectionOptions. Prefer the primary overload,
+    /// which can also carry the personal asleep-HR floor and the gyro stream.
+    public static func detectSleep(hr: [HRSample] = [],
+                                   rr: [RRInterval] = [],
+                                   resp: [RespSample] = [],
+                                   gravity: [GravitySample],
+                                   tzOffsetSeconds: Int) -> [SleepSession] {
+        detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity,
+                    options: SleepDetectionOptions(tzOffsetS: tzOffsetSeconds))
     }
 
     /// asleep / in-bed in [0, 1]; asleep = in-bed − wake.
@@ -587,11 +741,6 @@ public enum SleepStager {
         labels = smoothLabels(labels)
         labels = reimposePhysiology(labels, features: feats,
                                     onsetIdx: onsetIdx, finalWakeIdx: finalWakeIdx)
-        // Conservative fragment merge (#274): absorb sub-3-min stage flecks (the WHOOP 5/MG
-        // sparse-motion artefact) so the hypnogram stops reading choppier than WHOOP's,
-        // without erasing genuine multi-minute transitions. Display/scoring only — the
-        // per-epoch detection above is unchanged.
-        labels = mergeFragments(labels)
 
         // Pre-onset and post-final-wake epochs are not sleep → force wake.
         for i in 0..<labels.count where i < onsetIdx || i > finalWakeIdx { labels[i] = "wake" }
@@ -720,7 +869,7 @@ public enum SleepStager {
         let r = kernel.count / 2
         // A signal shorter than the kernel radius can't be reflect-padded (the mirror reads x[r]
         // and x[x.count-2-i]) — return it unchanged rather than indexing out of bounds. In practice
-        // the only caller is gated by the 60-min session floor, so this is defensive.
+        // the only caller is gated by the 60-min session floor, so this is defensive. (v3.1.0)
         if r == 0 || x.count <= r { return x }
         // Reflect padding: numpy 'reflect' mirrors WITHOUT repeating the edge sample.
         var padded = [Double]()
@@ -830,7 +979,7 @@ public enum SleepStager {
         if distance <= 1 || candidates.isEmpty { return candidates }
         // Enforce minimum distance: greedily keep tallest, scipy-style. Tie-break on the lower
         // index so equal-height peaks resolve deterministically and identically to the Android
-        // port's stable sort (Swift's sorted(by:) is not guaranteed stable).
+        // port's stable sort (Swift's sorted(by:) is not guaranteed stable). (v3.1.0)
         let byHeight = candidates.sorted { x[$0] != x[$1] ? x[$0] > x[$1] : $0 < $1 }
         var keep = [Bool](repeating: true, count: candidates.count)
         let indexOf = Dictionary(uniqueKeysWithValues: candidates.enumerated().map { ($1, $0) })
@@ -1054,45 +1203,59 @@ public enum SleepStager {
         let hrvarHi = percentile(sleepFeats.map { $0.hrVar }, stageHRVarHighPct)
         let rrvHi = percentile(sleepFeats.map { $0.rrv }, stageRRVHighPct)
         let rrvLo = percentile(sleepFeats.map { $0.rrv }, stageRRVLowPct)
+        let hrMid = percentile(sleepFeats.map { $0.hr }, 50)
 
         return features.map {
             classifyOne($0, hrLo: hrLo, hrHi: hrHi, rmssdHi: rmssdHi,
-                        hrvarHi: hrvarHi, rrvHi: rrvHi, rrvLo: rrvLo)
+                        hrvarHi: hrvarHi, rrvHi: rrvHi, rrvLo: rrvLo, hrMid: hrMid)
         }
     }
 
     static func classifyOne(_ f: EpochFeatures, hrLo: Double?, hrHi: Double?,
-                            rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?) -> String {
+                            rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+                            hrMid: Double? = nil) -> String {
         let hasHR = f.hr.isFinite
         let hrLow = hasHR && hrLo != nil && f.hr <= hrLo!
         let hrHigh = hasHR && hrHi != nil && f.hr >= hrHi!
+        // REM HR is wake-like (above the calm low/mid band), not the bradycardic deep tail.
+        let hrAboveMid = hasHR && hrMid != nil && f.hr >= hrMid!
 
-        // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only. A MISSING per-epoch
-        // RMSSD (sparse R-R, common on BLE-offloaded nights and especially 5/MG) is treated as
-        // pro-deep rather than deep-blocking — mirroring how a missing respiration value is handled
-        // below — so those nights stop decoding 0 m of deep sleep despite a real depth signature
-        // (still + low HR + regular breathing). An epoch WITH a finite RMSSD must still clear the
-        // high-tone bar. (#127, #129)
-        let parasympOK = (!f.rmssd.isFinite) || (rmssdHi != nil && f.rmssd >= rmssdHi!)
+        // NOTE: HF omitted (no neurokit2). Parasympathetic tone = RMSSD only.
+        let parasympHigh = f.rmssd.isFinite && rmssdHi != nil && f.rmssd >= rmssdHi!
 
         let hrvarHigh = f.hrVar.isFinite && hrvarHi != nil && f.hrVar >= hrvarHi!
         let cardiacActivated = hrHigh || hrvarHigh
 
         let rrvIrregular = f.rrv.isFinite && rrvHi != nil && f.rrv >= rrvHi!
-        // Missing respiration (NaN RRV) treated as "regular" (pro-deep bias).
-        let rrvRegular = (!f.rrv.isFinite) || (rrvLo != nil && f.rrv <= rrvLo!)
+        // Regular respiration as a parasympathetic corroborator for deep. Only counts when RRV is
+        // actually measured — a NaN RRV is "unknown breathing", NOT evidence of regular breathing,
+        // so it must not vacuously satisfy the deep gate (that would collapse deep to still+lowHR
+        // and over-call N3 on RR-only / WHOOP4 nights). On NaN-RRV nights the RMSSD parasympathetic
+        // arm carries the gate instead.
+        let rrvRegular = f.rrv.isFinite && rrvLo != nil && f.rrv <= rrvLo!
 
         let still = f.moveFrac <= stageStillMoveFrac
         let moving = f.moveFrac >= stageWakeMoveFrac
 
         // WAKE: sustained motion + activated cardiac (or no HR to vet motion).
         if moving && (cardiacActivated || !hasHR) { return "wake" }
-        // DEEP: still + low HR + regular respiration, with high parasympathetic tone when measurable.
-        if still && parasympOK && hrLow && rrvRegular { return "deep" }
+        // DEEP (N3): still + low HR (mandatory bradycardia) + at least one parasympathetic
+        // signature — high RMSSD OR regular respiration. The old conjunction required low HR
+        // AND top-tail RMSSD in the SAME epoch, which co-occurs in ~4% of epochs on narrow-HR
+        // nights → near-zero deep. The disjunction matches the literature N3 signature.
+        // Upstream #127/#129: when NEITHER arm is measurable (sparse per-epoch R-R on
+        // BLE-offloaded / 5/MG nights AND no respiration), missing data is treated as pro-deep
+        // rather than deep-blocking, so those nights stop decoding 0 m deep despite a real depth
+        // signature (still + low HR). An epoch WITH a finite RMSSD or RRV must still clear its
+        // bar; over-minting is bounded by deepPlausibleMaxFraction in reimposePhysiology.
+        let bothArmsUnmeasured = !f.rmssd.isFinite && !f.rrv.isFinite
+        if still && hrLow && (parasympHigh || rrvRegular || bothArmsUnmeasured) { return "deep" }
         // REM: still body + activated cardiac + irregular respiration.
         if still && cardiacActivated && rrvIrregular { return "rem" }
-        // REM fallback when respiration unavailable: require BOTH cardiac signals.
-        if still && hrHigh && hrvarHigh && !f.rrv.isFinite { return "rem" }
+        // REM fallback when respiration unavailable (all-NaN RRV): the primary rule is dead, so
+        // carry REM on the DoG-HR surge, but only in the wake-like HR band (≥ median) so it never
+        // collides with deep (which requires HR ≤ p40). Disjoint HR conditions ⇒ mutual exclusivity.
+        if still && hrvarHigh && hrAboveMid && !f.rrv.isFinite { return "rem" }
         return "light"
     }
 
@@ -1126,112 +1289,33 @@ public enum SleepStager {
                                    onsetIdx: Int, finalWakeIdx: Int) -> [String] {
         var out = labels
         let noREMEpochs = Int((noREMAfterOnsetMin * 60.0 / epochS).rounded())
-        // "Deep is front-loaded" re-imposes scattered late "deep" back to light — BUT only when there's
-        // deep in the first third to anchor that prior. If the whole detected deep block lands later
-        // (individual variation, or HR/HRV-only staging without respiration placing the deepest, lowest-HR
-        // window later), zeroing it out gives a wrong "0 m deep"; keeping the best estimate is better. (#127)
-        let hasEarlyDeep = zip(labels, features).contains { $0.0 == "deep" && $0.1.clock <= deepFirstFraction }
-        for (i, f) in features.enumerated() {
+        let deepLatencyEpochs = Int((deepOnsetLatencyMin * 60.0 / epochS).rounded())
+        for (i, _) in features.enumerated() {
             if i < onsetIdx || i > finalWakeIdx { continue }
             if out[i] == "rem" && (i - onsetIdx) < noREMEpochs { out[i] = "light" }
-            if out[i] == "deep" && f.clock > deepFirstFraction && hasEarlyDeep { out[i] = "light" }
-        }
-        return out
-    }
-
-    /// Sleep-depth rank, lighter → deeper: wake 0, light 1, rem 2, deep 3. Used by
-    /// mergeFragments to bias an ambiguous merge toward the LIGHTER stage so smoothing
-    /// can never inflate deep/REM. Unknown labels rank lightest (0) — they never win deep.
-    static func stageDepthRank(_ stage: String) -> Int {
-        switch stage {
-        case "light": return 1
-        case "rem":   return 2
-        case "deep":  return 3
-        default:      return 0  // "wake" and any unexpected label
-        }
-    }
-
-    /// Display/scoring smoothing of the staged label sequence (#274). Absorbs sub-threshold
-    /// "noise" runs WITHOUT erasing real transitions — applied AFTER staging, it never
-    /// touches the underlying per-epoch detection.
-    ///
-    /// Per run shorter than fragmentMergeEpochs:
-    ///   • bridged by two SAME-stage neighbours → absorbed into them (the fleck was a blip
-    ///     inside one continuous stage);
-    ///   • between DIFFERENT stages → relabelled to the dominant (longer) neighbour. On a tie
-    ///     — or when the longer neighbour is the deeper one and the shorter is lighter and of
-    ///     comparable length — it biases toward the LIGHTER neighbour so a stray fleck can
-    ///     never inflate deep/REM (the least-reliable, most-overcountable classes).
-    ///
-    /// Single left-to-right pass over runs, mirroring mergePeriods' control flow so the
-    /// Swift and Kotlin ports stay byte-identical. A run already ≥ threshold is a real
-    /// transition and is always preserved.
-    static func mergeFragments(_ labels: [String], thresholdEpochs: Int = fragmentMergeEpochs) -> [String] {
-        let n = labels.count
-        if n == 0 || thresholdEpochs <= 1 { return labels }
-
-        // Collapse the per-epoch labels into contiguous runs of (stage, length).
-        var runs: [(stage: String, len: Int)] = []
-        for s in labels {
-            if let last = runs.last, last.stage == s { runs[runs.count - 1].len += 1 }
-            else { runs.append((stage: s, len: 1)) }
-        }
-        if runs.count < 2 { return labels }
-
-        var merged: [(stage: String, len: Int)] = []
-        var i = 0
-        while i < runs.count {
-            let current = runs[i]
-            if current.len >= thresholdEpochs { merged.append(current); i += 1; continue }
-
-            let hasPrev = !merged.isEmpty
-            let hasNext = i + 1 < runs.count
-
-            if hasPrev && hasNext && merged[merged.count - 1].stage == runs[i + 1].stage {
-                // Same-stage bridge: absorb the fleck and the next run into the previous one.
-                merged[merged.count - 1].len += current.len + runs[i + 1].len
-                i += 2
-            } else if hasPrev && hasNext {
-                // Between two DIFFERENT stages: relabel to the dominant neighbour, biasing
-                // toward the lighter stage when the two neighbours are tied in length.
-                let prev = merged[merged.count - 1]
-                let next = runs[i + 1]
-                let winner: String
-                if prev.len > next.len { winner = prev.stage }
-                else if next.len > prev.len { winner = next.stage }
-                else {
-                    // Tie → lighter (smaller depth rank) wins; never inflate deep/REM.
-                    winner = stageDepthRank(prev.stage) <= stageDepthRank(next.stage) ? prev.stage : next.stage
-                }
-                // Fold the fleck into whichever neighbour it became; the OTHER neighbour
-                // stays its own run (handled on the next iterations).
-                if winner == prev.stage {
-                    merged[merged.count - 1].len += current.len
-                    i += 1
-                } else {
-                    // Becomes part of the NEXT run: extend next, drop current.
-                    runs[i + 1] = (stage: next.stage, len: next.len + current.len)
-                    i += 1
-                }
-            } else if hasNext {
-                // No previous run (leading fleck): fold forward into the next run.
-                runs[i + 1] = (stage: runs[i + 1].stage, len: runs[i + 1].len + current.len)
-                i += 1
-            } else if hasPrev {
-                // No next run (trailing fleck): fold back into the previous run.
-                merged[merged.count - 1].len += current.len
-                i += 1
-            } else {
-                // Single sub-threshold run with no neighbours — nothing to merge into.
-                merged.append(current)
-                i += 1
-            }
+            // Deep is NOT confined to the first wall-clock third (the old `clock > 1/3 → light`
+            // rule zeroed this user's back-half SWS, which legitimately ran clock 0.41–0.92 after a
+            // fragmented onset). The deep gate is already SWS-specific (still + low HR +
+            // parasympathetic); we only suppress deep during the physiologic first-N3 latency, as
+            // an ABSOLUTE duration (not a fraction of the window) so short naps are protected too.
+            if out[i] == "deep" && (i - onsetIdx) < deepLatencyEpochs { out[i] = "light" }
         }
 
-        // Re-expand the runs back into a per-epoch label sequence of the same length.
-        var out: [String] = []
-        out.reserveCapacity(n)
-        for r in merged { out.append(contentsOf: repeatElement(r.stage, count: r.len)) }
+        // Soft plausibility ceiling: with no wall-clock cap, a session-relative deep gate on a
+        // single-arm (NaN-RRV / RR-only device) night can over-mint N3. If total deep exceeds
+        // deepPlausibleMaxFraction of asleep epochs, demote the LATEST deep epochs first (SWS is
+        // front-loaded → late deep is least likely to be genuine), preserving the early
+        // consolidated block. This is a ceiling only; it can never raise deep above what the gate
+        // produced, so it cannot re-create the 0%-deep failure mode.
+        let asleepCount = (onsetIdx...max(onsetIdx, finalWakeIdx)).reduce(0) { acc, i in
+            i < out.count && out[i] != "wake" ? acc + 1 : acc
+        }
+        let maxDeep = Int((Double(asleepCount) * deepPlausibleMaxFraction).rounded(.down))
+        var deepIdx = (onsetIdx...max(onsetIdx, finalWakeIdx)).filter { $0 < out.count && out[$0] == "deep" }
+        if deepIdx.count > maxDeep {
+            deepIdx.sort { features[$0].clock > features[$1].clock }  // latest (highest clock) first
+            for j in deepIdx.prefix(deepIdx.count - maxDeep) { out[j] = "light" }
+        }
         return out
     }
 
@@ -1264,12 +1348,8 @@ public enum SleepStager {
         var t = start
         while t < end {
             let bucket = seg.filter { $0.ts >= t && $0.ts < t + windowS }.map { Double($0.rrMs) }
-            // Full clean (range + Malik ectopic rejection), not just range — matches the
-            // analyze() pipeline. The 0x2A37 RR on a WHOOP 5/MG is PPG-derived and noisier
-            // than a 4.0's; rMSSD is built from SUCCESSIVE differences, so an un-rejected
-            // jitter spike inflates the session HRV. Ectopic rejection drops those (#262/#235).
-            let cleaned = HRVAnalyzer.cleanRR(bucket)
-            if cleaned.count >= 2, let r = HRVAnalyzer.rmssdRaw(cleaned) { vals.append(r) }
+            let filtered = HRVAnalyzer.rangeFilter(bucket)
+            if filtered.count >= 2, let r = HRVAnalyzer.rmssdRaw(filtered) { vals.append(r) }
             t += windowS
         }
         guard !vals.isEmpty else { return nil }
