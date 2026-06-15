@@ -201,7 +201,7 @@ targets:
           - group.com.tecminds.noop
     settings:
       base:
-        CURRENT_PROJECT_VERSION: "74"
+        CURRENT_PROJECT_VERSION: "75"
         PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop
         PRODUCT_NAME: NOOP
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -247,7 +247,7 @@ targets:
           - group.com.tecminds.noop
     settings:
       base:
-        CURRENT_PROJECT_VERSION: "74"
+        CURRENT_PROJECT_VERSION: "75"
         PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop.widgets
         PRODUCT_NAME: NOOPWidgets
         GENERATE_INFOPLIST_FILE: NO
