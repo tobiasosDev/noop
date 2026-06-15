@@ -171,6 +171,10 @@ targets:
         CFBundleDisplayName: NOOP
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # App uses only standard/exempt encryption (HTTPS/TLS). Declaring this lets every TestFlight
+        # build skip the "Missing Compliance" hold and go straight to testers; upstream omits it
+        # because it never ships NOOPiOS to the Store.
+        ITSAppUsesNonExemptEncryption: false
         # Surfaces APP_GROUP_ID to runtime (WidgetSnapshot.suiteName) so the App Group id isn't
         # hard-coded in Swift; stays in sync with the application-groups entitlement (both $(APP_GROUP_ID)).
         AppGroupIdentifier: "$(APP_GROUP_ID)"
@@ -215,6 +219,9 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        # Lets the smart-alarm wake notification (WakeAlarmNotifier, .timeSensitive) break through a
+        # sleep/Do-Not-Disturb Focus. Provisioned for com.tecminds.noop under the team.
+        com.apple.developer.usernotifications.time-sensitive: true
         com.apple.security.application-groups:
           - $(APP_GROUP_ID)
     settings:
