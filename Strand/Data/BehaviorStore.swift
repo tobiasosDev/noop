@@ -27,6 +27,10 @@ final class BehaviorStore: ObservableObject {
     @Published var smartAlarmEnabled: Bool { didSet { d.set(smartAlarmEnabled, forKey: K.alarmOn) } }
     /// Target wake time, minutes since local midnight.
     @Published var smartAlarmMinutes: Int { didSet { d.set(smartAlarmMinutes, forKey: K.alarmTime) } }
+    /// Opt-in: hold the BLE link hot from arm time through wake so the live wrist buzz (RUN_ALARM)
+    /// can fire while the phone is locked — more reliable than the firmware alarm on a strap whose
+    /// stored-alarm NVM is wedged, at the cost of more overnight battery.
+    @Published var reliableWristAlarm: Bool { didSet { d.set(reliableWristAlarm, forKey: K.alarmReliableWrist) } }
 
     // MARK: Illness early-warning
     @Published var illnessWatch: Bool { didSet { d.set(illnessWatch, forKey: K.illness) } }
@@ -46,6 +50,7 @@ final class BehaviorStore: ObservableObject {
         static let stress = "behavior.stressNudge"
         static let alarmOn = "behavior.smartAlarmEnabled"
         static let alarmTime = "behavior.smartAlarmMinutes"
+        static let alarmReliableWrist = "behavior.reliableWristAlarm"
         // "behavior.smartAlarmWindow" retired: it was stored but never read (no wake-window
         // watcher ever shipped). The defaults key is left orphaned on purpose — harmless, and
         // preserved should a real light-sleep watcher ever land.
@@ -63,6 +68,7 @@ final class BehaviorStore: ObservableObject {
         stressNudge = d.object(forKey: K.stress) as? Bool ?? false
         smartAlarmEnabled = d.object(forKey: K.alarmOn) as? Bool ?? false
         smartAlarmMinutes = d.object(forKey: K.alarmTime) as? Int ?? 7 * 60       // 07:00
+        reliableWristAlarm = d.object(forKey: K.alarmReliableWrist) as? Bool ?? false
         illnessWatch = d.object(forKey: K.illness) as? Bool ?? false
         batteryAlerts = d.object(forKey: K.batteryAlerts) as? Bool ?? true
     }

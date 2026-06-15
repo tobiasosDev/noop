@@ -470,15 +470,33 @@ final class AppModel: ObservableObject {
         ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
     }
 
-    /// Arm (or clear) the strap's firmware alarm from the smart-alarm settings. The firmware alarm
-    /// fires even if the Mac is asleep / NOOP is closed. No-op until bonded (send is gated on bond).
+    /// Apply (or clear) the smart alarm. Three layers, most-reliable first (see
+    /// `whoop4-deep-discharge-state`): a phone notification at the wake instant, an opportunistic
+    /// live RUN_ALARM over a kept-alive link, and the firmware cmd-66 alarm as a free backstop. The
+    /// firmware alarm fires even if the device is asleep / NOOP is closed, but is wedged on a
+    /// deep-discharged strap — the notification + live buzz cover that case.
     func applySmartAlarm() {
-        guard behavior.smartAlarmEnabled else { ble.disableStrapAlarm(); return }
+        guard behavior.smartAlarmEnabled else {
+            ble.disableStrapAlarm()
+            ble.wakeTarget = nil
+            ble.setWakeKeepAlive(false)
+            WakeAlarmNotifier.cancel()
+            return
+        }
+        WakeAlarmNotifier.requestAuthorization()   // no-op after the first grant; never re-prompts
         let cal = Calendar.current
         let now = Date()
         var next = cal.date(bySettingHour: behavior.smartAlarmMinutes / 60,
                             minute: behavior.smartAlarmMinutes % 60, second: 0, of: now) ?? now
         if next <= now { next = cal.date(byAdding: .day, value: 1, to: next) ?? next }
+        // 1. PHONE ALERT — local notification at wake; fires even with the link down or the firmware
+        //    alarm wedged, and (with the time-sensitive entitlement) breaks through a Focus.
+        WakeAlarmNotifier.schedule(at: next)
+        // 2. OPPORTUNISTIC — live RUN_ALARM on the wrist over a kept-alive link, driven off
+        //    `wakeTarget` by WakeAlarmScheduler in BLEManager (cmd 68 is proven to buzz this strap).
+        ble.wakeTarget = next
+        ble.setWakeKeepAlive(behavior.reliableWristAlarm)   // opt-in: hold link hot so the wrist fires while locked
+        // 3. FREE BACKSTOP — the firmware cmd-66 alarm (recovers automatically if the NVM wedge clears).
         ble.armStrapAlarm(at: next)
     }
 

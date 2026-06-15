@@ -237,6 +237,21 @@ public final class BLEManager: NSObject, ObservableObject {
     private var keepAliveTimer: DispatchSourceTimer?
     static let keepAliveIntervalSeconds = 30
     private var keepAliveTick = 0
+
+    // MARK: Live-fire wake alarm (Layer 2 — opportunistic wrist buzz over the kept-alive link)
+    /// Next absolute wake instant to buzz the wrist at, or nil when no alarm is set. Written by
+    /// `AppModel.applySmartAlarm`; evaluated by `WakeAlarmScheduler` on every keep-alive tick and
+    /// every inbound notification (NOOP has no push, so inbound frames are the only background wake).
+    var wakeTarget: Date?
+    /// True inside the pre-wake keep-alive window: re-arm realtime even when no Live screen wants it,
+    /// so frames keep waking the app to fire on time — without clobbering `wantsRealtime`.
+    private var wakeWindowActive = false
+    /// Opt-in (behavior.reliableWristAlarm): hold the link hot from ARM time through wake, not just the
+    /// 2 h auto-window, so the realtime stream is already flowing when the phone locks.
+    private var holdLinkForWake = false
+    /// Persisted epoch of the wake we last fired — idempotent across relaunch / BLE state restoration.
+    static let lastFiredWakeKey = "wakeAlarmLastFired"
+
     /// If a persisted/missing strap-family preference points at the wrong service, a service-filtered
     /// BLE scan can run forever even though the strap is nearby (the common "won't reconnect after an
     /// update" report). Rotate between WHOOP families after a short miss and persist whichever family
@@ -1445,6 +1460,7 @@ public final class BLEManager: NSObject, ObservableObject {
         }   // re-arm so it can't lapse
         keepAliveTick += 1
         if keepAliveTick % 2 == 0 { send(.getBatteryLevel, payload: []) }  // ~every 60s
+        evaluateWakeFire()   // live-fire alarm: open the pre-wake window / fire on time
     }
 
     private func startBackfillTimer() {
@@ -1724,6 +1740,88 @@ public final class BLEManager: NSObject, ObservableObject {
                 log("Inactivity: nudged after a \(mins)-min sedentary stretch.")
             }
         }
+    }
+
+    // MARK: Live-fire wake alarm (Layer 2)
+
+    /// Evaluate the live-fire alarm against `wakeTarget`. Cheap + idempotent — safe on the hot
+    /// notification path and the keep-alive tick (the only background wake sources; NOOP has no push).
+    func evaluateWakeFire() {
+        guard let target = wakeTarget else {
+            if wakeWindowActive { closeWakeWindow() }
+            return
+        }
+        let last = (UserDefaults.standard.object(forKey: Self.lastFiredWakeKey) as? Double)
+            .map { Date(timeIntervalSince1970: $0) }
+        switch WakeAlarmScheduler.decide(wakeTarget: target, now: Date(), lastFiredWake: last) {
+        case .idle:
+            if wakeWindowActive { closeWakeWindow() }
+        case .openKeepAliveWindow:
+            // The opt-in eager hold already keeps the link hot; only the auto-window needs opening.
+            if !wakeWindowActive, !holdLinkForWake { openWakeKeepAliveWindow() }
+        case .fire:
+            fireWakeAlarm()
+            // Persist BEFORE anything else so a crash/disconnect right after can't double-fire.
+            UserDefaults.standard.set(target.timeIntervalSince1970, forKey: Self.lastFiredWakeKey)
+            if wakeWindowActive { closeWakeWindow() }
+            if holdLinkForWake { setWakeKeepAlive(false) }   // release the held link once fired
+        }
+    }
+
+    /// Opt-in eager keep-alive: hold (on=true) or release (on=false) the link from arm time through
+    /// wake. Called by `AppModel.applySmartAlarm` with `behavior.reliableWristAlarm`. Holding the
+    /// realtime stream while foreground is what lets it survive the phone locking — the stream then
+    /// keeps waking the app per frame so the live RUN_ALARM can fire while locked.
+    func setWakeKeepAlive(_ on: Bool) {
+        holdLinkForWake = on
+        guard selectedModel.deviceFamily == .whoop4 else { return }
+        if on {
+            log("Wake alarm: holding link hot from now through wake (reliable wrist buzz — more battery)")
+            guard state.connected, didBond else { return }   // re-opened by the 2 h auto-window near wake
+            enableLiveNotifications(reason: "wake hold")
+            // Type-40 only — enough inbound frames to keep waking the suspended app. NOT R10/R11:
+            // raw mode persists across a link drop and stops the strap banking type-47 while away.
+            send(.toggleRealtimeHR, payload: [0x01])
+        } else {
+            log("Wake alarm: releasing held link")
+            guard !wantsRealtime, !wakeWindowActive else { return }   // don't stop a stream still in use
+            send(.toggleRealtimeHR, payload: [0x00])
+            send(.sendR10R11Realtime, payload: [0x00])
+        }
+    }
+
+    /// Enter the pre-wake window: keep the link hot so inbound frames keep waking the app near wake.
+    /// Turns realtime on independently of the Live tab; `closeWakeWindow` reverts it.
+    private func openWakeKeepAliveWindow() {
+        wakeWindowActive = true
+        log("Wake alarm: pre-wake keep-alive window open — keeping link hot to fire on time")
+        guard state.connected, didBond, selectedModel.deviceFamily == .whoop4 else { return }
+        enableLiveNotifications(reason: "wake window")
+        // Type-40 only — see setWakeKeepAlive: R10/R11 left armed across a drop blocks offline banking.
+        send(.toggleRealtimeHR, payload: [0x01])
+    }
+
+    /// Leave the pre-wake window. Stop realtime only if the Live tab isn't using it (don't kill a
+    /// user's live HR view).
+    private func closeWakeWindow() {
+        wakeWindowActive = false
+        log("Wake alarm: keep-alive window closed")
+        guard selectedModel.deviceFamily == .whoop4, !wantsRealtime else { return }
+        send(.toggleRealtimeHR, payload: [0x00])
+        send(.sendR10R11Realtime, payload: [0x00])
+    }
+
+    /// Fire the wake haptic LIVE over the active link: RUN_ALARM (cmd 68) + a graduated haptic
+    /// pattern. RUN_ALARM is proven to buzz this strap even when its stored firmware alarm (cmd 66)
+    /// is wedged. A no-op if the link is down (send() is bond-gated); Layer 1's notification covers that.
+    private func fireWakeAlarm() {
+        log("Wake alarm: FIRING live RUN_ALARM over BLE (\(selectedModel.deviceFamily))")
+        send(.runHapticsPattern, payload: [2, 5, 0, 0, 0])   // patternId=2, 5 loops — the alarm buzz
+        if selectedModel.deviceFamily == .whoop5 {
+            send(.runAlarm, payload: AlarmPayload.runAlarmRev2())   // REVISION_2 [0x02, alarmId]
+            return
+        }
+        send(.runAlarm, payload: [0x01])
     }
 
     /// Parse a standard BLE Heart Rate Measurement (0x2A37) via the pure StandardHeartRate parser.
@@ -2301,7 +2399,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
         guard let data = characteristic.value else { return }
         let bytes = [UInt8](data)
         lastDataAt = Date()   // feed the liveness watchdog on every notification
-
+        evaluateWakeFire()    // live-fire alarm: inbound frames are the only background wake source
         switch characteristic.uuid {
         case BLEManager.heartRateChar:
             parseStandardHR(bytes)
