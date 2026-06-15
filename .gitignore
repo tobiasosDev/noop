@@ -75,3 +75,6 @@ __pycache__/
 
 # Local release artifacts (zips/ipas built for upload; never tracked)
 dist/
+# local xcodebuild output dirs (not for VCS)
+build-*/
+.superpowers/
