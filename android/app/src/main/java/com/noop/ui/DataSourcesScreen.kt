@@ -550,7 +550,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
                     icon = Icons.Filled.FileDownload,
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
-                ) { exportLauncher.launch("strand-backup.noopdb") }
+                ) { exportLauncher.launch("noop-backup-${java.time.LocalDate.now()}.noopbak") }
                 BackupButton(
                     label = "Import…",
                     icon = Icons.Filled.FileUpload,
