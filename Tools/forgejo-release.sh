@@ -11,7 +11,7 @@
 # then uploads every asset. Token from ~/.config/noop/forge_token. Idempotent on assets.
 # FORGE_DOMAIN/FORGE_ORG/FORGE_REPO come from deploy.env (or env). No secret on any cmdline.
 # ─────────────────────────────────────────────────────────────────────────────
-set -euo pipefail
+set -uo pipefail
 
 # load config: prefer a sibling deploy.env, else expect FORGE_* in the environment
 HERE="$(cd "$(dirname "$0")" && pwd)"
