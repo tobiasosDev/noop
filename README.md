@@ -18,17 +18,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NoopApp/noop/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=latest&color=E8B84B"></a>
-  <a href="https://github.com/NoopApp/noop/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/NoopApp/noop/total?style=flat-square&label=downloads&color=C8902F"></a>
-  <a href="https://github.com/NoopApp/noop/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/NoopApp/noop?style=flat-square&color=E8B84B"></a>
-  <a href="https://github.com/NoopApp/noop/issues?q=is%3Aissue+is%3Aclosed"><img alt="Issues resolved" src="https://img.shields.io/github/issues-closed/NoopApp/noop?style=flat-square&label=resolved&color=C8902F"></a>
-  <a href="https://github.com/NoopApp/noop/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/NoopApp/noop?style=flat-square&label=last%20commit&color=6B737B"></a>
+  <a href="https://noop.fans/NoopApp/noop/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=latest&color=E8B84B"></a>
+  <a href="https://noop.fans/NoopApp/noop/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/NoopApp/noop/total?style=flat-square&label=downloads&color=C8902F"></a>
+  <a href="https://noop.fans/NoopApp/noop/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/NoopApp/noop?style=flat-square&color=E8B84B"></a>
+  <a href="https://noop.fans/NoopApp/noop/issues?q=is%3Aissue+is%3Aclosed"><img alt="Issues resolved" src="https://img.shields.io/github/issues-closed/NoopApp/noop?style=flat-square&label=resolved&color=C8902F"></a>
+  <a href="https://noop.fans/NoopApp/noop/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/NoopApp/noop?style=flat-square&label=last%20commit&color=6B737B"></a>
 </p>
 
 <p align="center">
   <a href="#keeping-noop-alive">♥&nbsp;Support</a> ·
   <a href="#download">⬇&nbsp;Download</a> ·
-  <a href="https://github.com/NoopApp/noop/wiki/FAQ">❓&nbsp;FAQ</a> ·
+  <a href="https://noop.fans/NoopApp/noop/wiki/FAQ">❓&nbsp;FAQ</a> ·
   <a href="https://www.reddit.com/r/NOOPApp/">💬&nbsp;Community</a> ·
   <a href="#features">Features</a> ·
   <a href="docs/PROTOCOL.md">Protocol</a> ·
@@ -73,7 +73,7 @@ Donations are **crypto-only**, on purpose: staying anonymous (for the project *a
 
 Each address also has a scan-to-donate **QR code** in the app under **Support** (and they're listed in [`docs/DONATIONS.md`](docs/DONATIONS.md)). *Always copy the full address and double-check the first and last characters; crypto transactions are irreversible, and only ever send a coin to its own network.*
 
-**Can't or would rather not?** Also genuinely valued: **⭐ star this repo**, file a good bug report, share a strap log, test on hardware you own, or just tell another WHOOP user. That moves NOOP forward too. **Want to help directly? → [Roadmap & help wanted](https://github.com/NoopApp/noop/issues/132)** lists exactly what we need — some of NOOP's biggest blockers are data only your strap can provide (a single raw frame capture can unlock a feature for everyone on that firmware).
+**Can't or would rather not?** Also genuinely valued: **⭐ star this repo**, file a good bug report, share a strap log, test on hardware you own, or just tell another WHOOP user. That moves NOOP forward too. **Want to help directly? → [Roadmap & help wanted](https://noop.fans/NoopApp/noop/issues/132)** lists exactly what we need — some of NOOP's biggest blockers are data only your strap can provide (a single raw frame capture can unlock a feature for everyone on that firmware).
 
 ---
 
@@ -82,7 +82,7 @@ Each address also has a scan-to-donate **QR code** in the app under **Support** 
 Pre-built apps you can run right now:
 
 <p>
-  <a href="https://github.com/NoopApp/noop/releases/latest"><img alt="Version" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=version&color=E8B84B"></a>
+  <a href="https://noop.fans/NoopApp/noop/releases/latest"><img alt="Version" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=version&color=E8B84B"></a>
   <img alt="Total downloads" src="https://img.shields.io/github/downloads/NoopApp/noop/total?style=flat-square&label=total%20downloads&color=C8902F">
   <img alt="Downloads of this release" src="https://img.shields.io/github/downloads/NoopApp/noop/latest/total?style=flat-square&label=this%20release&color=C8902F">
   <img alt="Released" src="https://img.shields.io/github/release-date/NoopApp/noop?style=flat-square&label=released&color=6B737B">
@@ -255,7 +255,7 @@ with the strap and **score recovery, strain and sleep on your own device** — n
 import required.
 
 <p>
-  <a href="https://github.com/NoopApp/noop/releases/latest"><img alt="Latest across all platforms" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=all%20platforms&color=E8B84B"></a>
+  <a href="https://noop.fans/NoopApp/noop/releases/latest"><img alt="Latest across all platforms" src="https://img.shields.io/github/v/release/NoopApp/noop?style=flat-square&label=all%20platforms&color=E8B84B"></a>
   <img alt="Commits per month" src="https://img.shields.io/github/commit-activity/m/NoopApp/noop?style=flat-square&label=commits%2Fmo&color=C8902F">
   <img alt="Top language" src="https://img.shields.io/github/languages/top/NoopApp/noop?style=flat-square&color=E8B84B">
   <img alt="Code size" src="https://img.shields.io/github/languages/code-size/NoopApp/noop?style=flat-square&label=code&color=6B737B">
@@ -525,7 +525,7 @@ crypto donation addresses are shown on the in-app **Support** screen and listed 
 never asks twice.
 
 **Community:** questions, setup help, tips, and release news → **[r/NOOPApp](https://www.reddit.com/r/NOOPApp/)**.
-**Bug reports:** please use **[GitHub Issues](https://github.com/NoopApp/noop/issues)** — there's a template, and they're tracked, deduped and linked to fixes (include a strap log).
+**Bug reports:** please use **[GitHub Issues](https://noop.fans/NoopApp/noop/issues)** — there's a template, and they're tracked, deduped and linked to fixes (include a strap log).
 **Contact:** [thenoopapp@gmail.com](mailto:thenoopapp@gmail.com)
 
 ---
@@ -584,7 +584,7 @@ protocol alongside us — this project is built on it.
 <p>
   <img alt="Open issues" src="https://img.shields.io/github/issues/NoopApp/noop?style=flat-square&label=open&color=E8B84B">
   <img alt="Issues resolved" src="https://img.shields.io/github/issues-closed/NoopApp/noop?style=flat-square&label=resolved&color=C8902F">
-  <a href="https://github.com/NoopApp/noop/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/NoopApp/noop?style=flat-square&color=E8B84B"></a>
+  <a href="https://noop.fans/NoopApp/noop/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/NoopApp/noop?style=flat-square&color=E8B84B"></a>
   <img alt="Forks" src="https://img.shields.io/github/forks/NoopApp/noop?style=flat-square&color=6B737B">
   <img alt="Commits per month" src="https://img.shields.io/github/commit-activity/m/NoopApp/noop?style=flat-square&label=commits%2Fmo&color=C8902F">
   <img alt="Last commit" src="https://img.shields.io/github/last-commit/NoopApp/noop?style=flat-square&label=last%20commit&color=6B737B">
