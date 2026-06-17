@@ -1236,7 +1236,36 @@ fun SettingsScreen(vm: AppViewModel) {
                     StatePill("v${BuildConfig.VERSION_NAME}", tone = StrandTone.Neutral, showsDot = false)
                 }
 
-                // Check for updates — a single, user-initiated call to GitHub's public releases API
+                // Project home — NOOP's code, releases, issues and wiki now live on its own
+                // independent forge at noop.fans (after the project's GitHub was suspended).
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.accent.copy(alpha = 0.10f))
+                        .border(1.dp, Palette.accent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://noop.fans/NoopApp/noop"))
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(context, "noop.fans/NoopApp/noop", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "Project home and source at noop.fans" },
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Project home & source", style = NoopType.body, color = Palette.textPrimary)
+                        Text(
+                            "noop.fans — code, releases, issues and the wiki.",
+                            style = NoopType.caption,
+                            color = Palette.textTertiary,
+                        )
+                    }
+                }
+
+                // Check for updates — a single, user-initiated call to the project's public releases API (noop.fans)
                 // when the button is tapped. No background polling, no auto-update; nothing about you
                 // is sent. Android already holds INTERNET (for the opt-in Coach), so this adds nothing.
                 var updChecking by remember { mutableStateOf(false) }

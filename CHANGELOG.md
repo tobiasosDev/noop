@@ -17,6 +17,15 @@ approximate; downloads are on the [Releases](https://noop.fans/NoopApp/noop/rele
 
 ---
 
+## 4.6.1 — NOOP has a new home (all platforms)
+
+- **NOOP now lives at [noop.fans](https://noop.fans/NoopApp/noop).** After the project's GitHub was
+  taken offline, NOOP moved to its own independent home — code, releases, the wiki and issues.
+  **Settings → About** now links straight there, and **Check for updates** reads from the new home (if
+  GitHub ever comes back it will be kept as a mirror). Nothing on your device changed and everything
+  keeps working — this just points the app at where the project lives now. Keeping it online costs
+  real money, so if NOOP is useful to you, please consider a donation. #KeepNOOPAlive
+
 ## 4.6.0 — Editable naps, richer Trends report, better debug export (all platforms)
 
 - **#508 — editable + manually-addable naps.** Generalised the durable sleep-edit mechanism (PR #395: userEdited flag + recompute overlap guard + immutable detected startTs PK + re-stage-from-raw) to nap-type sessions, rather than building a parallel system. You can now edit a detected nap's start/end (re-staged from raw over the corrected window, sticks through re-syncs) and manually add a missed nap, from the Sleep screen. Naps are always their own session — never folded into main sleep — so the awake daytime between them is no longer mislabelled as light sleep. The SleepStager detection/classification was NOT touched. Swift (MetricsCache.insertManualSleepSession + Repository.addManualNap + SleepView naps card) + Android (DAO insert, WhoopRepository.addManualNap, SleepScreen add-nap flow), with new tests on both. *(Note: a manually-added nap shows as its own session and is protected by the overlap guard, but its minutes are not yet folded into the day's dashboard Rest/total-sleep rollup — that touches the scoring loop and is a follow-up.)*

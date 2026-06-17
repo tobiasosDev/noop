@@ -1280,10 +1280,36 @@ struct SettingsView: View {
                         )
                     }
 
-                    Text("Checks GitHub for the latest version when you tap — nothing else is sent.")
+                    Text("Checks the project's home (noop.fans) for the latest version when you tap — nothing else is sent.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
+
+                // Project home — NOOP's code, releases, issues and wiki now live on its own
+                // independent forge at noop.fans (after the project's GitHub was suspended).
+                Link(destination: URL(string: "https://noop.fans/NoopApp/noop")!) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .foregroundStyle(StrandPalette.accent)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Project home & source")
+                                .font(StrandFont.body)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                            Text("noop.fans — code, releases, issues and the wiki.")
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Project home and source code at noop dot fans")
 
                 Text("A standalone companion for your WHOOP. Everything stays on this device — your history, your live stream, your numbers. Nothing is uploaded. NOOP is an independent, experimental project, not the WHOOP app.")
                     .font(StrandFont.subhead)

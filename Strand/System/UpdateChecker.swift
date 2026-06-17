@@ -1,8 +1,8 @@
 import Foundation
 import WhoopProtocol
 
-/// User-initiated "Check for updates": one call to GitHub's PUBLIC releases API, made ONLY when the
-/// user taps the button. No background polling and no auto-update — it just reads the latest version
+/// User-initiated "Check for updates": one call to the project's PUBLIC releases API (noop.fans),
+/// made ONLY when the user taps the button. No background polling and no auto-update — it just reads the latest version
 /// number and compares it to the installed one; nothing about the user is sent. (Uses the
 /// network-client entitlement, which is otherwise only for the opt-in, off-by-default AI Coach.)
 @MainActor
@@ -18,7 +18,7 @@ final class UpdateChecker: ObservableObject {
 
     @Published var state: State = .idle
 
-    private static let endpoint = URL(string: "https://api.github.com/repos/NoopApp/noop/releases/latest")!
+    private static let endpoint = URL(string: "https://noop.fans/api/v1/repos/NoopApp/noop/releases/latest")!
 
     func check(currentVersion: String) {
         guard state != .checking else { return }

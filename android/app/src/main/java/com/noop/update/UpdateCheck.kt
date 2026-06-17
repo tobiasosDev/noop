@@ -7,7 +7,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * User-initiated "Check for updates": a single call to GitHub's PUBLIC releases API that reads the
+ * User-initiated "Check for updates": a single call to the project's PUBLIC releases API (noop.fans) that reads the
  * latest version and compares it to the installed one. It runs ONLY when the user taps the button —
  * there is no background polling and no auto-update. Nothing about the user is sent; it just reads a
  * version number. (Android already holds INTERNET for the opt-in AI Coach, so this adds no new
@@ -15,7 +15,7 @@ import java.net.URL
  */
 object UpdateCheck {
 
-    private const val ENDPOINT = "https://api.github.com/repos/NoopApp/noop/releases/latest"
+    private const val ENDPOINT = "https://noop.fans/api/v1/repos/NoopApp/noop/releases/latest"
 
     sealed interface Result {
         data class UpToDate(val version: String) : Result

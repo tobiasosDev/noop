@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "4.6.0"
+    static let currentVersion = "4.6.1"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "4.6.1",
+            title: "NOOP has a new home",
+            date: "June 2026",
+            items: [
+                "**NOOP now lives at noop.fans.** After the project's GitHub was taken offline, NOOP moved to its own independent home — code, releases, the wiki and issues. **Settings → About** now links straight there, and **Check for updates** reads from the new home (if GitHub ever comes back it'll be kept as a mirror). Nothing on your device changed and everything keeps working — this just points the app at where the project lives now. Keeping it online costs real money, so if NOOP is useful to you, please consider a donation. #KeepNOOPAlive",
+            ]),
         Release(
             version: "4.6.0",
             title: "Editable naps, a richer Trends report, and better debug export",
