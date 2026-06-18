@@ -1,0 +1,32 @@
+Packages/WhoopStore/Tests/WhoopStoreTests/MigrationTests.swift
+  s_cb37d3a7ac1ead::t_c4d9e14ed68fa3 66-76,78-89,91-94,96-105
+  s_cb37d3a7ac1ead::t_e4f750d25b8909 43
+  s_cb37d3a7ac1ead::t_ca1789ed9e6be2 77,90,95
+Packages/WhoopStore/Sources/WhoopStore/WhoopStore.swift
+  s_cb37d3a7ac1ead::t_728c38b25edcb3 9
+Packages/WhoopStore/Sources/WhoopStore/Database.swift
+  s_cb37d3a7ac1ead::t_fb201d091b7c0e 313-330
+Packages/WhoopStore/Tests/WhoopStoreTests/ScaffoldTests.swift
+  s_cb37d3a7ac1ead::t_e4409c3fb1c7e4 14
+Packages/WhoopStore/Tests/WhoopStoreTests/MetricsCacheTests.swift
+  s_cb37d3a7ac1ead::t_734f8868f210a7 19
+project.yml
+  s_cb37d3a7ac1ead::t_1d8cea2ce32356 284
+  s_cb37d3a7ac1ead::t_498d7c793f9d6e 225-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "543bea475bb3b80f3d0b3dba4d000f328874ad24",
+  "prompts": {},
+  "sessions": {
+    "s_cb37d3a7ac1ead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f928f1d-574b-4444-b808-6d347ff73a25",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
