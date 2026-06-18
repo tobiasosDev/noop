@@ -83,6 +83,17 @@ public final class LiveState: ObservableObject {
     /// Fired (live only) when the strap reports it executed its firmware alarm
     /// (STRAP_DRIVEN_ALARM_EXECUTED). Wired by AppModel to re-arm the next day's alarm.
     public var onSmartAlarmFired: (() -> Void)?
+    /// Fired when a GET_ALARM_TIME (cmd 67) COMMAND_RESPONSE arrives, carrying the RAW frame bytes.
+    /// BLEManager wires this to verify the strap actually STORED the alarm it was just told to arm
+    /// (the read-back that closes the silent-fail loop — the arm was previously fire-and-forget).
+    public var onAlarmTimeRead: (([UInt8]) -> Void)?
+
+    /// Firmware-alarm arm verification, surfaced to the Automations UI so an arm that the strap did NOT
+    /// store is VISIBLE instead of a silent miss. nil = not armed / unknown; true = read-back confirmed
+    /// the strap stored our wake epoch; false = armed but read-back showed it was not stored (after retries).
+    @Published public var alarmArmConfirmed: Bool? = nil
+    /// The wake epoch (UTC seconds) the strap confirmed it stored, for the UI to display the armed time.
+    @Published public var alarmArmedForEpoch: UInt32? = nil
 
     /// True when the stuck-strap watchdog finds the strap has newer records than us but our frontier
     /// won't advance (likely needs a manual reboot; ~never after high-freq-sync removal). Banner-only.
