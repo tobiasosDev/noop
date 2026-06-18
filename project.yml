@@ -236,9 +236,9 @@ targets:
           - $(APP_GROUP_ID)
     settings:
       base:
-        # tecminds TestFlight build (per-bundle-id numbering; last shipped was 91 for 3.9.0). Aligned to
-        # upstream's 122 (>91, monotonic). App + widget must share this value (ASC mismatch gotcha).
-        CURRENT_PROJECT_VERSION: "122"
+        # tecminds TestFlight build (per-bundle-id numbering; last shipped was 122 for 4.6.2). Bumped to
+        # 123 for the v17 userEdited-heal build (>122, monotonic). App + widget must share this value (ASC mismatch gotcha).
+        CURRENT_PROJECT_VERSION: "123"
         PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop
         PRODUCT_NAME: NOOP
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -295,7 +295,7 @@ targets:
       base:
         # Must resolve to the SAME build as the app target so $(CURRENT_PROJECT_VERSION) in the
         # widget Info.plist matches the container (ASC mismatch gotcha).
-        CURRENT_PROJECT_VERSION: "122"
+        CURRENT_PROJECT_VERSION: "123"
         PRODUCT_BUNDLE_IDENTIFIER: com.tecminds.noop.widgets
         PRODUCT_NAME: NOOPWidgets
         GENERATE_INFOPLIST_FILE: NO

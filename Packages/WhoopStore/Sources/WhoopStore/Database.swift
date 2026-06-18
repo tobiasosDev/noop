@@ -354,6 +354,25 @@ extension WhoopStore {
             try db.create(index: "idx_labMarker_device_category",
                           on: "labMarker", columns: ["deviceId", "category"])
         }
+
+        // HEAL (fork-compat, registered AFTER upstream's v17-lab-book): re-add sleepSession.userEdited if
+        // it is missing. On databases first provisioned by the tecminds fork, the historical "v13"
+        // identifier was consumed by a DIFFERENT
+        // migration body (the fork numbered ppgHrSample as v13), so GRDB recorded "v13" as applied and
+        // SKIPPED upstream's v13 — the one that adds sleepSession.userEdited. Those devices then run with
+        // the column absent, and EVERY sleepSession read AND the session upsert reference `userEdited`, so
+        // both throw "no such column: userEdited" (swallowed by `try?` → the Sleep screen shows nothing,
+        // and the nightly analyze pass aborts before staging new nights / advancing its cursor). This
+        // identifier is fresh (never used by the fork), so it runs exactly once on affected devices.
+        // Idempotent add-if-missing: a no-op on clean upstream installs where v13 already created it.
+        migrator.registerMigration("v17-sleepSession-userEdited-heal") { db in
+            let hasColumn = try db.columns(in: "sleepSession").contains { $0.name == "userEdited" }
+            if !hasColumn {
+                try db.alter(table: "sleepSession") { t in
+                    t.add(column: "userEdited", .boolean).notNull().defaults(to: false)
+                }
+            }
+        }
         return migrator
     }
 }
