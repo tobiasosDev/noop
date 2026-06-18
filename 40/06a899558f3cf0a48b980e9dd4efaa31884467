@@ -1,0 +1,35 @@
+Strand/BLE/FrameRouter.swift
+  s_cb37d3a7ac1ead::t_e65c427b79daa0 70-77
+  s_cb37d3a7ac1ead::t_858fd4d3ffd2f4 148-155,157-169,171-177
+  s_cb37d3a7ac1ead::t_5717d2225f9696 170
+  s_cb37d3a7ac1ead::t_82836a742e35e9 156
+Strand/BLE/LiveState.swift
+  s_cb37d3a7ac1ead::t_2ea0af2d476d66 86-96
+Strand/Screens/AutomationsView.swift
+  s_cb37d3a7ac1ead::t_0dd02508727463 151-160,163
+  s_cb37d3a7ac1ead::t_978fc0422913b5 175-207
+project.yml
+  s_cb37d3a7ac1ead::t_f408cd890f5152 225-227
+  s_cb37d3a7ac1ead::t_222d4c4fa12eb8 284
+Strand/BLE/BLEManager.swift
+  s_cb37d3a7ac1ead::t_60807fb515f0c6 1713-1715
+  s_cb37d3a7ac1ead::t_c0170e0643ac31 1652-1708
+StrandTests/AlarmReadbackTests.swift
+  s_cb37d3a7ac1ead::t_e3d22ecedf4ac5 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "4006a899558f3cf0a48b980e9dd4efaa31884467",
+  "prompts": {},
+  "sessions": {
+    "s_cb37d3a7ac1ead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f928f1d-574b-4444-b808-6d347ff73a25",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
