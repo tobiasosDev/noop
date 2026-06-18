@@ -67,6 +67,14 @@ public final class FrameRouter {
                     state.renameStatus = Self.renameAck(for: Self.commandResultByte(in: frame))
                 }
             }
+            // GET_ALARM_TIME (cmd 67) read-back: route the RAW frame to BLEManager, which knows the wake
+            // epoch it just armed and can confirm the strap actually STORED it. The response echoes the
+            // request cmd at the inner cmd offset (whoop4InnerOffset + 2). Schema has no field decode for
+            // the alarm-time body, so we pass raw bytes and decode in AlarmReadback. (#wake-alarm-verify)
+            if family == .whoop4, frame.count > Self.whoop4InnerOffset + 2,
+               frame[Self.whoop4InnerOffset + 2] == 67 {
+                state.onAlarmTimeRead?(frame)
+            }
 
         case "EVENT":
             if let ev = parsed.parsed["event"]?.stringValue {
@@ -135,6 +143,36 @@ public final class FrameRouter {
     static func commandResultByte(in frame: [UInt8]) -> Int? {
         let idx = whoop4InnerOffset + 4
         return idx < frame.count ? Int(frame[idx]) : nil
+    }
+
+    // MARK: - GET_ALARM_TIME (cmd 67) read-back decode
+
+    /// Decode a GET_ALARM_TIME (cmd 67) COMMAND_RESPONSE into the stored alarm (enabled flag + wake epoch).
+    /// Observed reply body (whoop4-deep-discharge forensics): after the COMMAND_RESPONSE header
+    /// `[type,seq,cmd,origin_seq,result]` (5 bytes from `whoop4InnerOffset`), the payload is
+    /// `[enabled u8][epoch u32 LE][subsec u16][0x04 0x00 0x20]`. A NOT-stored alarm reads epoch 0x00000000.
+    /// Returns nil if the frame is too short. Offset-fragile on purpose-built diagnostics; pair with
+    /// `frameContainsEpoch` (offset-independent) for the actual arm confirmation.
+    nonisolated static func alarmReadback(in frame: [UInt8]) -> (enabled: Bool, epoch: UInt32)? {
+        let payload = whoop4InnerOffset + 5          // skip type,seq,cmd,origin_seq,result
+        guard frame.count >= payload + 5 else { return nil }
+        let enabled = frame[payload] != 0
+        let e = payload + 1
+        let epoch = UInt32(frame[e]) | (UInt32(frame[e + 1]) << 8)
+            | (UInt32(frame[e + 2]) << 16) | (UInt32(frame[e + 3]) << 24)
+        return (enabled, epoch)
+    }
+
+    /// Offset-INDEPENDENT arm confirmation: true iff `frame` contains the 4 little-endian bytes of `epoch`
+    /// as a contiguous run. If the strap stored the wake epoch we just armed, those exact bytes appear in
+    /// its GET_ALARM_TIME reply regardless of the precise body layout — robust against an off-by-N offset.
+    /// `epoch == 0` never confirms (an unstored/disabled alarm reads back zeros).
+    nonisolated static func frameContainsEpoch(_ frame: [UInt8], _ epoch: UInt32) -> Bool {
+        guard epoch != 0, frame.count >= 4 else { return false }
+        let want: [UInt8] = [UInt8(epoch & 0xFF), UInt8((epoch >> 8) & 0xFF),
+                             UInt8((epoch >> 16) & 0xFF), UInt8((epoch >> 24) & 0xFF)]
+        for i in 0...(frame.count - 4) where Array(frame[i..<i + 4]) == want { return true }
+        return false
     }
 
     /// Human-readable ack for a SET_ADVERTISING_NAME result byte (same codes as the prototype:

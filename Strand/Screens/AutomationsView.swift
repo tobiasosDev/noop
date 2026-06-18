@@ -176,9 +176,19 @@ struct AutomationsView: View {
                             .labelsHidden().datePickerStyle(.compact)
                     }
                     .frame(minHeight: 42).padding(.vertical, 4)
+                    rowDivider
+                    HStack(spacing: 8) {
+                        Image(systemName: alarmStatusIcon)
+                            .foregroundStyle(alarmStatusTint)
+                        Text(alarmStatusText)
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        Spacer()
+                    }
+                    .frame(minHeight: 36)
                 }
                 if behavior.smartAlarmEnabled {
-                    Text("Experimental. NOOP arms the strap's own alarm and the strap acknowledges it, but a strap-driven wake-up hasn't been verified firing from a report yet — on WHOOP 4.0 or 5/MG — so please keep a backup alarm on your phone for now. We're confirming the exact firmware buzz pattern before we call this proven.")
+                    Text("NOOP arms the strap's own firmware alarm and now reads it back to confirm the strap actually stored it (shown above). Once confirmed, the strap buzzes your wrist on its own — even with NOOP closed. It must be re-armed while your strap is connected, so keep a backup phone alarm until you've seen it wake you.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -189,6 +199,39 @@ struct AutomationsView: View {
             .onChangeCompat(of: behavior.smartAlarmMinutes) { _ in model.applySmartAlarm() }
         }
     }
+
+    // Arm-confirmation status, driven by the strap read-back (LiveState.alarmArmConfirmed).
+    private var alarmStatusIcon: String {
+        switch live.alarmArmConfirmed {
+        case .some(true):  return "checkmark.seal.fill"
+        case .some(false): return "exclamationmark.triangle.fill"
+        case .none:        return "dot.radiowaves.left.and.right"
+        }
+    }
+    private var alarmStatusTint: Color {
+        switch live.alarmArmConfirmed {
+        case .some(true):  return .green
+        case .some(false): return .orange
+        case .none:        return StrandPalette.textTertiary
+        }
+    }
+    private var alarmStatusText: String {
+        switch live.alarmArmConfirmed {
+        case .some(true):
+            let t = live.alarmArmedForEpoch.map { Self.alarmClock.string(from: Date(timeIntervalSince1970: TimeInterval($0))) } ?? ""
+            return "Confirmed on your strap\(t.isEmpty ? "" : " for \(t)") — it'll buzz even with NOOP closed."
+        case .some(false):
+            return "Your strap didn't store the alarm — connect it (Live tab) and toggle again. Keep a backup alarm."
+        case .none:
+            return "Arming… connect your strap (Live tab) so NOOP can confirm it stored the alarm."
+        }
+    }
+    private static let alarmClock: DateFormatter = {
+        let f = DateFormatter(); f.locale = .current
+        let uses24h = !(DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? "H").contains("a")
+        f.dateFormat = uses24h ? "HH:mm" : "h:mm a"
+        return f
+    }()
 
     // MARK: - Inactivity reminder (#419)
 

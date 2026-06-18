@@ -1791,10 +1791,70 @@ public final class BLEManager: NSObject, ObservableObject {
         sendSetClockBothForms()
         send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: epochSec))
         log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec))")
+        beginArmConfirm(epochSec: epochSec)
+    }
+
+    // MARK: Firmware-alarm arm verification (read-back confirm)
+    //
+    // The arm used to be fire-and-forget: SET_ALARM_TIME was sent and the app ASSUMED it stored. On this
+    // user's strap it ACKed but (intermittently) never stored, so the alarm silently never fired. We now
+    // read GET_ALARM_TIME (cmd 67) straight back and CONFIRM the strap actually holds our wake epoch,
+    // retrying the arm a few times, and surface the result to the UI so a non-store is visible — not silent.
+
+    /// The wake epoch we last told the strap to store, awaiting a GET_ALARM_TIME read-back to confirm.
+    private var pendingArmEpoch: UInt32?
+    /// Re-arm attempts for the pending epoch before giving up and surfacing alarmArmConfirmed=false.
+    private var armConfirmRetries = 0
+    private static let maxArmConfirmRetries = 3
+
+    /// Begin the confirm loop after a fresh arm (WHOOP4 only — the 5/MG path is its own flow).
+    private func beginArmConfirm(epochSec: UInt32) {
+        pendingArmEpoch = epochSec
+        armConfirmRetries = 0
+        state.alarmArmConfirmed = nil          // "arming…" until the read-back lands
+        state.onAlarmTimeRead = { [weak self] frame in self?.handleAlarmReadback(frame) }
+        requestAlarmReadback()
+    }
+
+    /// Read the stored alarm back after giving the strap a beat to commit the SET_ALARM_TIME write.
+    private func requestAlarmReadback() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, self.pendingArmEpoch != nil else { return }
+            self.getStrapAlarm()
+        }
+    }
+
+    /// Handle a GET_ALARM_TIME (cmd 67) read-back frame: confirm the strap stored our pending epoch, or
+    /// re-arm and retry, or (after maxArmConfirmRetries) mark the arm as not-stored so the UI can warn.
+    private func handleAlarmReadback(_ frame: [UInt8]) {
+        guard let want = pendingArmEpoch else { return }
+        let stored = FrameRouter.frameContainsEpoch(frame, want)
+            || (FrameRouter.alarmReadback(in: frame)?.epoch == want)
+        if stored {
+            pendingArmEpoch = nil
+            state.alarmArmedForEpoch = want
+            state.alarmArmConfirmed = true
+            log("Alarm: CONFIRMED stored on strap (read-back matched wake epoch \(want))")
+            return
+        }
+        if armConfirmRetries < Self.maxArmConfirmRetries {
+            armConfirmRetries += 1
+            log("Alarm: read-back did NOT show our time (try \(armConfirmRetries)/\(Self.maxArmConfirmRetries)) — re-arming")
+            sendSetClockBothForms()
+            send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: want))
+            requestAlarmReadback()
+        } else {
+            pendingArmEpoch = nil
+            state.alarmArmConfirmed = false
+            log("Alarm: strap did NOT store the alarm after \(Self.maxArmConfirmRetries) tries — keep a backup alarm")
+        }
     }
 
     /// Disarm the currently-armed firmware alarm.
     func disableStrapAlarm() {
+        pendingArmEpoch = nil
+        state.alarmArmConfirmed = nil
+        state.alarmArmedForEpoch = nil
         if selectedModel.deviceFamily == .whoop5 {
             // 5/MG DISABLE_ALARM is REVISION_2 [0x02, 0xFF]; the rev-1 [0x01] form below is WHOOP4.
             send(.disableAlarm, payload: AlarmPayload.disableRev2())
