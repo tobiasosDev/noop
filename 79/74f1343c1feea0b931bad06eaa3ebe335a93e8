@@ -1,0 +1,29 @@
+Strand/BLE/BLEManager.swift
+  s_cb37d3a7ac1ead::t_902ea36d6fa170 1871-1873
+StrandTests/SetAlarmPayloadTests.swift
+  s_cb37d3a7ac1ead::t_1791a217f6c69d 1-38
+Strand/BLE/Commands.swift
+  s_cb37d3a7ac1ead::t_f5d9c3cc2e33a4 71-72
+  s_cb37d3a7ac1ead::t_343edf4ec39462 67
+  s_cb37d3a7ac1ead::t_6f6c25e6786cf3 115-120,122-133,140
+project.yml
+  s_cb37d3a7ac1ead::t_aa40df987f0bc5 14
+  s_cb37d3a7ac1ead::t_65d755c5d1a589 299
+  s_cb37d3a7ac1ead::t_0b7ebc5b714b34 240-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "7974f1343c1feea0b931bad06eaa3ebe335a93e8",
+  "prompts": {},
+  "sessions": {
+    "s_cb37d3a7ac1ead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f928f1d-574b-4444-b808-6d347ff73a25",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
