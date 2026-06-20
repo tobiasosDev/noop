@@ -1,0 +1,25 @@
+Strand/BLE/LiveState.swift
+  s_cb37d3a7ac1ead::t_2ea0af2d476d66 86-96,214-259
+Strand/BLE/BLEManager.swift
+  s_cb37d3a7ac1ead::t_c0170e0643ac31 626-657,670-684,712-753,1794-1850,1895-1932
+  s_cb37d3a7ac1ead::t_60807fb515f0c6 1855-1857
+Strand/BLE/FrameRouter.swift
+  s_cb37d3a7ac1ead::t_82836a742e35e9 156
+  s_cb37d3a7ac1ead::t_e65c427b79daa0 70-77
+  s_cb37d3a7ac1ead::t_5717d2225f9696 170
+  s_cb37d3a7ac1ead::t_858fd4d3ffd2f4 148-155,157-169,171-177
+StrandTests/AlarmReadbackTests.swift
+  s_cb37d3a7ac1ead::t_e3d22ecedf4ac5 1-47
+project.yml
+  s_cb37d3a7ac1ead::t_f408cd890f5152 239-241
+  s_cb37d3a7ac1ead::t_222d4c4fa12eb8 298
+Strand/Screens/AutomationsView.swift
+  s_cb37d3a7ac1ead::t_978fc0422913b5 10-16,203-235,342-374
+  s_cb37d3a7ac1ead::t_0dd02508727463 137-156,179-188,191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "c6d1a1b3033bab845e2819d25dd34daa2fff67fb",
+  "prompts": {}
+}
