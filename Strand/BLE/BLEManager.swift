@@ -1868,7 +1868,9 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Request the currently-armed alarm time from the strap (response arrives on cmd-notify char).
     /// Parsing the reply is optional/bonus — the raw bytes will appear in the BLE log.
     func getStrapAlarm() {
-        send(.getAlarmTime, payload: [0x01])
+        // GET_ALARM_TIME request payload is [0x00] (openwhoop `get_alarm_time()` → vec![0x00]); the
+        // strap replies with [<3-byte cmd-resp prefix>, enabled u8, unix u32 LE] on the cmd-notify char.
+        send(.getAlarmTime, payload: [0x00])
         log("Alarm: requested current alarm time")
     }
 
