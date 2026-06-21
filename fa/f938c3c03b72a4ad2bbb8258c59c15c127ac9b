@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-06-21-whoop4-guided-alarm-arm-design.md
+  s_d1017921839bd1::t_ecf5f7a87afc3b 1-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "faf938c3c03b72a4ad2bbb8258c59c15c127ac9b",
+  "prompts": {},
+  "sessions": {
+    "s_d1017921839bd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facc6b0e-499f-4f5a-b0d3-0ff066b83580",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
