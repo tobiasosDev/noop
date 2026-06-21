@@ -130,6 +130,8 @@ struct ArmAlarmSheet: View {
     }
 
     private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEE HH:mm"; return f
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("EEE HH:mm")
+        return f
     }()
 }

@@ -82,4 +82,19 @@ final class AlarmArmCoordinatorTests: XCTestCase {
         }
         wait(for: [exp], timeout: 2)
     }
+
+    func testConfirmTimeout_failsNotStored() {
+        let live = LiveState()
+        let driver = MockDriver(connected: true)
+        let c = AlarmArmCoordinator(driver: driver, live: live, connectTimeout: 5, confirmTimeout: 0.2)
+        c.arm(wakeDate: Date(timeIntervalSince1970: 1_781_912_880))
+        // Already connected → immediately in .confirming; do NOT set alarmArmConfirmed.
+        XCTAssertEqual(c.step, .confirming)
+        let exp = expectation(description: "not stored")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            XCTAssertEqual(c.step, .failed(.notStored))
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+    }
 }

@@ -205,9 +205,14 @@ struct AutomationsView: View {
             // Step 3: weekday changes re-arm through the SAME coordinator path (weekday-aware date),
             // but without presenting the sheet — a day-circle tap shouldn't pop the dialog. Routing
             // through the coordinator (not the old direct applySmartAlarm) avoids racing an in-flight
-            // read-back confirm: arm() calls reset() first, tearing down any prior confirm cleanly.
-            // Note: the phone backup (WakeAlarmNotifier) is daily-only for now — only the firmware
-            // alarm is weekday-precise; a weekday-aware phone backup is out of scope here.
+            // read-back confirm for these UI triggers: arm() calls reset() first, tearing down any
+            // prior confirm cleanly. Note: AppModel's three background re-arm paths — onSmartAlarmFired,
+            // the $bonded reconnect handler, and scheduleDailySmartAlarmRearm — still call
+            // applySmartAlarm() directly and arm the same epoch, so they don't change the wake time
+            // but can briefly reset the confirm status. Routing those through the coordinator is a
+            // deferred follow-up (they must stay no-op-when-disconnected and must not trigger an active
+            // scan). Note: the phone backup (WakeAlarmNotifier) is daily-only for now — only the
+            // firmware alarm is weekday-precise; a weekday-aware phone backup is out of scope here.
             .onChangeCompat(of: behavior.smartAlarmWeekdays) { _ in
                 guard behavior.smartAlarmEnabled else { return }
                 WakeAlarmNotifier.schedule(minutesSinceMidnight: behavior.smartAlarmMinutes)

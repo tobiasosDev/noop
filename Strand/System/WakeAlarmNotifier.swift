@@ -19,20 +19,37 @@ enum WakeAlarmNotifier {
     }
 
     /// Schedule (replacing any prior) a one-shot wake notification at the given time of day.
+    /// Authorization-aware: if status is `.notDetermined` (first enable, auth prompt not yet resolved)
+    /// this method requests authorization itself and schedules on grant, so the backup is armed even
+    /// when `schedule` is called before the system prompt has been answered. When already `.authorized`
+    /// the request is added directly. Any other status (denied/provisional/etc.) is a no-op.
     static func schedule(minutesSinceMidnight: Int) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
         center.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized else { return }
-            let content = UNMutableNotificationContent()
-            content.title = "Wake up"
-            content.body = "Phone backup for your strap alarm — your WHOOP should have buzzed too."
-            content.sound = .default
-            let trigger = UNCalendarNotificationTrigger(
-                dateMatching: fireComponents(minutesSinceMidnight: minutesSinceMidnight),
-                repeats: false)
-            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+            switch settings.authorizationStatus {
+            case .authorized:
+                addRequest(minutesSinceMidnight: minutesSinceMidnight, to: center)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    guard granted else { return }
+                    addRequest(minutesSinceMidnight: minutesSinceMidnight, to: center)
+                }
+            default:
+                break
+            }
         }
+    }
+
+    private static func addRequest(minutesSinceMidnight: Int, to center: UNUserNotificationCenter) {
+        let content = UNMutableNotificationContent()
+        content.title = "Wake up"
+        content.body = "Phone backup for your strap alarm — your WHOOP should have buzzed too."
+        content.sound = .default
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: fireComponents(minutesSinceMidnight: minutesSinceMidnight),
+            repeats: false)
+        center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
     }
 
     /// Cancel the pending backup (smart alarm disabled).
