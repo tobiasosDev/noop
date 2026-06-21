@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-06-21-whoop4-guided-alarm-arm.md
+  s_d1017921839bd1::t_a8f3099433eacf 1-927
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "0464d9b90eabda254930e321d3cf852c52dd8f42",
+  "prompts": {},
+  "sessions": {
+    "s_d1017921839bd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facc6b0e-499f-4f5a-b0d3-0ff066b83580",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
