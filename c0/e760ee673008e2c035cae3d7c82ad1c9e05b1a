@@ -1,0 +1,23 @@
+Strand/System/WakeTime.swift
+  s_d1017921839bd1::t_6c627a2d6d9599 1-16
+StrandTests/WakeTimeTests.swift
+  s_d1017921839bd1::t_28f42e3ec04da2 1-33
+Strand/App/AppModel.swift
+  s_d1017921839bd1::t_5880aeb7aa1f20 696,699,701-702
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "c0e760ee673008e2c035cae3d7c82ad1c9e05b1a",
+  "prompts": {},
+  "sessions": {
+    "s_d1017921839bd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facc6b0e-499f-4f5a-b0d3-0ff066b83580",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
