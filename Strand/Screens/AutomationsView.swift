@@ -10,6 +10,9 @@ struct AutomationsView: View {
     /// Deep-link into the experimental Rhythm visualization (it self-gates on its own consent).
     @EnvironmentObject var router: NavRouter
 
+    /// Controls presentation of the guided alarm-arm sheet (Steps 1–3 in AlarmArmCoordinator).
+    @State private var showArmSheet = false
+
     /// v5 cycle-awareness opt-in (default OFF — the most sensitive health category, manual-first).
     @AppStorage(AppModel.cycleAwarenessKey) private var cycleAwareness = false
     /// v5 Rhythm experimental gate (the screen still shows its own consent clickwrap when opened).
@@ -162,7 +165,7 @@ struct AutomationsView: View {
 
     private var alarmCard: some View {
         Section2(icon: "alarm.fill", title: "Smart alarm",
-                 blurb: "Wake to a buzz from the strap's own firmware alarm, even if NOOP is closed. Still experimental on WHOOP 4.0, so keep a backup alarm until you've confirmed it wakes you.",
+                 blurb: "When you turn this on, NOOP connects to your strap and writes the alarm, then reads it back to confirm it stored — so a wake actually fires. A phone backup alarm is always set as a safety net. Strap-driven wake is still being verified on WHOOP 4.0, so keep the phone backup until you've seen it wake you.",
                  active: behavior.smartAlarmEnabled) {
             VStack(spacing: 0) {
                 ToggleRow(label: "Enable smart alarm", help: "Arms the strap to buzz at your wake time.",
@@ -178,18 +181,95 @@ struct AutomationsView: View {
                     .frame(minHeight: 42).padding(.vertical, 4)
                     rowDivider
                     alarmWeekdayPicker
-                }
-                if behavior.smartAlarmEnabled {
-                    Text("Armed on the strap itself, so it can buzz at your wake time even if your phone is asleep or NOOP is closed. We send the same alarm command the official app sends, but a strap-driven wake-up hasn't been confirmed on our side yet, so please keep a backup alarm for now.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 6)
+                    rowDivider
+                    HStack(spacing: 8) {
+                        Image(systemName: alarmStatusIcon).foregroundStyle(alarmStatusTint)
+                        Text(alarmStatusText).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
             }
-            .onChangeCompat(of: behavior.smartAlarmEnabled) { _ in model.applySmartAlarm() }
-            .onChangeCompat(of: behavior.smartAlarmMinutes) { _ in model.applySmartAlarm() }
-            .onChangeCompat(of: behavior.smartAlarmWeekdays) { _ in model.applySmartAlarm() }
+            // Step 2: enable/disable path → coordinator + phone backup (no double-arm with direct BLE).
+            .onChangeCompat(of: behavior.smartAlarmEnabled) { _ in
+                if behavior.smartAlarmEnabled {
+                    WakeAlarmNotifier.requestAuthorization()
+                    WakeAlarmNotifier.schedule(minutesSinceMidnight: behavior.smartAlarmMinutes)
+                    model.armCoordinator.arm(wakeDate: nextSmartWake)
+                    showArmSheet = true
+                } else {
+                    model.ble.disableStrapAlarm()
+                    WakeAlarmNotifier.cancel()
+                }
+            }
+            // Step 3: weekday changes re-arm through the SAME coordinator path (weekday-aware date),
+            // but without presenting the sheet — a day-circle tap shouldn't pop the dialog. Routing
+            // through the coordinator (not the old direct applySmartAlarm) avoids racing an in-flight
+            // read-back confirm: arm() calls reset() first, tearing down any prior confirm cleanly.
+            // Note: the phone backup (WakeAlarmNotifier) is daily-only for now — only the firmware
+            // alarm is weekday-precise; a weekday-aware phone backup is out of scope here.
+            .onChangeCompat(of: behavior.smartAlarmWeekdays) { _ in
+                guard behavior.smartAlarmEnabled else { return }
+                WakeAlarmNotifier.schedule(minutesSinceMidnight: behavior.smartAlarmMinutes)
+                model.armCoordinator.arm(wakeDate: nextSmartWake)
+            }
+            // Step 3: debounced time-picker changes → coordinator + phone backup (single arming path,
+            // replaces the old per-tick onChangeCompat to avoid sheet on every drag tick).
+            .onReceive(
+                behavior.$smartAlarmMinutes
+                    .dropFirst()
+                    .debounce(for: .milliseconds(800), scheduler: RunLoop.main)
+            ) { _ in
+                guard behavior.smartAlarmEnabled else { return }
+                WakeAlarmNotifier.schedule(minutesSinceMidnight: behavior.smartAlarmMinutes)
+                model.armCoordinator.arm(wakeDate: nextSmartWake)
+                showArmSheet = true
+            }
+        }
+        .sheet(isPresented: $showArmSheet) {
+            ArmAlarmSheet(
+                coordinator: model.armCoordinator,
+                onDone: { showArmSheet = false },
+                onRetry: {
+                    model.armCoordinator.arm(wakeDate: nextSmartWake)
+                }
+            )
+        }
+    }
+
+    /// The next firmware-alarm fire date, honouring the selected weekdays (same logic as
+    /// `AppModel.applySmartAlarm`). All UI arm triggers use this so enable / time-change / weekday /
+    /// retry agree on one instant — and agree with the background daily re-arm. `nextSmartAlarmDate`
+    /// is a pure `nonisolated static` func; the `??` covers its only nil case (a corrupted weekday set
+    /// with no valid day) by falling back to the weekday-blind next occurrence.
+    private var nextSmartWake: Date {
+        AppModel.nextSmartAlarmDate(minutes: behavior.smartAlarmMinutes, weekdays: behavior.smartAlarmWeekdays)
+            ?? WakeTime.next(minutesSinceMidnight: behavior.smartAlarmMinutes)
+    }
+
+    // MARK: Alarm status helpers (driven by live.alarmArmConfirmed)
+
+    private var alarmStatusIcon: String {
+        switch live.alarmArmConfirmed {
+        case .some(true): return "checkmark.seal.fill"
+        case .some(false): return "exclamationmark.triangle.fill"
+        case .none: return "clock.arrow.circlepath"
+        }
+    }
+
+    private var alarmStatusTint: Color {
+        switch live.alarmArmConfirmed {
+        case .some(true): return StrandPalette.accent
+        case .some(false): return StrandPalette.statusWarning
+        case .none: return StrandPalette.textSecondary
+        }
+    }
+
+    private var alarmStatusText: String {
+        switch live.alarmArmConfirmed {
+        case .some(true): return "Confirmed on your strap — buzzes even with NOOP closed."
+        case .some(false): return "Strap didn't store it — phone backup is set."
+        case .none: return "Syncing to your strap…"
         }
     }
 

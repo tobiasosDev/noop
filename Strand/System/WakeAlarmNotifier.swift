@@ -26,7 +26,7 @@ enum WakeAlarmNotifier {
             guard settings.authorizationStatus == .authorized else { return }
             let content = UNMutableNotificationContent()
             content.title = "Wake up"
-            content.body = "Backup alarm from NOOP."
+            content.body = "Phone backup for your strap alarm — your WHOOP should have buzzed too."
             content.sound = .default
             let trigger = UNCalendarNotificationTrigger(
                 dateMatching: fireComponents(minutesSinceMidnight: minutesSinceMidnight),
