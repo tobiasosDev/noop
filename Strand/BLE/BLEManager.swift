@@ -2713,3 +2713,12 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
         }
     }
 }
+
+// MARK: - AlarmArmDriving
+
+extension BLEManager: AlarmArmDriving {
+    /// `connect(model:)` has a default argument, satisfying the protocol's no-arg `connect()`.
+    func connect() { connect(model: .persisted) }
+    var isConnected: Bool { state.connected }
+    // scanForWhoops(), armStrapAlarm(at:), disableStrapAlarm() already satisfy the protocol directly.
+}

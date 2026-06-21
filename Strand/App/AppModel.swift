@@ -45,6 +45,10 @@ final class AppModel: ObservableObject {
     /// On-device WHOOP-style recovery/strain/sleep computation from raw strap streams.
     let intelligence: IntelligenceEngine
 
+    /// Orchestrates the guided alarm-arm flow: connect → write → confirm. Uses `ble` as the driver
+    /// and observes `live` (= `ble.state`) for connection and read-back confirmation events.
+    lazy var armCoordinator = AlarmArmCoordinator(driver: ble, live: ble.state)
+
     /// Opt-in AI coach (bring-your-own-key) — the one networked feature, off until the user enables it.
     let coach: AICoachEngine
 
