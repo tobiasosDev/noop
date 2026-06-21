@@ -216,7 +216,11 @@ enum RouteStore {
 
     /// Encode a route map to JSON. Returns nil only if encoding fails (never expected for this shape).
     static func encodeMap(_ map: [String: WorkoutRoute]) -> Data? {
-        try? JSONEncoder().encode(map)
+        // Drop non-finite distances before encoding: JSONEncoder throws on NaN/±Inf, which
+        // would silently discard the entire map (including valid entries). Filtering here
+        // mirrors the read-side guard in decodeMap and keeps the on-disk blob always clean.
+        let clean = map.filter { $0.value.distanceM.isFinite && $0.value.distanceM >= 0 }
+        return try? JSONEncoder().encode(clean)
     }
 
     /// Decode a route map from JSON, dropping any entry whose distance isn't a finite, non-negative

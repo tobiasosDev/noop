@@ -24,7 +24,8 @@ public enum ExperimentalBrand: String, CaseIterable, Sendable, Equatable {
 
     /// Best-effort brand from an advertised name. Returns `nil` for an unrecognised name (no wrong guess).
     public static func recognise(name: String) -> ExperimentalBrand? {
-        let n = name.lowercased()
+        // Fold to ASCII-equivalent so accented product names (e.g. Garmin "vívoactive") still match.
+        let n = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         // Order matters: check the most specific tokens first so e.g. "Amazfit Helio" → amazfit and a
         // bare "Mi Band" → miBand. Mi Band is a Huami sub-brand, so we test its tokens before amazfit's.
         if n.contains("mi band") || n.contains("miband") || n.contains("smart band") || n.contains("xiaomi") {
