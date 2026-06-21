@@ -1,0 +1,25 @@
+Strand/BLE/BLEManager.swift
+  s_d1017921839bd1::t_4804478d8c0205 2716-2724
+Strand/BLE/AlarmArmCoordinator.swift
+  s_d1017921839bd1::t_2e34f6d5b82f84 1-120
+Strand/App/AppModel.swift
+  s_d1017921839bd1::t_67d259aad5ef88 48-51
+StrandTests/AlarmArmCoordinatorTests.swift
+  s_d1017921839bd1::t_2acdcaa67632f3 1-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "8a8525a9e8fed0e526f94e7ad09aeb92f02ba83d",
+  "prompts": {},
+  "sessions": {
+    "s_d1017921839bd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facc6b0e-499f-4f5a-b0d3-0ff066b83580",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
