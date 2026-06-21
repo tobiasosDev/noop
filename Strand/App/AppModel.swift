@@ -691,14 +691,15 @@ final class AppModel: ObservableObject {
         // An empty input means "every day" (backward compatible). A non-empty selection that filters to
         // nothing (only out-of-range numbers) has no valid day to fire on, so it's nil, not a daily alarm.
         if !weekdays.isEmpty && valid.isEmpty { return nil }
-        let hour = minutes / 60
-        let minute = minutes % 60
         // Scan today (offset 0) through +7 days so a once-a-week alarm picked for "today, already
         // passed" still resolves to the same weekday next week.
+        // WakeTime.next supplies the per-day fire instant (single source of truth for "next HH:MM").
         for offset in 0...7 {
             guard let day = cal.date(byAdding: .day, value: offset, to: now),
-                  let fire = cal.date(bySettingHour: hour, minute: minute, second: 0, of: day)
+                  let startOfDay = cal.date(from: cal.dateComponents([.year, .month, .day], from: day))
             else { continue }
+            // Pass startOfDay so WakeTime.next always lands on this calendar day (never rolls forward).
+            let fire = WakeTime.next(minutesSinceMidnight: minutes, from: startOfDay, calendar: cal)
             if fire <= now { continue }
             if weekdays.isEmpty { return fire }
             if valid.contains(cal.component(.weekday, from: fire)) { return fire }
