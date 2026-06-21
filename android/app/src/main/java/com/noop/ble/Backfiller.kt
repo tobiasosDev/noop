@@ -165,6 +165,13 @@ class Backfiller(
     private val loggedLayoutVersions = HashSet<Int>()
 
     /**
+     * #547: logged once per session the first time the #547 ingest gate drops an implausible-timestamp
+     * record (a bad strap clock/flash emitting far-past / year-2027-spike / future-dated `unix` values).
+     * Surfaces a bad-clock strap in the shared log without spamming a line per chunk. Reset in [begin].
+     */
+    private var loggedImplausibleClock = false
+
+    /**
      * Called by [WhoopBleClient] when the strap signals a historical offload is beginning.
      * chunkOpen starts TRUE: the biometric replay streams records immediately and sends one
      * HISTORY_START then repeated HISTORY_ENDs, so we must accumulate from the outset.
@@ -178,6 +185,7 @@ class Backfiller(
         sessionNightKeys.clear()
         loggedNoCursor = false
         loggedLayoutVersions.clear()
+        loggedImplausibleClock = false
         synchronized(chunkLock) {
             chunk.clear()
             chunkOpen = true
@@ -250,6 +258,18 @@ class Backfiller(
             // each distinct layout once per session.
             frames.firstNotNullOfOrNull { decodeHistorical(it, family)?.get("hist_version") as? Int }
                 ?.let { if (loggedLayoutVersions.add(it)) log("Backfill: historical records use layout v$it") }
+            // #547: the strap is emitting records with implausible timestamps (a bad clock/flash —
+            // far-past, a year-2027 spike, or future-dated `unix`). The ingest gate dropped them so they
+            // can't pollute the day-windowed analytics; surface it ONCE per session so a bad-clock strap
+            // is visible in a shared log (the strap clock is genuinely bad — this is NOOP being robust).
+            if (decoded.droppedImplausibleTs > 0 && !loggedImplausibleClock) {
+                loggedImplausibleClock = true
+                log(
+                    "Backfill: WARNING dropped ${decoded.droppedImplausibleTs} record(s) with an " +
+                        "implausible timestamp (bad strap clock — far-past or future-dated); they are " +
+                        "excluded so they can't misdate history.",
+                )
+            }
             // #77 / #91: HISTORICAL_DATA record frames that fail decode (CRC failure, or an unmapped
             // layout the v24 fallback's plausibility gate also rejects) used to be acked anyway — the
             // strap trims acked history, so the user's ONLY copy of those records was permanently

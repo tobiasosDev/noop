@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -72,6 +73,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.analytics.AnalyticsEngine
 import com.noop.analytics.SleepDebt
 import com.noop.analytics.SleepDebtLedger
+import com.noop.analytics.SleepStageTotals
 import com.noop.data.DailyMetric
 import com.noop.data.SleepSession
 import kotlinx.coroutines.launch
@@ -154,6 +156,17 @@ fun SleepScreen(
             (imported + computedOnly).sortedBy { it.effectiveStartTs }
         }.getOrDefault(emptyList())
         nightOffset = 0
+    }
+
+    // The user's LEARNED habitual midsleep (local time-of-day seconds), or null under the cold-start
+    // threshold. Loaded from `vm.repo.habitualMidsleepSec` — the SAME value AnalyticsEngine.analyzeDay
+    // threads into the daily total — and fed into the main-night selector so the hero, the naps split,
+    // and the edit target pick the SAME block the analytics rollup did, for a shift/late sleeper too.
+    // null keeps the existing cold-start overnight-band fallback. Keyed on `days` so it refreshes
+    // alongside `sleeps`. Mirrors iOS SleepView.habitualMidsleepSec. (#547)
+    var habitualMidsleep by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(days) {
+        habitualMidsleep = runCatching { vm.repo.habitualMidsleepSec("my-whoop") }.getOrNull()
     }
 
     // Export-verbatim sleep figures (sleep_performance / consistency / need / debt) — the
@@ -258,10 +271,14 @@ fun SleepScreen(
     // The navigated night, decoded once per (offset, data) change — chevron taps re-pick
     // instantly without re-parsing stagesJSON on every recomposition. The offset now indexes
     // DAYS (navDays), so a day with a detected night always resolves to that night. (#160, #59)
-    val night = remember(nightOffset, navDays, days) { selectNight(navDays, days, nightOffset) }
+    val night = remember(nightOffset, navDays, days, habitualMidsleep) {
+        selectNight(navDays, days, nightOffset, habitualMidsleep)
+    }
 
-    // The whole screen follows the selected night: the grid/trends window ends on its day,
-    // exactly as it followed the old day selector. Null when that day has no stage minutes.
+    // The HERO follows the selected night (its stage breakdown comes from that day's row); the
+    // at-a-glance TILES, the debt ledger, the personal need and the trend stay full-history /
+    // latest-anchored, matching iOS SleepView. `selectedDay` re-points only the hero. Model is null
+    // when the selected day has no stage minutes. (#5)
     val model = remember(days, night, imported) {
         buildSleepModel(days, night?.session, imported, selectedDay = night?.dayKey)
     }
@@ -363,6 +380,7 @@ fun SleepScreen(
                 },
                 onPickNightDate = onPickNightDate,
                 napBlocks = night?.napBlocks ?: emptyList(),
+                habitualMidsleepSec = habitualMidsleep,
             )
             if (model != null) {
                 Spacer(Modifier.height(Metrics.selectorTopUp))
@@ -521,6 +539,10 @@ private fun Hero(
     onAddNap: (Long, Long) -> Unit = { _, _ -> },
     onPickNightDate: ((LocalDate) -> Unit)? = null,
     napBlocks: List<SleepSession> = emptyList(),
+    // The LEARNED habitual midsleep the engine threaded into the daily total, passed to the main-night
+    // selector so the "why this is your main sleep" reason matches the block the hero shows — for a
+    // shift/late sleeper too. null = cold-start band. Mirrors iOS SleepView.habitualMidsleepSec. (C1)
+    habitualMidsleepSec: Long? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         NightNavHeader(nightOffset, lastIndex, clock, onNavigate, session, onUpdateTimes, onDeleteSession, onAddNap, onPickNightDate)
@@ -601,6 +623,7 @@ private fun Hero(
                 naps = napBlocks,
                 onEditNapTimes = onUpdateTimes,
                 onDeleteNap = onDeleteSession,
+                habitualMidsleepSec = habitualMidsleepSec,
             )
         }
     }
@@ -620,6 +643,9 @@ private fun NapsCard(
     naps: List<SleepSession>,
     onEditNapTimes: (SleepSession, Long, Long) -> Unit,
     onDeleteNap: (SleepSession) -> Unit,
+    // The LEARNED habitual midsleep, fed to the main-night selector so the "why this is your main sleep"
+    // reason matches the block the hero shows. null = cold-start band. Mirrors iOS SleepView. (C1)
+    habitualMidsleepSec: Long? = null,
 ) {
     val mainMin = (main.endTs - main.effectiveStartTs) / 60.0
     val napMin = naps.sumOf { (it.endTs - it.effectiveStartTs) / 60.0 }
@@ -649,7 +675,88 @@ private fun NapsCard(
                     }
                 }
             }
+            // Provenance (C4) + the "why this is your main sleep" explainer (C1). The badge names the REAL
+            // per-day merge winner; the info affordance reveals the foundation reason for the pick. Mirrors
+            // iOS SleepView.mainSleepFooter. (spec 2026-06-20 C1/C4)
+            Box(Modifier.fillMaxWidth().height(Metrics.divider).background(Palette.hairline))
+            MainSleepFooter(main = main, naps = naps, habitualMidsleepSec = habitualMidsleepSec)
         }
+    }
+}
+
+/**
+ * The Naps card footer: the night's provenance badge (the REAL per-day merge winner) next to a tappable
+ * "Why this sleep?" affordance that reveals the foundation [SleepStageTotals.MainNightReason] copy inline,
+ * so the pick is explainable on the spot. The reason words + the provenance wording are IDENTICAL to iOS
+ * SleepView.mainSleepFooter/whyPopover. Compose has no anchored popover idiom here, so the reveal is an
+ * inline disclosure — the COPY and LOGIC match Swift exactly, only the reveal chrome differs.
+ * (spec 2026-06-20 C1/C4)
+ */
+@Composable
+private fun MainSleepFooter(
+    main: SleepSession,
+    naps: List<SleepSession>,
+    habitualMidsleepSec: Long?,
+) {
+    val reason = mainSleepReasonText(listOf(main) + naps, habitualMidsleepSec)
+    // C4 — the real merge winner, the SAME wording the By-Day badge uses ("On-device" / "Whoop" /
+    // "Apple Health"), keyed on the main block's source. Mirrors iOS SleepView.nightSource.
+    val (sourceText, sourceTint) = daySourceBadge(main.deviceId)
+    var showWhy by remember(main.startTs) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space10)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SourceBadge(text = sourceText, tint = sourceTint)
+            Spacer(Modifier.weight(1f))
+            if (reason != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .clickable { showWhy = !showWhy }
+                        .semantics { contentDescription = "Why this is your main sleep" },
+                ) {
+                    Icon(
+                        Icons.Filled.Info,
+                        contentDescription = null,
+                        tint = Palette.restColor,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text("Why this sleep?", style = NoopType.footnote, color = Palette.restColor)
+                }
+            }
+        }
+        if (showWhy && reason != null) {
+            Text("About your main sleep", style = NoopType.subhead, color = Palette.textPrimary)
+            Text(reason, style = NoopType.footnote, color = Palette.textSecondary)
+        }
+    }
+}
+
+/**
+ * The verbatim "why this is your main sleep" reason for the day's [blocks], with {DUR} filled as "Xh Ym"
+ * from the chosen block's asleep duration — driven entirely by the foundation [SleepStageTotals.MainNightReason]
+ * so the explainer states exactly what the selector decided (never a re-derived guess). Resolved via the
+ * SAME [SleepStageTotals.mainNightSelection] API the analytics pick uses, with the SAME learned habitual
+ * the hero used, so the words match the block the hero shows. null only when the day has no blocks. The
+ * copy is byte-identical to iOS SleepView.mainSleepReasonText. (spec 2026-06-20 C1)
+ */
+internal fun mainSleepReasonText(blocks: List<SleepSession>, habitualMidsleepSec: Long?): String? {
+    val sel = SleepStageTotals.mainNightSelection(
+        blocks.map { SleepStageTotals.NightBlock(it.effectiveStartTs, it.endTs) },
+        uiTzOffsetSec(),
+        habitualMidsleepSec,
+    ) ?: return null
+    // Round to whole minutes for "Xh Ym", matching Swift durationText(sel.asleepMinutes).
+    val dur = durationText(sel.asleepSec / 60.0)
+    return when (sel.reason) {
+        SleepStageTotals.MainNightReason.onlyBlock ->
+            "This is your only sleep block today."
+        SleepStageTotals.MainNightReason.longest ->
+            "Picked as your main sleep because it was your longest block ($dur)."
+        SleepStageTotals.MainNightReason.longestNearUsual ->
+            "Picked as your main sleep because it was your longest block ($dur), near your usual bedtime."
+        SleepStageTotals.MainNightReason.alignedToUsual ->
+            "Picked as your main sleep because it started near your usual sleep time."
     }
 }
 
@@ -676,33 +783,69 @@ private fun NapRow(
     var editingStart by remember(nap.startTs) { mutableStateOf(false) }
     var editingEnd by remember(nap.startTs) { mutableStateOf(false) }
     var pendingStart by remember(nap.startTs) { mutableStateOf(0L) }
+    // C1 — "why this is a nap" explainer: everything other than the chosen main block is logged as a nap,
+    // with the Edit next-step. Inline disclosure (Compose has no anchored popover here); the COPY matches
+    // iOS SleepView.whyPopover(napSuffix:) exactly. (spec 2026-06-20)
+    var showWhy by remember(nap.startTs) { mutableStateOf(false) }
     val window = "${clockTimeLabel(nap.effectiveStartTs)}–${clockTimeLabel(nap.endTs)}"
     val durMin = (nap.endTs - nap.effectiveStartTs) / 60.0
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics(mergeDescendants = true) { contentDescription = "Nap $window, ${durationText(durMin)}" },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.Bedtime, contentDescription = null, tint = Palette.restColor, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(Metrics.space10))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(window, style = NoopType.body, color = Palette.textPrimary)
-            Text(durationText(durMin), style = NoopType.overline, color = Palette.textTertiary)
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space10)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // A11Y: the row's readable label lives on the NON-actionable leading content (decorative
+            // icon + window/duration text) as a single merged node, so the three action IconButtons
+            // below stay individually focusable with their own contentDescriptions (TalkBack-reachable).
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Nap $window, ${durationText(durMin)}"
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Bedtime, contentDescription = null, tint = Palette.restColor, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(Metrics.space10))
+                Column {
+                    Text(window, style = NoopType.body, color = Palette.textPrimary)
+                    Text(durationText(durMin), style = NoopType.overline, color = Palette.textTertiary)
+                }
+            }
+            // Each action gets a 48dp IconButton touch target and keeps its own contentDescription.
+            IconButton(onClick = { showWhy = !showWhy }) {
+                Icon(
+                    Icons.Filled.Info,
+                    contentDescription = "Why this is logged as a nap",
+                    tint = Palette.restColor,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            IconButton(onClick = { editingStart = true }) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = if (nap.userEdited) "Edit nap times (edited)" else "Edit nap times",
+                    tint = Palette.restColor,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            IconButton(onClick = { onDeleteNap(nap) }) {
+                Icon(
+                    Icons.Filled.DeleteOutline,
+                    contentDescription = "Delete this nap",
+                    tint = Palette.textTertiary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
-        Icon(
-            Icons.Filled.Edit,
-            contentDescription = if (nap.userEdited) "Edit nap times (edited)" else "Edit nap times",
-            tint = Palette.restColor,
-            modifier = Modifier.size(18.dp).clickable { editingStart = true },
-        )
-        Spacer(Modifier.width(Metrics.space12))
-        Icon(
-            Icons.Filled.DeleteOutline,
-            contentDescription = "Delete this nap",
-            tint = Palette.textTertiary,
-            modifier = Modifier.size(18.dp).clickable { onDeleteNap(nap) },
-        )
+        if (showWhy) {
+            Text("About this nap", style = NoopType.subhead, color = Palette.textPrimary)
+            Text(
+                "Logged as a nap. Wrong? Tap Edit to adjust your sleep and wake times.",
+                style = NoopType.footnote,
+                color = Palette.textTertiary,
+            )
+        }
     }
 
     // Edit step 1 — nap START time-of-day, kept on the nap's own calendar day (only the hour/minute move).
@@ -1917,11 +2060,15 @@ internal fun selectNight(
     navDays: List<List<SleepSession>>,
     days: List<DailyMetric>,
     offset: Int,
+    // The LEARNED habitual midsleep the engine threaded into the daily total, so the hero, the naps split,
+    // and the edit target pick the SAME block the analytics rollup did — for a shift/late sleeper too. null
+    // = cold-start band. (#547)
+    habitualMidsleepSec: Long? = null,
 ): HeroNight? {
     if (navDays.isEmpty()) return null
     val dayIdx = offset.coerceIn(0, navDays.size - 1)
     val blocks = navDays[dayIdx]
-    val session = mainSleepBlock(blocks) ?: return null
+    val session = mainSleepBlock(blocks, habitualMidsleepSec) ?: return null
     // Everything else on the day is a nap / secondary block, oldest→newest for the naps card. (#518)
     val napBlocks = blocks.filter { it.startTs != session.startTs }
         .sortedBy { it.effectiveStartTs }
@@ -1936,24 +2083,34 @@ internal fun selectNight(
 }
 
 /**
- * The day's MAIN sleep block — the night people mean by "last night": the LONGEST block, preferring
- * an OVERNIGHT-anchored one (onset ≥ 20:00 or < 10:00 local) so a long lazy afternoon nap can't
- * out-rank a slightly shorter real night. Mirrors iOS SleepView.mainBlock / editTarget. (#518)
+ * The day's MAIN sleep block — the night people mean by "last night" — resolved by the SINGLE shared
+ * selector ([SleepStageTotals.mainNightIndex]) the analytics rollup uses: the LEARNED-TIMING score
+ * (asleep span + alignment bonus on each block's EFFECTIVE onset) rather than a re-derived overnight
+ * gate, so the hero, the edit affordance, the analytics total, and the Sleep tab ALL resolve to the
+ * identical block (the whole point of #525/#547). Scores on each block's EFFECTIVE onset (what the user
+ * sees) and returns the owning session. No selector-side gap-bridge — the engine doesn't bridge at this
+ * seam either (the stager already bridged), so selecting over the blocks as-is keeps the UI byte-aligned
+ * with the analytics pick. [habitualMidsleepSec] is the SAME learned value the engine threads into the
+ * persisted totals (loaded via `vm.repo.habitualMidsleepSec`), so a shift/late sleeper's hero and analytics
+ * total resolve to the identical block; null keeps the cold-start overnight-band bonus, which matches a
+ * cold-start engine run. Mirrors iOS SleepView.mainNightSession. (#518/#547)
  */
-internal fun mainSleepBlock(blocks: List<SleepSession>): SleepSession? =
-    blocks.maxWithOrNull(
-        compareBy<SleepSession> { if (isOvernightOnset(it.effectiveStartTs)) 1 else 0 }
-            .thenBy { it.endTs - it.effectiveStartTs },
-    )
-
-/** True when a block's onset falls in the overnight window (≥ 20:00 or < 10:00 local) — the hours a
- *  real night begins. A block onset in the afternoon is a nap, never the main night, even if long.
- *  Mirrors iOS SleepView.isOvernightOnset. (#518) */
-internal fun isOvernightOnset(ts: Long): Boolean {
-    val cal = java.util.Calendar.getInstance().apply { timeInMillis = ts * 1000L }
-    val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
-    return h >= 20 || h < 10
+internal fun mainSleepBlock(blocks: List<SleepSession>, habitualMidsleepSec: Long? = null): SleepSession? {
+    if (blocks.isEmpty()) return null
+    val idx = SleepStageTotals.mainNightIndex(
+        blocks.map { SleepStageTotals.NightBlock(it.effectiveStartTs, it.endTs) },
+        uiTzOffsetSec(),
+        habitualMidsleepSec,
+    ) ?: return null
+    return blocks[idx]
 }
+
+/** The device's current UTC offset (seconds east), evaluated per pick, fed to the selector's `offsetSec`
+ *  so the timing test reads the user's clock via the SAME `offsetSec` math the engine uses
+ *  ([SleepStageTotals.localSecOfDay]) instead of `Calendar.get(HOUR_OF_DAY)` — the duplicated, DST-fragile
+ *  gate the audit flagged. Mirrors the engine's `TimeZone.getDefault().getOffset(...)`. (#547) */
+internal fun uiTzOffsetSec(): Long =
+    java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000L
 
 /**
  * Resolve what the hero shows: the day-metric model when it resolved for the selected
@@ -2045,8 +2202,12 @@ internal fun buildSleepModel(
     selectedDay: String? = null,
 ): SleepModel? {
     val effectiveDay = selectedDay ?: days.lastOrNull()?.day ?: return null
-    val windowDays = days.filter { it.day <= effectiveDay }
-    val latest = windowDays.lastOrNull {
+    // The HERO night = the selected day's stage-bearing row. The TILE / debt / need / trend
+    // window, by contrast, is the FULL history (latest-anchored) — matching iOS SleepView, which
+    // builds every tile series + the debt ledger + the personal need from `repo.days` regardless
+    // of which night the hero is browsing. Browsing a past night only re-points the hero, never
+    // the at-a-glance tiles or the "Last 14 nights" ledger. One cross-platform definition. (#5)
+    val latest = days.lastOrNull {
         it.day == effectiveDay && (it.deepMin ?: 0.0) + (it.remMin ?: 0.0) + (it.lightMin ?: 0.0) > 0.0
     }
         ?: return null
@@ -2061,20 +2222,13 @@ internal fun buildSleepModel(
     val rem = sessionStageMins?.rem ?: latest.remMin ?: 0.0
     val light = sessionStageMins?.light ?: latest.lightMin ?: 0.0
 
-    // When the passed session belongs to this night, its window (wake − onset) becomes the
-    // total-in-bed figure so a bed/wake edit flows straight through every metric (performance,
-    // hours vs needed, debt …) without waiting on a re-import.
-    val sessionDurationMin = session
-        ?.takeIf { AnalyticsEngine.dayString(it.endTs) == latest.day || localDayString(it.endTs) == latest.day }
-        ?.let { ((it.endTs - it.effectiveStartTs) / 60.0).takeIf { d -> d > 0.0 } } // EFFECTIVE window (PR #395)
-    // metricsWindow swaps the selected night's totalSleepMin for the edited duration in the
-    // per-tile passes. typicalTotalMin intentionally keeps the UNMODIFIED windowDays so one
-    // edited night never skews the personal mean.
-    val metricsWindow = if (sessionDurationMin != null)
-        windowDays.dropLast(1) + latest.copy(totalSleepMin = sessionDurationMin)
-    else windowDays
-
-    val asleep = sessionDurationMin ?: latest.totalSleepMin ?: (deep + rem + light)
+    // Hero awake estimate works off ASLEEP minutes (totalSleepMin), never the in-bed window. The
+    // old code substituted the edited session's (wake − onset) duration — TIME IN BED — for the
+    // asleep figure here and across every per-tile pass, which inflated awake / hours-vs-needed /
+    // debt vs the actual sleep. iOS never did this (it derives awake straight from the decoded
+    // stage segments). Dropped for parity (#1/#7); a sleep edit now reaches the tiles via the
+    // re-score path, not a display-time in-bed swap.
+    val asleep = latest.totalSleepMin ?: (deep + rem + light)
     // Awake estimate: prefer (time-in-bed − asleep) implied by efficiency; else from
     // disturbances; matches the macOS "awake minutes" carried in the stagesJSON.
     val effFrac = latest.efficiency?.let { if (it > 1.0) it / 100.0 else it }
@@ -2086,52 +2240,50 @@ internal fun buildSleepModel(
     val stages = Stages(awake = awake, light = light, deep = deep, rem = rem)
     if (stages.total <= 0.0) return null
 
-    // Typical = mean across nights with data (mirrors typicalTotalMin / typicalStageMin).
-    val typicalTotalMin = mean(windowDays.mapNotNull { it.totalSleepMin }.filter { it > 0.0 })
-    val typicalDeepMin = mean(windowDays.mapNotNull { it.deepMin }.filter { it > 0.0 })
-    val typicalRemMin = mean(windowDays.mapNotNull { it.remMin }.filter { it > 0.0 })
-    val typicalLightMin = mean(windowDays.mapNotNull { it.lightMin }.filter { it > 0.0 })
+    // Typical = mean across ALL nights with data (full history, latest-anchored — never bounded
+    // to the browsed night), mirroring iOS typicalTotalMin / typicalStageMin over repo.days.
+    val typicalTotalMin = mean(days.mapNotNull { it.totalSleepMin }.filter { it > 0.0 })
+    val typicalDeepMin = mean(days.mapNotNull { it.deepMin }.filter { it > 0.0 })
+    val typicalRemMin = mean(days.mapNotNull { it.remMin }.filter { it > 0.0 })
+    val typicalLightMin = mean(days.mapNotNull { it.lightMin }.filter { it > 0.0 })
 
     // Personal sleep need (minutes): mean asleep, floored at 7.5h (450 min).
     val needMin = max(450.0, typicalTotalMin ?: 450.0)
 
-    // Per-tile metrics — each a full pass over metricsWindow so the selected night reflects
-    // the edited session duration. Where the WHOOP export carried the figure verbatim
+    // Per-tile metrics — each a full pass over the FULL day history (asleep totals, no in-bed
+    // substitution), latest = the most-recent day. Mirrors iOS SleepView, where every tile series
+    // is `metric { … }` over repo.days. Where the WHOOP export carried the figure verbatim
     // (metricSeries), it wins per day; the on-device recomputation is the APPROXIMATE fallback.
-    val performance = metric(metricsWindow) { d ->
+    val performance = metric(days) { d ->
         imported.performance[d.day]   // WHOOP's own 0–100 figure wins per day
             ?: d.totalSleepMin?.takeIf { it > 0.0 && needMin > 0.0 }
                 ?.let { minOf(100.0, it / needMin * 100.0) }   // APPROXIMATE fallback
     }
-    val efficiency = metric(metricsWindow) { d ->
+    val efficiency = metric(days) { d ->
         d.efficiency?.let { if (it <= 1.0) it * 100.0 else it }
     }
     val consistency = run {
         // Prefer the imported sleep_consistency series, but only when it covers the latest
         // night — otherwise "latest" would silently be a months-old import-era value.
-        val lastDay = metricsWindow.lastOrNull()?.day
+        val lastDay = days.lastOrNull()?.day
         if (lastDay != null && imported.consistency[lastDay] != null) {
-            val series = metricsWindow.mapNotNull { imported.consistency[it.day] }
+            val series = days.mapNotNull { imported.consistency[it.day] }
             Metric(series.lastOrNull(), mean(series), series)
         } else {
-            // Use windowDays (original DailyMetric totalSleepMin) not metricsWindow: the
-            // metricsWindow substitutes sessionDurationMin (time in bed = endTs−startTs)
-            // which is always larger than totalSleepMin (actual asleep time). One inflated
-            // outlier in the spread pushes SD past 90 min → score collapses to 0%.
-            consistencySeries(windowDays)
+            consistencySeries(days)
         }
     }
-    val hoursVsNeeded = metric(metricsWindow) { d ->
+    val hoursVsNeeded = metric(days) { d ->
         val need = imported.needMin[d.day] ?: needMin   // imported need wins per day
         d.totalSleepMin?.takeIf { it > 0.0 && need > 0.0 }?.let { it / need * 100.0 }
     }
-    val restorative = metric(metricsWindow) { d ->
+    val restorative = metric(days) { d ->
         val dp = d.deepMin; val rm = d.remMin; val sl = d.totalSleepMin
         if (dp != null && rm != null && sl != null && sl > 0.0) (dp + rm) / sl * 100.0 else null
     }
-    val respiratory = metric(metricsWindow) { it.respRateBpm }
+    val respiratory = metric(days) { it.respRateBpm }
     val sleepDebt = run {
-        val series = metricsWindow.mapNotNull { d ->
+        val series = days.mapNotNull { d ->
             imported.debtMin[d.day]   // minutes, export-verbatim
                 ?: d.totalSleepMin?.takeIf { it > 0.0 && needMin > 0.0 }
                     ?.let { max(0.0, needMin - it) }   // APPROXIMATE fallback
@@ -2139,9 +2291,9 @@ internal fun buildSleepModel(
         Metric(series.lastOrNull(), mean(series), series)
     }
 
-    // 14-day trend set ending on the selected day (metricsWindow so the last bar reflects
-    // the edited session window).
-    val trendRows = metricsWindow.filter { (it.totalSleepMin ?: 0.0) > 0.0 }.takeLast(14)
+    // Trend set = the most-recent nights with data (asleep totals, full history — latest-anchored,
+    // not the browsed night). Mirrors iOS's trailing trend over repo.days.
+    val trendRows = days.filter { (it.totalSleepMin ?: 0.0) > 0.0 }.takeLast(14)
     val trendHours = trendRows.mapNotNull { it.totalSleepMin?.let { minutes -> minutes / 60.0 } }
     val trendNeedHours = trendRows.map { row -> ((imported.needMin[row.day] ?: needMin) / 60.0) }
     val trendDebtHours = trendRows.map { row ->
@@ -2163,12 +2315,14 @@ internal fun buildSleepModel(
         ?.let { parsePersistedSegments(it.stagesJSON) }
         ?.map { seg -> seg.stage to ((seg.end - seg.start) / 60f) }
 
-    // Rolling 14-night sleep-debt ledger from the window ending on the selected night, using
-    // the SAME personal need the tiles use (`needMin`, ≥ 7.5 h — the per-user override over the
-    // 8 h default). The analytics caps to the most-recent 14 counted nights and skips no-data
-    // nights. (#242)
+    // Rolling 14-night sleep-debt ledger over the FULL day history (the analytics caps to the
+    // most-recent 14 counted nights and skips no-data nights), using the SAME personal need the
+    // tiles use (`needMin`, ≥ 7.5 h — the per-user override over the 8 h default). Full history,
+    // not the browsed-night window: the ledger is a "Last 14 nights" at-a-glance summary that
+    // matches the debt TILE (both now read asleep totals over `days`), and mirrors iOS's
+    // debtLedger over repo.days. (#242, #5)
     val sleepDebtLedger = SleepDebt.ledger(
-        series = windowDays.map { it.day to it.totalSleepMin },
+        series = days.map { it.day to it.totalSleepMin },
         needHours = needMin / 60.0,
     )
 
@@ -2408,10 +2562,9 @@ internal fun parsePersistedSegments(json: String?): List<PersistedSegment>? {
  */
 @Composable
 internal fun HoursVsNeededCard(m: SleepModel) {
-    // trendHours.last() reflects metricsWindow which substitutes sessionDurationMin (the
-    // edited endTs − startTs) for totalSleepMin — so a wake-time edit updates this value
-    // immediately. stages.asleep stays stale for imported nights: reclipMinutes adds extra
-    // time as awake (not sleep stages), leaving light+deep+rem — and therefore asleep — unchanged.
+    // trendHours.last() is the most-recent night's ASLEEP total (totalSleepMin / 60) over the
+    // full history — the same asleep figure the tiles and the debt ledger read, never an in-bed
+    // window. Falls back to the hero stages' asleep sum when no trend rows exist.
     val sleptH = m.trendHours.lastOrNull() ?: (m.stages.asleep / 60.0)
     val neededH = (m.trendNeedHours.lastOrNull() ?: 8.0)
     val debtH = m.trendDebtHours.lastOrNull() ?: 0.0

@@ -74,4 +74,29 @@ final class SleepDebtTests: XCTestCase {
         XCTAssertEqual(l.needMin, AnalyticsEngine.Rest.defaultNeedHours * 60.0, accuracy: 1e-9)
         XCTAssertEqual(l.balanceMin, -60.0, accuracy: 1e-9)
     }
+
+    /// A NEGATIVE EXACT half-tie balance rounds AWAY from zero (−0.05 → −0.1), the documented
+    /// `round1` contract the Kotlin mirror must match (audit #6). needMin = 0.1, slept 0.05 →
+    /// delta −0.05 exactly → balance −0.1. Kotlin's old `roundToInt()` (half toward +∞) gave
+    /// 0.0 on this exact tie — the real divergence this pins shut.
+    func testNegativeHalfTieRoundsAwayFromZero() {
+        let l = SleepDebt.ledger(series: [("2026-06-01", 0.05)], needHours: 0.1 / 60.0)
+        XCTAssertEqual(l.balanceMin, -0.1, accuracy: 1e-9)   // away-from-zero, not 0.0
+    }
+
+    /// The symmetric POSITIVE exact half-tie (+0.05 → +0.1), pinned so the sign-aware Kotlin
+    /// rounding can't silently regress one direction. needMin = 0, slept 0.05 → delta +0.05.
+    func testPositiveHalfTieRoundsAwayFromZero() {
+        let l = SleepDebt.ledger(series: [("2026-06-01", 0.05)], needHours: 0.0)
+        XCTAssertEqual(l.balanceMin, 0.1, accuracy: 1e-9)
+    }
+
+    /// round1 is exercised on the directly-constructed value too, so the rounding mode is
+    /// pinned independent of the (slept − need) arithmetic path, both signs + a non-tie.
+    func testRound1HalfTiesAwayFromZero() {
+        XCTAssertEqual(SleepDebt.round1(-0.05), -0.1, accuracy: 1e-9)
+        XCTAssertEqual(SleepDebt.round1(0.05), 0.1, accuracy: 1e-9)
+        XCTAssertEqual(SleepDebt.round1(-0.04), 0.0, accuracy: 1e-9)
+        XCTAssertEqual(SleepDebt.round1(-0.25), -0.3, accuracy: 1e-9)
+    }
 }

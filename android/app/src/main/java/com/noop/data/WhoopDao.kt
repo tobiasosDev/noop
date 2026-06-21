@@ -501,4 +501,55 @@ interface WhoopDao : DeviceRegistryDao {
     /** Latest battery sample for a device (most recent ts), or null. */
     @Query("SELECT * FROM battery WHERE deviceId = :deviceId ORDER BY ts DESC LIMIT 1")
     suspend fun latestBattery(deviceId: String): BatterySample?
+
+    // MARK: - #547 one-time heal: purge rows polluted by a bad-strap-clock timestamp
+    //
+    // pikapik's WHOOP 4.0 (#547) emitted records whose `unix` decoded to garbage (far-past / a 2027 spike
+    // / a future date), which entered the DB verbatim before the ingest gate existed. These deletes purge
+    // the already-stored pollution ONCE on upgrade across EVERY device id (the bad rows can sit under
+    // "my-whoop" raw streams AND the "-noop" computed daily/sleep rows), so a normal analyzeRecent rescore
+    // recomputes the real days cleanly. Bounds are passed in from [MIN_PLAUSIBLE_UNIX]/[FUTURE_MARGIN]; the
+    // future-day string is the local "today" key so a future-DATED computed day is removed. Each returns
+    // the row count deleted (for the heal log). Re-running is harmless (idempotent — nothing left to match).
+
+    /** Raw stream rows whose unix-second `ts` is implausible (before [minTs] or after [maxTs]). One per
+     *  raw table (all keyed by `ts`); summed by the repository. */
+    @Query("DELETE FROM hrSample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneHrByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM ppgHrSample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun prunePpgHrByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM rrInterval WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneRrByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM skinTempSample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneSkinTempByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM stepSample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneStepByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM respSample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneRespByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM gravitySample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneGravityByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM spo2Sample WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneSpo2ByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM event WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneEventByTs(minTs: Long, maxTs: Long): Int
+
+    @Query("DELETE FROM battery WHERE ts < :minTs OR ts > :maxTs")
+    suspend fun pruneBatteryByTs(minTs: Long, maxTs: Long): Int
+
+    /** Computed daily-metric rows whose `day` key is FUTURE (lexicographically after [today], valid for
+     *  "yyyy-MM-dd") or implausibly old (before [minDay]). String compare is correct for ISO dates. */
+    @Query("DELETE FROM dailyMetric WHERE day > :today OR day < :minDay")
+    suspend fun pruneDailyMetricByDay(today: String, minDay: String): Int
+
+    /** Computed sleep-session rows whose onset `startTs` is implausible (before [minTs] or after [maxTs]). */
+    @Query("DELETE FROM sleepSession WHERE startTs < :minTs OR startTs > :maxTs")
+    suspend fun pruneSleepSessionByTs(minTs: Long, maxTs: Long): Int
 }

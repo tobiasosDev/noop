@@ -1,6 +1,7 @@
 package com.noop.ui
 
 import com.noop.data.DailyMetric
+import com.noop.data.SleepSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -75,5 +76,62 @@ class SleepImportedFiguresTest {
         val a = buildSleepModel(days, session = null)!!
         val b = buildSleepModel(days, session = null, imported = ImportedSleepSeries())!!
         assertEquals(a, b)
+    }
+
+    // --- Cross-platform parity: ASLEEP, not in-bed; window is full history, not the browsed
+    //     night. Mirrors iOS SleepView, which reads totalSleepMin over repo.days for every tile,
+    //     the debt ledger, and the personal need. (#1/#5/#7)
+
+    /** A session whose IN-BED window (600 min) dwarfs the night's ASLEEP total (410 min) must NOT
+     *  bleed time-in-bed into the per-tile passes. The old metricsWindow substituted the session's
+     *  (wake − onset) for totalSleepMin, inflating hours-vs-needed / debt; dropped for parity. */
+    @Test
+    fun sessionInBedWindowDoesNotSubstituteForAsleep() {
+        val days = listOf(day("2026-06-01", 420.0), day("2026-06-02", 410.0))
+        // endTs = 2026-06-02 08:00 UTC; onset 600 min earlier → 600 min IN BED, but asleep = 410.
+        val session = SleepSession(
+            deviceId = "my-whoop", startTs = 1780351200L, endTs = 1780387200L, efficiency = 90.0,
+        )
+        val m = buildSleepModel(days, session = session)!!
+        // need = max(450, mean asleep[420,410]=415) = 450. hours-vs-needed reads ASLEEP 410, not 600.
+        assertEquals(410.0 / 450.0 * 100.0, m.hoursVsNeeded.latest!!, 1e-9)
+        // Debt tile reads ASLEEP too: max(0, 450 − 410) = 40, never max(0, 450 − 600) = 0.
+        assertEquals(40.0, m.sleepDebt.latest!!, 1e-9)
+        // The debt TILE and the LEDGER agree (both asleep over the full history) — the #5 symptom.
+        assertEquals(m.sleepDebt.latest!!, -m.sleepDebtLedger.nights.last().deltaMin, 1e-9)
+    }
+
+    /** A passed session must give the SAME tiles/ledger as no session — there is no display-time
+     *  in-bed swap left. (Stage cards still update from the reclipped stagesJSON; tiles do not.) */
+    @Test
+    fun passingASessionDoesNotChangeTheTiles() {
+        val days = listOf(day("2026-06-01", 420.0), day("2026-06-02", 410.0))
+        val session = SleepSession(
+            deviceId = "my-whoop", startTs = 1780351200L, endTs = 1780387200L, efficiency = 90.0,
+        )
+        val withSession = buildSleepModel(days, session = session)!!
+        val noSession = buildSleepModel(days, session = null)!!
+        assertEquals(noSession.performance, withSession.performance)
+        assertEquals(noSession.hoursVsNeeded, withSession.hoursVsNeeded)
+        assertEquals(noSession.sleepDebt, withSession.sleepDebt)
+        assertEquals(noSession.sleepDebtLedger, withSession.sleepDebtLedger)
+        assertEquals(noSession.typicalTotalMin, withSession.typicalTotalMin)
+    }
+
+    /** Browsing a PAST night (selectedDay = an earlier day) leaves the at-a-glance tiles and the
+     *  "Last 14 nights" ledger LATEST-anchored (full history) — only the hero re-points. The window
+     *  is one cross-platform definition: full history, exactly as iOS keeps repo.days. (#5) */
+    @Test
+    fun browsingAPastNightKeepsTilesLatestAnchored() {
+        val days = listOf(day("2026-06-01", 420.0), day("2026-06-02", 410.0), day("2026-06-03", 400.0))
+        val latestView = buildSleepModel(days, session = null)!!                       // newest night
+        val browsedView = buildSleepModel(days, session = null, selectedDay = "2026-06-01")!!
+        // Tiles, need, typical and the ledger are identical regardless of which night is browsed.
+        assertEquals(latestView.performance, browsedView.performance)
+        assertEquals(latestView.sleepDebt, browsedView.sleepDebt)
+        assertEquals(latestView.sleepDebtLedger, browsedView.sleepDebtLedger)
+        assertEquals(latestView.typicalTotalMin, browsedView.typicalTotalMin)
+        // The HERO does follow the browsed night — its stages come from the selected day's row.
+        assertNotEquals(latestView.stages, browsedView.stages)
     }
 }

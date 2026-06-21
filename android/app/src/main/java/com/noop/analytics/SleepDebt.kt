@@ -1,7 +1,8 @@
 package com.noop.analytics
 
 import kotlin.math.abs
-import kotlin.math.roundToInt
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /*
  * SleepDebt.kt — a rolling sleep-debt ledger over the last N nights.
@@ -116,6 +117,19 @@ object SleepDebt {
         return SleepDebtLedger(balanceMin = round1(balance), nights = nights, needMin = needMin)
     }
 
-    /** Round to 1 decimal place — keeps Σ stable without trailing float noise. Swift parity. */
-    private fun round1(v: Double): Double = (v * 10.0).roundToInt() / 10.0
+    /**
+     * Round to 1 decimal place — keeps Σ stable without trailing float noise.
+     *
+     * Matches Swift `SleepDebt.round1` byte-for-byte: Swift's `Double.rounded()` is
+     * `.toNearestOrAwayFromZero` (half-AWAY-from-zero), so a negative half-tie like a
+     * −0.05 balance rounds to −0.1, not 0.0. Kotlin's `Double.roundToInt()` rounds half
+     * toward +∞ (`floor(x + 0.5)`), which would round that same tie to 0.0 — a real
+     * cross-platform divergence on negative half-ties (audit #6). Round each sign away
+     * from zero so the two clients report the same balance for the same nights.
+     */
+    internal fun round1(v: Double): Double {
+        val scaled = v * 10.0
+        val rounded = if (scaled < 0.0) ceil(scaled - 0.5) else floor(scaled + 0.5)
+        return rounded / 10.0
+    }
 }

@@ -237,7 +237,14 @@ struct IntelligenceView: View {
                 HStack {
                     Text(d.day).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
-                    SourceBadge("NOOP-computed")
+                    // The REAL source of the day's dashboard headline, not a hard-coded "NOOP-computed".
+                    // The By-Day numbers are always NOOP's on-device scores, but when an import covers the
+                    // day it WINS the dashboard merge, so the badge says so ("Whoop" / "Apple Health") and
+                    // a strap-scored night reads "On-device". Dynamic String → wrap in "\()" so it's shown
+                    // verbatim, not looked up as a LocalizedStringKey (the String≠LocalizedStringKey
+                    // SwiftUI footgun). Imported rows use the accent tint to stand out from computed ones.
+                    SourceBadge("\(d.source.badge)",
+                                tint: d.source == .computed ? StrandPalette.chargeColor : StrandPalette.accent)
                 }
                 HStack(spacing: 0) {
                     stat("Charge", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—",

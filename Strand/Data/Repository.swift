@@ -401,6 +401,33 @@ final class Repository: ObservableObject {
         return (imported + computedKept).sorted { $0.effectiveStartTs < $1.effectiveStartTs }
     }
 
+    /// The user's learned habitual midsleep (local time-of-day seconds), or nil under
+    /// `SleepStageTotals.habitualMinDays` of history (cold-start). Computed EXACTLY as
+    /// `IntelligenceEngine.computeHabitualMidsleep` does — the SAME raw imported + computed ("-noop")
+    /// sleep-session union, one `HistoryBlock` per session (effective bounds, dayKey = the LOCAL calendar
+    /// day of the midpoint), deferring to the SAME shared `SleepStageTotals.habitualMidsleepSec` pure
+    /// function — so the Sleep tab's main-night pick aligns to the same value the analytics rollup used.
+    /// The whole point of #547: the UI hero and the analytics daily total resolve to the SAME block for a
+    /// shift/late sleeper, not just at cold-start. Reads a wide window so the distinct-day count comfortably
+    /// clears the threshold; `habitualMidsleepSec` keeps the longest block per day, so window/order/source
+    /// merge differences wash out. (#547)
+    func habitualMidsleepSec(days: Int = 4000) async -> Int? {
+        guard let store = await ensureStore() else { return nil }
+        let now = Int(Date().timeIntervalSince1970)
+        let lo = now - days * 86_400, hi = now + 86_400
+        let imported = (try? await store.sleepSessions(deviceId: deviceId, from: lo, to: hi, limit: 4000)) ?? []
+        let computed = (try? await store.sleepSessions(deviceId: computedDeviceId, from: lo, to: hi, limit: 4000)) ?? []
+        let offsetSec = TimeZone.current.secondsFromGMT()
+        let blocks = (imported + computed).compactMap { s -> SleepStageTotals.HistoryBlock? in
+            let start = s.effectiveStartTs, end = s.endTs
+            guard end > start else { return nil }
+            let mid = start + (end - start) / 2
+            let dayKey = AnalyticsEngine.dayString(mid, offsetSec: offsetSec)
+            return SleepStageTotals.HistoryBlock(start: start, end: end, dayKey: dayKey)
+        }
+        return SleepStageTotals.habitualMidsleepSec(blocks, offsetSec: offsetSec)
+    }
+
     /// Hand-correct a night's bed (onset) and/or wake (end) time. `detectedStartTs` is the immutable
     /// detected key; the corrected onset is stored in `startTsAdjusted` so the key never moves (the
     /// recompute guard + daily override keep matching on it). The merged session list carries no source

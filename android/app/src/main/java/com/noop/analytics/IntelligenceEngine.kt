@@ -113,9 +113,20 @@ object IntelligenceEngine {
         // analytics layer is Context-free, so the caller reads it from SharedPreferences and passes it
         // down to the HRV foldHistory. Default 0.0 → no recalibration, so other callers are unaffected.
         baselineEpoch: Double = 0.0,
+        // The Charge-wide recalibration anchor (noop.recoveryBaselineEpoch); re-anchors resting HR / resp /
+        // skin-temp the same way baselineEpoch re-anchors HRV, so a manual Recalibrate restarts all of
+        // Charge. Read from SharedPreferences by the caller. Default 0.0 → no recalibration.
+        recoveryEpoch: Double = 0.0,
+        // Per-day scoring diagnostic sink (Sleep overhaul §2.5). Each scored day emits ONE concise,
+        // privacy-safe line ("sleep day=… totalSleepMin=… matched=… source=…") so a shared strap log
+        // ships PROOF of what was computed per day — the project's log-failures-not-successes blind spot,
+        // and the data to settle "Rest repeats across days". Defaults to no-op so tests / other callers
+        // are unaffected; the AppViewModel wires it to the BLE client's strap log (ble.externalLog),
+        // which PII-scrubs every line at the sink. Pure-JVM (a closure), matching persistStepsCalibration.
+        diag: (String) -> Unit = {},
     ): List<Computed> = withContext(Dispatchers.Default) {
         analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride, nowSeconds,
-            ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch)
+            ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch, recoveryEpoch, diag)
     }
 
     /** History span for the one-shot Effort rescore — large enough to cover any real wear history,
@@ -171,6 +182,8 @@ object IntelligenceEngine {
         manualStepCoefficient: Double? = null,
         persistStepsCalibration: (StepsEstimateEngine.Calibration) -> Unit = {},
         baselineEpoch: Double = 0.0,
+        recoveryEpoch: Double = 0.0,
+        diag: (String) -> Unit = {},
     ): List<Computed> {
         val hrvCfg = Baselines.metricCfg["hrv"] ?: return emptyList()
         val rhrCfg = Baselines.metricCfg["resting_hr"] ?: return emptyList()
@@ -209,7 +222,7 @@ object IntelligenceEngine {
         // the epoch. baselineEpoch is threaded down from the Context-aware caller (0.0 = no recalibration).
         // rhr/resp/skin stay on the 2-arg fold — recalibration is HRV-only.
         val hrvBase1 = Baselines.foldHistory(hist.map { it.avgHrv }, hist.map { it.day }, hrvCfg, baselineEpoch)
-        val rhrBase1 = Baselines.foldHistory(hist.map { it.restingHr?.toDouble() }, rhrCfg)
+        val rhrBase1 = Baselines.foldHistory(hist.map { it.restingHr?.toDouble() }, hist.map { it.day }, rhrCfg, recoveryEpoch)
         val baselines1 = ProfileBaselines(hrv = hrvBase1, restingHR = rhrBase1)
 
         // Keep each night's small DayResult (daily metrics + detected sessions), NOT the raw
@@ -234,6 +247,21 @@ object IntelligenceEngine {
         // west-of-UTC user's evening crosses midnight UTC; bucketing by UTC put it in the next UTC day,
         // which the local read never found (Toronto/UTC-4 report).
         val nowLocalMidnight = midnightLocal(nowSeconds, tzOffsetSeconds)
+
+        // ── Learned habitual midsleep (#547) ──────────────────────────────────
+        // Compute the user's habitual midsleep ONCE per run from the trailing sleep history so the
+        // main-night scored pick aligns to their REAL bedtime (a late/shift sleeper), not a fixed clock
+        // band. Read the stored sleep sessions (imported WHOOP-export + computed "-noop") over the
+        // analysis window, make one HistoryBlock per session keyed by the LOCAL calendar day of its
+        // midpoint, and let the learner keep the longest block per day (so naps drop out automatically).
+        // null under HABITUAL_MIN_DAYS of history → cold-start: every analyzeDay/sleepEditedDaily call
+        // below stays on the overnight-band bonus. The same value threads into both seams so analytics and
+        // the Sleep tab resolve to the identical block. Mirrors Swift. (#547)
+        val habitualMidsleepSec = computeHabitualMidsleep(
+            repo, importedDeviceId, computedId,
+            nowLocalMidnight - maxDays * SECONDS_PER_DAY - 30 * 3_600L, nowSeconds, tzOffsetSeconds,
+        )
+
         for (offset in 0 until maxDays) {
             val dayStart = nowLocalMidnight - offset * SECONDS_PER_DAY
             val day = AnalyticsEngine.dayString(dayStart, tzOffsetSeconds)
@@ -308,6 +336,7 @@ object IntelligenceEngine {
                 maxHROverride = maxHROverride,
                 tzOffsetSeconds = tzOffsetSeconds,
                 wristOff = wristOff,
+                habitualMidsleepSec = habitualMidsleepSec,
             )
 
             // Harvest the baseline-independent nightly aggregates (a day with no detected
@@ -351,26 +380,33 @@ object IntelligenceEngine {
         val hrvSorted = histHrvByDay.entries.sortedBy { it.key }
         val hrvSeq = hrvSorted.map { it.value }
         val hrvDayKeys = hrvSorted.map { it.key }
-        val rhrSeq = histRhrByDay.entries.sortedBy { it.key }.map { it.value }
-        val respSeq = histRespByDay.entries.sortedBy { it.key }.map { it.value }
-        // HRV baseline honours the manual recalibration epoch via the parallel day keys (0.0 = none).
-        // rhr/resp/skin stay on the 2-arg fold — recalibration is HRV-only.
+        val rhrSorted = histRhrByDay.entries.sortedBy { it.key }
+        val rhrSeq = rhrSorted.map { it.value }
+        val rhrDayKeys = rhrSorted.map { it.key }
+        val respSorted = histRespByDay.entries.sortedBy { it.key }
+        val respSeq = respSorted.map { it.value }
+        val respDayKeys = respSorted.map { it.key }
+        // HRV baseline honours noop.hrvBaselineEpoch; rhr/resp/skin honour noop.recoveryBaselineEpoch via
+        // their parallel day keys, so the manual Recalibrate restarts the whole Charge build-up together.
+        // A 0.0 epoch is byte-identical to the plain fold, so scoring is unchanged until the user taps it.
         val hrvBase2 = Baselines.foldHistory(hrvSeq, hrvDayKeys, hrvCfg, baselineEpoch)
-        val rhrBase2 = Baselines.foldHistory(rhrSeq, rhrCfg)
+        val rhrBase2 = Baselines.foldHistory(rhrSeq, rhrDayKeys, rhrCfg, recoveryEpoch)
         // Resp baseline mixes imported (cloud) values with on-device RSA estimates — acceptable: the
         // z-score is scale-tolerant, foldHistory winsorizes, and respRateBpm already carries no source
         // flag anywhere else (the illness gate treats it the same way). Gated on `usable` because
         // RecoveryScorer includes the resp term whenever a baseline object is present — a CALIBRATING
         // (<4-night) baseline would let one noisy RSA night move recovery (mirrors the skin-temp
         // use-site gate; honest cold-start).
-        val respBase2 = Baselines.foldHistory(respSeq, respCfg).takeIf { it.usable }
+        val respBase2 = Baselines.foldHistory(respSeq, respDayKeys, respCfg, recoveryEpoch).takeIf { it.usable }
         // Skin-temp baseline is on-device-only (imported rows carry skinTempDevC, not the raw mean),
         // so fold purely over the pass-1 nightly means in chronological order. (PR #85)
         // Gated on `usable` for consistency with the resp baseline above AND the Swift reference
         // (IntelligenceEngine.swift:162 `skinFold.usable ? skinFold : nil`) — the use-site re-checks
         // `usable` too, so this is belt-and-suspenders, but it keeps the platforms byte-aligned.
-        val skinSeq = nightlySkinByDay.entries.sortedBy { it.key }.map { it.value }
-        val skinBase2 = Baselines.foldHistory(skinSeq, skinCfg).takeIf { it.usable }
+        val skinSorted = nightlySkinByDay.entries.sortedBy { it.key }
+        val skinSeq = skinSorted.map { it.value }
+        val skinDayKeys = skinSorted.map { it.key }
+        val skinBase2 = Baselines.foldHistory(skinSeq, skinDayKeys, skinCfg, recoveryEpoch).takeIf { it.usable }
         val baselines2 = ProfileBaselines(
             hrv = hrvBase2, restingHR = rhrBase2, resp = respBase2, skinTemp = skinBase2,
         )
@@ -424,11 +460,32 @@ object IntelligenceEngine {
             windowEnd = nowSeconds,
         )
         val editsByStart: Map<Long, String?> = editedRows.associate { it.startTs to it.stagesJSON }
+        // #547 (audit finding C / #8): each edited block's EFFECTIVE onset (startTsAdjusted ?: startTs)
+        // keyed by its stable detected startTs, so the seam's main-night pick reads the user-CORRECTED
+        // bedtime — a bedtime edit crossing the overnight boundary would otherwise make the seam and the
+        // Sleep tab pick different blocks. Detected-but-unedited blocks have no adjustment (DetectedSleep
+        // carries only the detected start), so sleepEditedDaily falls back to their detected onset.
+        val editOnsetByStart: Map<Long, Long> = editedRows.associate { it.startTs to it.effectiveStartTs }
+
+        // Provenance sets for the per-day diagnostic source token (Sleep overhaul §2.5). `hist` is the
+        // imported daily rows under [importedDeviceId] (the WHOLE imported history, read above for the
+        // baseline) — a row means a WHOOP export covers that day and WINS the dashboard merge over our
+        // computed row (mergeDaily: imports win field-by-field). Apple-Health daily rows are the same for
+        // the Apple brand. Both are key-presence sets only (no values leave), so the lookup is O(1) per day
+        // and nothing about the imported numbers is exposed. WHOOP wins over Apple, matching the merge's
+        // source priority. Mirrors the Swift `importedWhoopDays` / `appleHealthDays` sets.
+        val importedWhoopDays = hist.map { it.day }.toHashSet()
+        val appleHealthDays = repo
+            .appleDaily(WhoopRepository.APPLE_HEALTH_SOURCE, "0000-01-01", "9999-12-31")
+            .map { it.day }.toHashSet()
 
         for (res in scoredNights) {
             // Substitute an edited block's (reshaped) stages for its detected twin before the daily
             // sleep aggregate feeds Rest + recovery. No edit touching this night → `daily` is unchanged.
-            val daily = sleepEditedDaily(res.daily, res.sleepSessions, editsByStart)
+            val daily = sleepEditedDaily(
+                res.daily, res.sleepSessions, editsByStart, editOnsetByStart,
+                tzOffsetSeconds, habitualMidsleepSec,
+            )
             val recovery = recomputeRecovery(daily, baselines2)
             val skinTempDevC = recomputeSkinTempDev(res.nightlySkinTempC, baselines2.skinTemp)
             RestScorer.restFromDaily(daily)?.let { rest ->
@@ -444,6 +501,19 @@ object IntelligenceEngine {
                     hrv = daily.avgHrv,
                     rhr = daily.restingHr,
                 ),
+            )
+            // ── Per-day scoring diagnostic (Sleep overhaul §2.5) ──────────────────────────────────────
+            // ONE concise, privacy-safe line per scored day into the shareable strap log: the day key, the
+            // FINAL computed total-sleep minutes (after any edit substitution), how many sleep blocks the
+            // detector matched on the day, and the provenance of the dashboard headline. Counts + a rounded
+            // minute only — no HR/HRV/timestamps — so the next report ships PROOF of what was computed per
+            // day (the project's log-failures-not-successes blind spot) and lets us settle the "Rest repeats
+            // across days" question with data. Gated by the existing strap-log export. Mirrors the Swift line.
+            val tsmLog = daily.totalSleepMin?.let { Math.round(it).toString() } ?: "nil"
+            diag(
+                "sleep day=${daily.day} totalSleepMin=$tsmLog " +
+                    "matched=${res.sleepSessions.size} " +
+                    "source=${daySourceToken(daily.day, importedWhoopDays, appleHealthDays)}",
             )
             // Stamp the computed source id + the re-scored recovery & skin-temp deviation onto the row.
             dailies.add(daily.copy(deviceId = computedId, recovery = recovery, skinTempDevC = skinTempDevC))
@@ -698,6 +768,38 @@ object IntelligenceEngine {
     }
 
     /**
+     * The user's habitual midsleep (local time-of-day seconds), or null under HABITUAL_MIN_DAYS of
+     * history (cold-start). Reads the stored sleep sessions (imported + computed) over the window, makes
+     * one HistoryBlock per session — start/end are the EFFECTIVE (edited) bounds so a corrected bedtime is
+     * learned, dayKey is the LOCAL calendar day of the midpoint — and defers to
+     * [SleepStageTotals.habitualMidsleepSec], which keeps the longest block per day (naps drop out). The
+     * imported + computed sets can overlap; both are unioned and the learner de-dupes per day by length.
+     * Mirrors Swift `IntelligenceEngine.computeHabitualMidsleep`. (#547)
+     */
+    private suspend fun computeHabitualMidsleep(
+        repo: WhoopRepository,
+        importedId: String,
+        computedId: String,
+        windowStart: Long,
+        windowEnd: Long,
+        offsetSec: Long,
+    ): Long? {
+        val imported = repo.sleepSessions(importedId, windowStart, windowEnd, 4000)
+        val computed = repo.sleepSessions(computedId, windowStart, windowEnd, 4000)
+        val blocks = (imported + computed).mapNotNull { s ->
+            val start = s.effectiveStartTs
+            val end = s.endTs
+            if (end <= start) {
+                null
+            } else {
+                val mid = start + (end - start) / 2
+                SleepStageTotals.HistoryBlock(start, end, AnalyticsEngine.dayString(mid, offsetSec))
+            }
+        }
+        return SleepStageTotals.habitualMidsleepSec(blocks, offsetSec)
+    }
+
+    /**
      * Override a day's detected sleep aggregates with the user's hand-corrected window when one of the
      * night's blocks was edited. Substitutes each edited block (matched by its stable detected startTs)
      * for its detected twin and recomputes totalSleep / efficiency / stage minutes from the reshaped
@@ -709,15 +811,36 @@ object IntelligenceEngine {
         daily: DailyMetric,
         detected: List<DetectedSleep>,
         editsByStart: Map<Long, String?>,
+        // Each EDITED block's EFFECTIVE onset (startTsAdjusted ?: startTs) keyed by its stable detected
+        // startTs — audit finding C / #8. A detected-but-unedited block isn't in here and falls back to its
+        // own detected start (DetectedSleep carries no adjustment). (#547)
+        editOnsetByStart: Map<Long, Long>,
+        tzOffsetSeconds: Long,
+        // The learned habitual midsleep (local time-of-day seconds) so the edited recompute picks the SAME
+        // main night the Sleep tab shows; null = cold-start. (#547)
+        habitualMidsleepSec: Long?,
     ): DailyMetric {
         if (editsByStart.isEmpty()) return daily
         // Match the Swift seam: detected blocks keyed by their stable startTs + their re-encoded stages.
         val detectedTuples = detected.map { it.start to AnalyticsEngine.encodeStages(it.stages) }
-        // A hand-logged nap is a userEdited row with NO detected twin — pass those twinless rows
-        // through the union channel so their minutes fold into the day's Rest total. (#518/#508)
+        // A hand-logged nap is a userEdited row with NO detected twin — pass those twinless rows through
+        // the union channel so the seam KNOWS about them (they stay their own session row, shown
+        // separately; the main-night pick below decides the headline total). (#518/#508)
         val detectedStarts = detected.map { it.start }.toHashSet()
         val manual = editsByStart.filter { it.key !in detectedStarts }.map { it.key to it.value }
-        val r = SleepStageTotals.dailyAggregateHonoringEdits(detectedTuples, editsByStart, manual) ?: return daily
+        // #525/#547: supply each block's EFFECTIVE onset (audit finding C / #8) keyed by its stable
+        // detected startTs, plus the device tz offset + learned habitual midsleep, so the edited recompute
+        // picks the SAME MAIN NIGHT the Sleep tab shows. The onset must be the user-CORRECTED bedtime
+        // (`startTsAdjusted ?: startTs`) when a block was edited, NOT the immutable detected start — a
+        // bedtime edit crossing the overnight boundary would otherwise let the seam and the Sleep tab pick
+        // different blocks. `editOnsetByStart` holds the corrected onset for edited/manual blocks; an
+        // unedited detected block falls back to its own detected start. Without these the seam falls back
+        // to the legacy SUM and an overnight+nap day would re-include the nap in the headline total.
+        val editStarts = detectedTuples.map { it.first } + manual.map { it.first }
+        val onsetByStart = editStarts.associateWith { start -> editOnsetByStart[start] ?: start }
+        val r = SleepStageTotals.dailyAggregateHonoringEdits(
+            detectedTuples, editsByStart, manual, onsetByStart, tzOffsetSeconds, habitualMidsleepSec,
+        ) ?: return daily
         if (!r.editApplied) return daily
         val agg = r.sleep
         // Substitute ONLY the sleep-derived fields; every non-sleep field is left untouched.
@@ -809,4 +932,22 @@ object IntelligenceEngine {
      */
     internal fun midnightLocal(ts: Long, offsetSec: Long): Long =
         ts - Math.floorMod(ts + offsetSec, SECONDS_PER_DAY)
+
+    /**
+     * The per-day diagnostic source token from the imported day-key sets. A WHOOP export covering [day]
+     * WINS the dashboard merge over our computed row (imports win field-by-field — mergeDaily), so it
+     * takes precedence; Apple Health is next; otherwise the day is purely computed. WHOOP-over-Apple
+     * matches the merge's source priority. Pure + set-based so it's unit-tested directly and is the SAME
+     * logic the analyzeRecent diagnostic ships. Mirrors Swift `IntelligenceEngine.DaySource.classify`
+     * (.logToken). (Sleep overhaul §2.5/§2.6.)
+     */
+    internal fun daySourceToken(
+        day: String,
+        importedWhoopDays: Set<String>,
+        appleHealthDays: Set<String>,
+    ): String = when {
+        day in importedWhoopDays -> "imported:whoop"
+        day in appleHealthDays -> "imported:apple"
+        else -> "computed"
+    }
 }

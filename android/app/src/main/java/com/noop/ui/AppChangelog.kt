@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "5.3.0"
+    const val CURRENT_VERSION = "6.0.3"
 
     data class Release(
         val version: String,
@@ -36,6 +36,44 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "6.0.3",
+            title = "Date-hygiene fix for straps with a bad clock",
+            date = "June 2026",
+            items = listOf(
+                "**Fixed: a WHOOP with a bad internal clock could scramble your dashboard.** If your strap's clock or flash got into a bad state, it could hand NOOP records stamped with wrong dates, sometimes years off, sometimes in the future. NOOP now sanity-checks every record's timestamp as it comes in and drops anything implausible, so a misbehaving strap can no longer make the same sleep repeat across days or show a future date as your last night. If your data already got scrambled, updating cleans it up automatically and re-scores once. Thanks to pikapik487 for the detailed logs that pinned this down.",
+            )),
+        Release(
+            version = "6.0.2",
+            title = "Sleep, properly sorted, and an app that explains itself",
+            date = "June 2026",
+            items = listOf(
+                "**Your night is your night.** We rebuilt how NOOP decides which sleep is your main one. It now scores every sleep block on how much you actually slept and how close it was to your usual hours (which NOOP learns from your own history), so a long sleep that started at an odd time is no longer filed away as a nap, and the Sleep tab and your recovery scores always land on the same night. This was a from-scratch rework, not a patch, grounded in real strap logs and the sleep-staging research.",
+                "**The app explains itself now.** Tap the info on a sleep block to see exactly why it's your main sleep or a nap. Your Charge, Effort and Rest tiles tell you when they're still calibrating (and how many nights are left), when they're showing last night's number, or when they simply need the strap, instead of a bare dash. A Recording chip shows when the strap is actually connected and saving data. And a small badge on each number shows whether NOOP worked it out on your device or imported it from WHOOP or Apple Health.",
+                "**New: a \"How NOOP works\" page.** Tucked in Settings, a short plain-English read on how your sleep is sorted, how your scores build over your first couple of weeks, what \"recording\" means, and where your numbers come from.",
+                "**Help us get your sleep exactly right.** If your sleep still looks off after this, please open an issue on GitHub with a strap log and the dates it's wrong. That is the single fastest way for us to pin your case. There's a full write-up of the research behind this rework if you want the detail.",
+            )),
+        Release(
+            version = "6.0.1",
+            title = "Buzz WHOOP 4 in the Smart Alarm",
+            date = "June 2026",
+            items = listOf(
+                "**New: a \"Buzz WHOOP 4\" toggle in the Smart Alarm screen.** Turn it on and your WHOOP 4.0's own firmware alarm is armed at your earliest wake time, so the strap buzzes you first and the phone alarm stays as the guaranteed backup. Off by default. Thanks @ujix for the feature and for catching that it missed the 6.0.0 cut.",
+            )),
+        Release(
+            version = "6.0.0",
+            title = "NOOP grows up: it's not just for WHOOP anymore",
+            date = "June 2026",
+            items = listOf(
+                "**Your WHOOP is no longer the only thing that works.** NOOP now reads standard Bluetooth chest straps and arm bands (like the Polar H10) for live heart rate and HRV, connects to gym machines over the standard FTMS profile (treadmills, bikes, rowers, cross-trainers), and reads standard running and cycling sensors for live speed, cadence and power during a workout. Your WHOOP support is exactly as it was.",
+                "**Bring your history with you, fully offline.** Import your own data export from Oura, Fitbit or Garmin and NOOP pulls in sleep, resting heart rate, HRV and steps wherever the file has them. It never talks to their cloud, and their own readiness or sleep scores stay reference only. Your NOOP scores are recomputed from the raw signals, never copied. GPX, TCX and FIT workout files import too.",
+                "**Broadcast your heart rate out.** Turn on Broadcast in Data Sources and NOOP re-shares your strap's heart rate as a standard Bluetooth HR sensor, so a treadmill, Zwift or Peloton can read it. Local Bluetooth only, nothing leaves your device. Off by default.",
+                "**Experimental: more bands, and we need your help testing them.** A clearly-labeled Experimental tier in Add a device covers Amazfit / Zepp (Helio included), Xiaomi Mi Band, Garmin (via Broadcast HR) and an Oura ring probe. These are best-effort and can't be hardware-verified by us, so they're opt-in and honest about what they can do. None of them ever makes up a number. If you have one, turn it on and send us a debug log.",
+                "**GPS workout routes on iPhone and Mac.** Outdoor runs, rides, walks and hikes now record a route with distance, pace and a map, matching Android. Recording keeps going while the screen is off.",
+                "**Take a spot HRV reading any time**, plus a new **Recalibrate baselines** button in Settings to cleanly restart your Charge build-up if your first week got thrown off. Your history stays. And a simple **caffeine log** with a rough still-active estimate.",
+                "**Fixes you asked for.** Sleep totals now line up across every screen (your night is your night, naps sit on their own). A fresh or calibrating tile says \"building, wear it tonight\" instead of a bare dash. Manual workouts survive the app being killed mid-session. The WHOOP 4.0 scheduled alarm actually buzzes now (our packet was two bytes short), with per-weekday scheduling. Android can share metrics out to Health Connect.",
+                "Huge thanks to everyone who reverse-engineered, reported and tested their way into this one. A pile of 6.0 came straight from your issues and PRs.",
+            )),
         Release(
             version = "5.3.0",
             title = "Sleep, Charge and workouts, cleaned up",

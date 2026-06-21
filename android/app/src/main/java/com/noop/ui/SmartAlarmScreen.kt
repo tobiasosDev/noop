@@ -56,6 +56,9 @@ fun SmartAlarmScreen(vm: AppViewModel) {
     val enabled by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
     val targetMinutes by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
     val windowMinutes by vm.phoneAlarmWindowMinutes.collectAsStateWithLifecycle()
+    val buzzWhoop4 by vm.buzzWhoop4Enabled.collectAsStateWithLifecycle()
+    // #536: the hint adapts to bond state — the strap can only be armed when a WHOOP 4.0 is connected.
+    val bonded = vm.live.collectAsStateWithLifecycle().value.bonded
 
     // True when exact alarms are permitted. Re-read on each (re)composition because the user can grant
     // it in Settings and come back — there's no result callback for this special-access permission.
@@ -134,6 +137,19 @@ fun SmartAlarmScreen(vm: AppViewModel) {
                     )
                 }
             }
+
+            // #536: companion strap-buzz, always visible so it's discoverable. Arms the WHOOP 4.0's own
+            // firmware alarm at the earliest wake time, so the strap buzzes first and the OS alarm backs it up.
+            RowDividerLocal()
+            ToggleRowLocal(
+                label = "Buzz WHOOP 4",
+                help = if (bonded)
+                    "Also arms your WHOOP 4.0 to buzz at your earliest wake time, so the strap wakes you first and the phone alarm is the guaranteed backup."
+                else
+                    "Connect your WHOOP 4.0 to use this. It arms the strap to buzz at your earliest wake time as a gentler first wake-up.",
+                checked = buzzWhoop4,
+                onChange = { vm.setBuzzWhoop4Enabled(it) },
+            )
         }
 
         // The honest explanation of how detection works + its limits.

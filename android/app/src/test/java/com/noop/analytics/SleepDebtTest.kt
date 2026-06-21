@@ -75,4 +75,34 @@ class SleepDebtTest {
         assertEquals(RestScorer.defaultSleepNeedHours * 60.0, l.needMin, 1e-9)
         assertEquals(-60.0, l.balanceMin, 1e-9)
     }
+
+    /**
+     * A NEGATIVE EXACT half-tie balance must round AWAY from zero (−0.05 → −0.1) to match
+     * Swift's `round1`. Kotlin's old `roundToInt()` rounded half toward +∞ and produced 0.0 on
+     * this exact tie — the cross-platform divergence audit #6 called out. needMin = 0.1, slept
+     * 0.05 → delta −0.05 exactly → balance −0.1.
+     */
+    @Test
+    fun negativeHalfTie_roundsAwayFromZero() {
+        val l = SleepDebt.ledger(listOf("2026-06-01" to 0.05), needHours = 0.1 / 60.0)
+        assertEquals(-0.1, l.balanceMin, 1e-9)   // away-from-zero, not 0.0
+    }
+
+    /** The symmetric positive half-tie (+0.05 → +0.1), pinned so the sign-aware rounding holds.
+     *  needMin = 0, slept 0.05 → delta +0.05. */
+    @Test
+    fun positiveHalfTie_roundsAwayFromZero() {
+        val l = SleepDebt.ledger(listOf("2026-06-01" to 0.05), needHours = 0.0)
+        assertEquals(0.1, l.balanceMin, 1e-9)
+    }
+
+    /** round1 pinned directly (both signs + a non-tie + a larger tie), parity with Swift's
+     *  testRound1HalfTiesAwayFromZero. */
+    @Test
+    fun round1_halfTiesAwayFromZero() {
+        assertEquals(-0.1, SleepDebt.round1(-0.05), 1e-9)
+        assertEquals(0.1, SleepDebt.round1(0.05), 1e-9)
+        assertEquals(0.0, SleepDebt.round1(-0.04), 1e-9)
+        assertEquals(-0.3, SleepDebt.round1(-0.25), 1e-9)
+    }
 }

@@ -36,6 +36,25 @@ import com.noop.data.StreamPersistence
  * are FRAME-ABSOLUTE (= openwhoop data offset + 7). All multi-byte values are little-endian.
  */
 
+// MARK: - plausible-timestamp bounds (#547)
+
+/**
+ * Lowest unix-second a real WHOOP record can carry (2023-11). A bad strap clock/flash (pikapik, #547)
+ * emits records whose `unix` decodes to scattered garbage — far-past (year 2024/2019/…), a year-2027
+ * spike (1_827_642_881), and even a FUTURE date. Those land in the DB verbatim and pollute the
+ * day-windowed analytics (one ~12 h block re-attributed to every day; a future row surfacing as
+ * "last night · 12 Jul"). Reuses the same 1.7 B floor already used to validate GET_DATA_RANGE words
+ * (WhoopBleClient.dataRangeNewestUnix). Below this → drop the record.
+ */
+const val MIN_PLAUSIBLE_UNIX: Long = 1_700_000_000L
+
+/**
+ * How far past the offload wall-clock a record may be stamped (#547). A historical record can NEVER
+ * post-date its own capture, so anything more than one day ahead of "now" is a bad-clock artefact —
+ * drop it. One day of slack absorbs benign timezone/RTC skew without admitting a future-dated row.
+ */
+const val FUTURE_MARGIN: Long = 86_400L
+
 // MARK: - little-endian readers (null when out of range; mirror PostHooks.swift u8/u16/u32/f32)
 
 private fun ByteArray.histU8(off: Int): Int? = if (off + 1 <= size) this[off].toInt() and 0xFF else null
@@ -444,7 +463,20 @@ fun extractHistoricalStreams(
     deviceClockRef: Int,
     wallClockRef: Int,
     family: DeviceFamily = DeviceFamily.WHOOP4,
+    // #547 ingest gate "now": the true wall clock used ONLY to reject future-dated records. NOT
+    // wallClockRef — that arg is the (device,wall) correlation and is 0 on the RawHistoryArchive replay
+    // path (which would otherwise reject everything). Take the LATER of the supplied correlation wall and
+    // the real clock so a test that passes a recent wallClockRef still has a sane upper bound, and the
+    // replay path's wallClockRef=0 falls back to the real clock. Mirrors the Swift wallNow seam.
+    wallNow: Long = maxOf(wallClockRef.toLong(), System.currentTimeMillis() / 1000L),
 ): StreamBatch {
+    // Count of records dropped by the #547 plausibility gate this batch, surfaced on the returned
+    // StreamBatch so the Backfiller can log "bad strap clock" once per session via its existing seam.
+    var droppedImplausible = 0
+
+    // The plausible-timestamp window for this batch (#547): [MIN_PLAUSIBLE_UNIX, wallNow + FUTURE_MARGIN].
+    fun plausible(ts: Long): Boolean = ts >= MIN_PLAUSIBLE_UNIX && ts <= wallNow + FUTURE_MARGIN
+
     fun wall(deviceTs: Int?): Int? = if (deviceTs == null) null else wallClockRef + (deviceTs - deviceClockRef)
 
     // FIX #72: type-47 `unix` and EVENT `event_timestamp` are the strap RTC's own real-unix seconds.
@@ -457,20 +489,34 @@ fun extractHistoricalStreams(
     val staleThreshold = 86_400          // 1 day
     val snapGranularity = 300            // 5 min
     val clockOffset = wallClockRef - deviceClockRef
-    fun correctedWall(rawTs: Long): Long {
-        if (kotlin.math.abs(clockOffset) <= staleThreshold) return rawTs
-        val snapped = (if (clockOffset >= 0) clockOffset + snapGranularity / 2
-                       else clockOffset - snapGranularity / 2) / snapGranularity * snapGranularity
-        val corrected = rawTs + snapped.toLong()
-        // A fully-drained strap whose RTC reset to ~epoch (year ~1971) reports a near-zero
-        // deviceClockRef while its frames still carry the true-unix rawTs; clockOffset is then
-        // ~decades and this "correction" hurls every historical sample into the future (field: year
-        // 2081), silently breaking sleep & recovery because the night never lands on the right day.
-        // A record can't post-date its own capture, so when corrected overshoots wall time the offset
-        // was bogus — keep the raw ts. Genuine stale (strap behind real time) has corrected <= wall,
-        // so this is a no-op there. (PR #471, @cataboysbusiness-debug)
-        if (corrected > wallClockRef + snapGranularity) return rawTs
-        return corrected
+    // #547: now NULLABLE. After resolving the final candidate ts (BOTH the raw pass-through branch AND the
+    // corrected branch, including the anti-future fallback that keeps rawTs), reject the record entirely
+    // when its timestamp is implausible — older than 2023-11 or more than a day ahead of now. pikapik's
+    // bad-clock WHOOP 4.0 emits records whose `unix` decodes to scattered garbage (2024 / 2027-spike /
+    // far-past / a future date); the constant-skew corrector returns those rawTs UNVALIDATED on a healthy-
+    // looking clock (offset 0 on backfill), so they entered the DB verbatim and polluted every day-window.
+    // Returning null here makes every call site skip the record. Counts each drop for the once-per-session
+    // bad-clock log. Mirrors the Swift correctedWall returning nil.
+    fun correctedWall(rawTs: Long): Long? {
+        val candidate: Long = run {
+            if (kotlin.math.abs(clockOffset) <= staleThreshold) return@run rawTs
+            val snapped = (if (clockOffset >= 0) clockOffset + snapGranularity / 2
+                           else clockOffset - snapGranularity / 2) / snapGranularity * snapGranularity
+            val corrected = rawTs + snapped.toLong()
+            // A fully-drained strap whose RTC reset to ~epoch (year ~1971) reports a near-zero
+            // deviceClockRef while its frames still carry the true-unix rawTs; clockOffset is then
+            // ~decades and this "correction" hurls every historical sample into the future (field: year
+            // 2081), silently breaking sleep & recovery because the night never lands on the right day.
+            // A record can't post-date its own capture, so when corrected overshoots wall time the offset
+            // was bogus — keep the raw ts. Genuine stale (strap behind real time) has corrected <= wall,
+            // so this is a no-op there. (PR #471, @cataboysbusiness-debug)
+            if (corrected > wallClockRef + snapGranularity) rawTs else corrected
+        }
+        if (!plausible(candidate)) {
+            droppedImplausible++
+            return null
+        }
+        return candidate
     }
 
     val hr = ArrayList<HrRow>()
@@ -501,13 +547,20 @@ fun extractHistoricalStreams(
                 // (FIX #72) as every other stream.
                 if (family == DeviceFamily.WHOOP5) {
                     decodeWhoop5HistoricalV26(frame)?.let { rec ->
+                        // #547: skip a v26 PPG buffer whose unix is implausible (correctedWall → null) so a
+                        // bad-clock strap can't seed the derived-HR estimator with garbage-timestamped samples.
                         val baseTs = correctedWall(rec.unix.toLong() and 0xFFFFFFFFL)
-                        for (v in rec.samples) ppgSamples.add(PpgHr.Sample(ts = baseTs, value = v))
+                        if (baseTs != null) {
+                            for (v in rec.samples) ppgSamples.add(PpgHr.Sample(ts = baseTs, value = v))
+                        }
                     }
                 }
                 // type-47 carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
                 // (FIX #72); a normal strap is unchanged (offset < threshold).
                 val p = decodeHistorical(frame, family) ?: continue
+                // #547: correctedWall is now nullable — it returns null for an implausible (far-past /
+                // future-dated) record, so the `?: continue` below skips a bad-clock record entirely
+                // instead of letting its garbage `unix` enter the DB and pollute the day-windowed analytics.
                 val ts = (p.intOrNull("unix")?.toLong())?.let { correctedWall(it) } ?: continue
 
                 // skip startup hr=0 (matches Swift `bpm != 0`).
@@ -548,6 +601,9 @@ fun extractHistoricalStreams(
                 val parsed = Framing.parseFrame(frame, family)
                 if (!parsed.ok || parsed.crcOk == false) continue
                 val ts = wall(parsed.parsed.intOrNull("timestamp")) ?: continue
+                // #547: gate the wall()-corrected REALTIME_RAW_DATA ts on the same plausibility window — a
+                // bad device clock here would otherwise inject a far-past / future-dated HR/RR row.
+                if (!plausible(ts.toLong())) { droppedImplausible++; continue }
                 parsed.parsed.intOrNull("heart_rate")?.let { bpm -> hr.add(HrRow(ts.toLong(), bpm)) }
                 @Suppress("UNCHECKED_CAST")
                 (parsed.parsed["rr_intervals"] as? List<Int>)?.forEach { rrMs ->
@@ -563,6 +619,8 @@ fun extractHistoricalStreams(
                 // suppressed, so the offload extractor MUST handle these.
                 val parsed = Framing.parseFrame(frame, family)
                 if (!parsed.ok || parsed.crcOk == false) continue
+                // #547: correctedWall now nullable — an EVENT with an implausible event_timestamp is
+                // skipped via `?: continue` so a bad-clock wrist/charge/battery event can't enter the DB.
                 val ts = (parsed.parsed.intOrNull("event_timestamp")?.toLong())?.let { correctedWall(it) } ?: continue
                 val kind = (parsed.parsed["event"] as? String) ?: ""
                 if (kind.startsWith("BATTERY_LEVEL")) appendHistBattery(battery, ts, parsed.parsed)
@@ -591,6 +649,7 @@ fun extractHistoricalStreams(
         hr = hr, rr = rr, events = events, battery = battery,
         spo2 = spo2, skinTemp = skinTemp, resp = resp, gravity = gravity, steps = steps,
         ppgHr = ppgHr,
+        droppedImplausibleTs = droppedImplausible,
     )
 }
 

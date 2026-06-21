@@ -82,6 +82,12 @@ final class Backfiller {
     /// sentinel: it has no banked history to offload (a clock/charge state, not a decode bug).
     private var loggedNoCursor = false
 
+    /// #547: running count of historical records DROPPED this session for an implausible own-timestamp
+    /// (a bad-clock strap — far-past / bogus-2027 / future-dated). Tallied across chunks and surfaced once
+    /// at a session boundary so a clock-broken strap is visible in the strap log (observability only — the
+    /// ingest gate already kept the garbage rows out of the DB).
+    private var sessionDroppedImplausible = 0
+
     /// The trim cursor of the LAST chunk this Backfiller acked (durably persisted + confirmed to the
     /// strap). Survives across sessions on the same connection so the auto-continue gate (#364) can ask
     /// "did the offload actually advance the strap's trim this session?" — the spin-detector signal that
@@ -135,6 +141,7 @@ final class Backfiller {
         sessionMotionRows = 0
         sessionNightKeys.removeAll(keepingCapacity: true)
         loggedNoCursor = false
+        sessionDroppedImplausible = 0
         loggedLayoutVersions.removeAll(keepingCapacity: true)
     }
 
@@ -246,6 +253,18 @@ final class Backfiller {
                 log?("Historical records use firmware layout v\(v), which NOOP doesn't decode yet — no motion data, so sleep can't be computed from the strap. Please report this (issue #30).")
             }
             let decoded = extract(parsed, ref.device, ref.wall)
+            // #547: surface a bad-clock strap. extractHistoricalStreams DROPPED any record whose own unix
+            // timestamp was implausible (far-past / bogus-2027 / future-dated) before it could pollute the
+            // DB. Log it (once it's accrued at least one this session, on the first chunk that sees it) so
+            // the user's strap log explains why a clock-broken strap banks fewer rows than expected — this
+            // is the strap's clock, not a NOOP decode bug. Observability only; the gate already did the work.
+            if decoded.droppedImplausible > 0 {
+                let wasZero = sessionDroppedImplausible == 0
+                sessionDroppedImplausible += decoded.droppedImplausible
+                if wasZero {
+                    log?("Backfill: dropped record(s) with an implausible timestamp (trim=\(trim)) — the strap's clock is wrong (records dated far in the past or future), so those samples were skipped rather than misfiled onto the wrong day. Fully charge and reconnect the strap so its clock re-syncs.")
+                }
+            }
             // Diagnostic (#77): the AGGREGATE silent-loss case — frames arrived but produced no rows at
             // all (CRC fail / unmapped layout / out-of-range timestamp), so this chunk persists nothing
             // yet still acks below and the strap trims past it. The per-version log above only catches

@@ -1,6 +1,7 @@
 package com.noop.protocol
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -53,5 +54,77 @@ class HistoricalStreamsClockCorrectionTest {
         assertEquals(1_780_916_150L, identity.hr.first().ts)
         val drift = extractHistoricalStreams(listOf(bytes(wornV18)), 1_780_000_000, 1_780_003_600, DeviceFamily.WHOOP5) // 1h
         assertEquals(1_780_916_150L, drift.hr.first().ts)
+    }
+
+    // ── #547 ingest gate ────────────────────────────────────────────────────────────────────────────
+    // A bad strap clock/flash (pikapik) emits records whose `unix` decodes to scattered garbage — far-past
+    // (year 2024/2019/…), a 2027 spike (1_827_642_881), and even a FUTURE date — which entered the DB
+    // verbatim and polluted the day-windowed analytics. The gate now drops any record whose final ts is
+    // < MIN_PLAUSIBLE_UNIX (2023-11) or > now + FUTURE_MARGIN (1 day), keeping a normal recent ts identical.
+
+    /** Overwrite the v18 record's unix (u32 LE @15) and recompute the WHOOP5 CRC32 trailer so the frame
+     *  still passes the integrity gate. Header CRC16 covers only frame[0..6) (not the unix), so only the
+     *  payload CRC32 (over frame[8..total-4), stored LE at total-4) needs rebuilding. */
+    private fun wornV18WithUnix(unix: Long): ByteArray {
+        val f = bytes(wornV18)
+        val declaredLength = (f[2].toInt() and 0xFF) or ((f[3].toInt() and 0xFF) shl 8)
+        val total = declaredLength + 8
+        for (i in 0 until 4) f[15 + i] = ((unix shr (8 * i)) and 0xFF).toByte()
+        val payload = f.copyOfRange(8, total - 4)
+        val crc = Crc.crc32(payload)
+        for (i in 0 until 4) f[total - 4 + i] = ((crc shr (8 * i)) and 0xFF).toByte()
+        return f
+    }
+
+    @Test fun gateDropsFutureDatedRecord() {
+        // The worn frame's real unix is 1_780_916_150. Set "now" ten days BEFORE it, so the record is
+        // > now + 1 day in the future — a bad-clock artefact the gate must reject (no rows, drop counted).
+        val rawTs = 1_780_916_150L
+        val now = rawTs - 10 * 86_400
+        val st = extractHistoricalStreams(
+            listOf(bytes(wornV18)), 0, 0, DeviceFamily.WHOOP5, wallNow = now,
+        )
+        assertTrue("future-dated record must produce no rows", st.hr.isEmpty())
+        assertEquals(1, st.droppedImplausibleTs)
+    }
+
+    @Test fun gateKeepsRecordWithinOneDayFuture() {
+        // Boundary: a record exactly within the +1-day margin is NOT future-dated — kept, byte-identical.
+        val rawTs = 1_780_916_150L
+        val now = rawTs - 86_400 + 10           // record is +1 day - 10s ahead → inside the margin
+        val st = extractHistoricalStreams(
+            listOf(bytes(wornV18)), 0, 0, DeviceFamily.WHOOP5, wallNow = now,
+        )
+        assertEquals(rawTs, st.hr.first().ts)
+        assertEquals(0, st.droppedImplausibleTs)
+    }
+
+    @Test fun gateDropsFarPastRecord() {
+        // A record whose unix decodes below the 1.7B floor (here 2019) is garbage from a reset RTC — drop.
+        val farPast = 1_550_000_000L            // 2019-02, < MIN_PLAUSIBLE_UNIX (1_700_000_000)
+        val st = extractHistoricalStreams(
+            listOf(wornV18WithUnix(farPast)), 0, 0, DeviceFamily.WHOOP5, wallNow = 1_780_916_150L,
+        )
+        assertTrue("far-past record must produce no rows", st.hr.isEmpty())
+        assertEquals(1, st.droppedImplausibleTs)
+    }
+
+    @Test fun gateKeepsNormalRecentTimestampByteIdentical() {
+        // The control: a plausible recent ts (re-CRC'd to a value just inside the floor + comfortably in
+        // the past) is admitted UNCHANGED — the gate is a garbage filter, never a transform.
+        val recent = 1_780_916_150L
+        val st = extractHistoricalStreams(
+            listOf(wornV18WithUnix(recent)), 0, 0, DeviceFamily.WHOOP5, wallNow = recent + 3_600,
+        )
+        assertEquals(recent, st.hr.first().ts)   // byte-identical pass-through
+        assertEquals(0, st.droppedImplausibleTs)
+
+        // And the floor boundary: exactly MIN_PLAUSIBLE_UNIX is kept (inclusive).
+        val floor = MIN_PLAUSIBLE_UNIX
+        val atFloor = extractHistoricalStreams(
+            listOf(wornV18WithUnix(floor)), 0, 0, DeviceFamily.WHOOP5, wallNow = 1_780_916_150L,
+        )
+        assertEquals(floor, atFloor.hr.first().ts)
+        assertEquals(0, atFloor.droppedImplausibleTs)
     }
 }

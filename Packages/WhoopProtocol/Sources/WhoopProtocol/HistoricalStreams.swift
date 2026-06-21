@@ -1,5 +1,25 @@
 import Foundation
 
+/// Shared plausibility bounds for a type-47 record's own unix timestamp (#547). A WHOOP strap with a
+/// bad clock/flash (repeated trim=0xFFFFFFFF no-cursor) emits records whose decoded unix is scattered
+/// garbage — far-past (2024/2029), a bogus 2027=1827642881, and even FUTURE dates. NOOP used to trust
+/// these verbatim, so one polluted ~12h block got re-attributed to every day-window and a future-dated
+/// record surfaced as the "last night" carry-over. We now reject any record whose ts isn't near "now".
+///
+/// MIN_PLAUSIBLE_UNIX = 2023-11 — the same 1.7B floor `BLEManager.strapDataBounds` already uses.
+/// FUTURE_MARGIN = 1 day — a historical record can never post-date its own capture, so anything more
+/// than a day ahead of wall time is a bad-clock artefact. Keep these in lockstep with the Android
+/// `HistoricalStreams.kt` MIN_PLAUSIBLE_UNIX / FUTURE_MARGIN.
+public let MIN_PLAUSIBLE_UNIX = 1_700_000_000   // 2023-11
+public let FUTURE_MARGIN = 86_400               // 1 day
+
+/// True when `ts` is a plausible capture time for a historical record given `wallNow` (#547): on or
+/// after the 2023-11 floor and no more than a day ahead of now. The single predicate the ingest gate
+/// and the one-time DB heal both use, so both platforms reject the exact same set.
+public func isPlausibleHistoricalUnix(_ ts: Int, wallNow: Int) -> Bool {
+    ts >= MIN_PLAUSIBLE_UNIX && ts <= wallNow + FUTURE_MARGIN
+}
+
 /// The HISTORICAL_DATA record frames in `rawFrames` that FAIL decode — a genuine CRC failure, or an
 /// unmapped firmware layout whose envelope parsed but yielded no usable biometrics. These are the
 /// records the strap is about to free once we ack the trim, so without an archive they are lost
@@ -58,24 +78,50 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
     let staleThreshold = 86_400          // 1 day
     let snapGranularity = 300            // 5 min
     let clockOffset = wallClockRef - deviceClockRef
-    func correctedWall(_ rawTs: Int) -> Int {
-        guard abs(clockOffset) > staleThreshold else { return rawTs }
-        // sign-aware round-half-up snap to the nearest `snapGranularity`
-        let snapped = (clockOffset >= 0
-            ? (clockOffset + snapGranularity / 2)
-            : (clockOffset - snapGranularity / 2)) / snapGranularity * snapGranularity
-        let corrected = rawTs + snapped
-        // A fully-drained strap whose RTC has reset to ~epoch (year ~1971) reports a near-zero
-        // deviceClockRef while its offloaded frames still carry the true-unix rawTs. clockOffset is
-        // then ~decades, and this "correction" hurls every historical sample into the future
-        // (observed in the field: year 2081), which silently breaks sleep & recovery because the
-        // night never lands on the right day. A historical record can never post-date its own
-        // capture, so when corrected overshoots wall time the offset was bogus — keep the raw ts.
-        // The genuine stale case (strap behind real time) has corrected <= wallClockRef, so this
-        // guard is a no-op there. (PR #471, @cataboysbusiness-debug)
-        guard corrected <= wallClockRef + snapGranularity else { return rawTs }
-        return corrected
+    // The wall "now" the plausibility gate's FUTURE bound measures against. A record genuinely can't
+    // post-date its own capture, so the ground truth for "future" is the LIVE wall clock. We take the
+    // LATER of the live clock and `wallClockRef` so neither a synthetic/older ref (RawHistoryArchive's
+    // identity `wallClockRef == 0`, unit fixtures, or a session ref a hair behind a just-captured record)
+    // nor a paused live clock wrongly rejects a real record. The MIN_PLAUSIBLE_UNIX floor is unconditional
+    // and still catches the far-past garbage in every caller. Genuine future garbage (pikapik's records
+    // dated beyond now, the field's year-2081 overshoot) is still > now + FUTURE_MARGIN → dropped. (#547)
+    let wallNow = max(wallClockRef, Int(Date().timeIntervalSince1970))
+    // PRIMARY FIX (#547): a record's own decoded ts must be near "now". A bad-clock strap emits records
+    // whose unix is scattered garbage (far-past, a bogus 2027, even future dates); trusted verbatim, one
+    // polluted block was re-attributed to every day and a future row surfaced as "last night". Returns
+    // nil for an out-of-bounds ts so EVERY call site can skip the record. Applied to BOTH the raw
+    // pass-through branch and the corrected branch, so a clock-correction can never re-introduce a bad ts.
+    func correctedWall(_ rawTs: Int) -> Int? {
+        let candidate: Int
+        if abs(clockOffset) <= staleThreshold {
+            candidate = rawTs
+        } else {
+            // sign-aware round-half-up snap to the nearest `snapGranularity`
+            let snapped = (clockOffset >= 0
+                ? (clockOffset + snapGranularity / 2)
+                : (clockOffset - snapGranularity / 2)) / snapGranularity * snapGranularity
+            let corrected = rawTs + snapped
+            // A fully-drained strap whose RTC has reset to ~epoch (year ~1971) reports a near-zero
+            // deviceClockRef while its offloaded frames still carry the true-unix rawTs. clockOffset is
+            // then ~decades, and this "correction" hurls every historical sample into the future
+            // (observed in the field: year 2081), which silently breaks sleep & recovery because the
+            // night never lands on the right day. A historical record can never post-date its own
+            // capture, so when corrected overshoots wall time the offset was bogus — keep the raw ts.
+            // The genuine stale case (strap behind real time) has corrected <= wallClockRef, so this
+            // guard is a no-op there. (PR #471, @cataboysbusiness-debug)
+            candidate = corrected <= wallClockRef + snapGranularity ? corrected : rawTs
+        }
+        // Final ingest gate (#547): drop the record if the resolved ts is implausible. Counted once per
+        // session via `droppedImplausible` so a bad-clock strap is visible in the diag/strap-log seam.
+        guard isPlausibleHistoricalUnix(candidate, wallNow: wallNow) else {
+            droppedImplausible += 1
+            return nil
+        }
+        return candidate
     }
+    // #547: how many records this chunk dropped for an implausible ts. Surfaced to the Backfiller via
+    // `Streams.droppedImplausible` so the strap log can show a bad-clock strap (observability only).
+    var droppedImplausible = 0
     var out = Streams()
     // v26 optical-PPG records (issue #156): no measured HR/motion, just the 24 Hz waveform. Collect
     // (corrected-wall ts, samples) here and derive a per-second HR after the loop (PpgHr.derivePpgHr),
@@ -87,9 +133,10 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
         switch r.typeName {
         case "HISTORICAL_DATA":
             // type-47 carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
-            // (FIX #72); a normal strap is unchanged (offset < threshold).
-            guard let rawTs = p["unix"]?.intValue else { continue }
-            let ts = correctedWall(rawTs)
+            // (FIX #72); a normal strap is unchanged (offset < threshold). The #547 ingest gate inside
+            // `correctedWall` returns nil for an implausible ts (covers the v26 PPG baseTs too, since the
+            // v26 waveform rides this same `unix`) — skip the whole record so no garbage-ts row is banked.
+            guard let rawTs = p["unix"]?.intValue, let ts = correctedWall(rawTs) else { continue }
             // v26 PPG buffer: stash the waveform for the post-loop HR estimator. A v26 record carries
             // no heart_rate/spo2/gravity, so it adds nothing to the branches below — handled here only.
             if let samples = p["ppg_waveform"]?.intArrayValue, !samples.isEmpty {
@@ -121,18 +168,24 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
                     y: p["gravity_y"]?.doubleValue ?? 0, z: p["gravity_z"]?.doubleValue ?? 0))
             }
         case "REALTIME_RAW_DATA":
-            let ts = wall(p["timestamp"]?.intValue)
-            if let ts = ts, let bpm = p["heart_rate"]?.intValue {
+            // #547 gate: the device-epoch→wall mapping can also land out of bounds on a bad clock, so
+            // drop the row unless the resulting wall ts is plausible (mirrors the type-47/EVENT gate).
+            var rtTs: Int?
+            if let w = wall(p["timestamp"]?.intValue) {
+                if isPlausibleHistoricalUnix(w, wallNow: wallNow) { rtTs = w }
+                else { droppedImplausible += 1 }
+            }
+            if let ts = rtTs, let bpm = p["heart_rate"]?.intValue {
                 out.hr.append(HRSample(ts: ts, bpm: bpm))
             }
-            if let ts = ts, let rrs = p["rr_intervals"]?.intArrayValue {
+            if let ts = rtTs, let rrs = p["rr_intervals"]?.intArrayValue {
                 for rr in rrs { out.rr.append(RRInterval(ts: ts, rrMs: rr)) }
             }
         case "EVENT":
             // EVENT carries the strap RTC's real-unix seconds. Correct for a grossly-stale RTC
-            // (FIX #72); a normal strap is unchanged (offset < threshold).
-            guard let rawTs = p["event_timestamp"]?.intValue else { continue }
-            let ts = correctedWall(rawTs)
+            // (FIX #72); a normal strap is unchanged (offset < threshold). #547 gate: skip the event
+            // when `correctedWall` rejects an implausible ts so no future/far-past event is banked.
+            guard let rawTs = p["event_timestamp"]?.intValue, let ts = correctedWall(rawTs) else { continue }
             let kind = p["event"]?.stringValue ?? ""
             if kind.hasPrefix("BATTERY_LEVEL") { appendBattery(&out, ts: ts, p: p) }  // "BATTERY_LEVEL(3)"
             var payload = p
@@ -149,5 +202,6 @@ public func extractHistoricalStreams(_ parsed: [ParsedFrame],
     // Derive per-second HR from the collected v26 PPG bursts (issue #156). Empty when there were no v26
     // records (the WHOOP 4 / v18-only common case), so this is a no-op cost there.
     out.ppgHr = PpgHr.derivePpgHr(records: ppgRecords)
+    out.droppedImplausible = droppedImplausible   // #547 diag count (not persisted, not encoded)
     return out
 }

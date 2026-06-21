@@ -174,6 +174,12 @@ object NoopPrefs {
      *  "Share strap log" export) work regardless. See [com.noop.ble.WhoopBleClient.debugLogcat]. */
     const val KEY_DEBUG_LOGGING = "noop.debugLogging"
 
+    /** "Broadcast heart rate" — when on, NOOP acts as a standard BLE Heart Rate peripheral (0x180D /
+     *  0x2A37) and re-broadcasts the live strap HR so a gym treadmill / Zwift / Peloton can read it.
+     *  LOCAL Bluetooth only, nothing leaves the device. Default OFF. Drives [com.noop.ble.HrBroadcaster]
+     *  via [AppViewModel]. Distinct from the WHOOP strap's own "broadcast HR" firmware config. */
+    const val KEY_HR_BROADCAST = "noop.hrBroadcast"
+
     fun of(context: Context): SharedPreferences =
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -200,6 +206,24 @@ object NoopPrefs {
 
     fun setDebugLogging(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_DEBUG_LOGGING, enabled).apply()
+    }
+
+    /** Whether NOOP re-broadcasts its live HR as a standard BLE Heart Rate peripheral. Default OFF. */
+    fun hrBroadcast(context: Context): Boolean =
+        of(context).getBoolean(KEY_HR_BROADCAST, false)
+
+    fun setHrBroadcast(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_HR_BROADCAST, enabled).apply()
+    }
+
+    /** "Buzz WHOOP 4" (#536): arm the strap's firmware alarm at the phone smart alarm's earliest wake
+     *  time, so the strap buzzes first and the OS alarm fires at the hard deadline as backup. Default OFF. */
+    const val KEY_BUZZ_WHOOP4_WITH_ALARM = "noop.buzzWhoop4WithAlarm"
+    fun buzzWhoop4WithAlarm(context: Context): Boolean =
+        of(context).getBoolean(KEY_BUZZ_WHOOP4_WITH_ALARM, false)
+
+    fun setBuzzWhoop4WithAlarm(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_BUZZ_WHOOP4_WITH_ALARM, enabled).apply()
     }
 
     /** Launcher-icon preference (v3 "Titanium & Gold"). false = machined-titanium (.IconDefault,
@@ -269,6 +293,17 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_HC_WRITEBACK, enabled).apply()
     }
 
+    /** #528 — last HR sample epoch-second exported to Health Connect (0 = nothing exported yet). The
+     *  HR share-back only emits samples newer than this, so each writeback is incremental. */
+    const val KEY_HC_HR_FRONTIER = "noop.hcHrFrontierTs"
+
+    fun hcHrFrontier(context: Context): Long =
+        of(context).getLong(KEY_HC_HR_FRONTIER, 0L)
+
+    fun setHcHrFrontier(context: Context, tsSec: Long) {
+        of(context).edit().putLong(KEY_HC_HR_FRONTIER, tsSec).apply()
+    }
+
     /** Smart alarm: arm the strap's firmware alarm to buzz at a wake time. Default off; default time 07:00. */
     const val KEY_SMART_ALARM = "noop.smartAlarmEnabled"
     const val KEY_SMART_ALARM_MINUTES = "noop.smartAlarmMinutes"
@@ -286,6 +321,21 @@ object NoopPrefs {
 
     fun setSmartAlarmMinutes(context: Context, minutes: Int) {
         of(context).edit().putInt(KEY_SMART_ALARM_MINUTES, minutes).apply()
+    }
+
+    /** Weekdays the smart alarm fires on (Calendar.DAY_OF_WEEK: 1=Sun … 7=Sat). Empty = every day —
+     *  the backward-compatible default for anyone upgrading from before per-day scheduling (#539). Stored
+     *  as a string set; only valid day numbers (1…7) are kept so a corrupted entry can't schedule a
+     *  bogus day. Mirrors macOS `BehaviorStore.smartAlarmWeekdays`. */
+    const val KEY_SMART_ALARM_WEEKDAYS = "noop.smartAlarmWeekdays"
+
+    fun smartAlarmWeekdays(context: Context): Set<Int> =
+        of(context).getStringSet(KEY_SMART_ALARM_WEEKDAYS, emptySet())
+            ?.mapNotNull { it.toIntOrNull() }?.filter { it in 1..7 }?.toSet() ?: emptySet()
+
+    fun setSmartAlarmWeekdays(context: Context, days: Set<Int>) {
+        val clean = days.filter { it in 1..7 }.map { it.toString() }.toSet()
+        of(context).edit().putStringSet(KEY_SMART_ALARM_WEEKDAYS, clean).apply()
     }
 
     /** HR-zone haptic coaching: buzz the strap on entering the top zone (ease off) and — when the
@@ -396,6 +446,18 @@ object NoopPrefs {
 
     fun setEffortRescoreDone(context: Context) {
         of(context).edit().putBoolean(KEY_EFFORT_RESCORE_DONE, true).apply()
+    }
+
+    /** Whether the one-shot #547 implausible-timestamp heal has run. Set true once it completes so the
+     *  on-upgrade purge of bad-strap-clock rows (far-past / future-dated) never re-runs. Re-running is
+     *  harmless (the deletes are idempotent), but the flag avoids the work on every launch. */
+    const val KEY_TS_HEAL_DONE = "noop.tsHeal.v547.done"
+
+    fun tsHealDone(context: Context): Boolean =
+        of(context).getBoolean(KEY_TS_HEAL_DONE, false)
+
+    fun setTsHealDone(context: Context) {
+        of(context).edit().putBoolean(KEY_TS_HEAL_DONE, true).apply()
     }
 
     /** The last strap we bonded to (address + model), persisted so NOOP can reconnect to it directly on

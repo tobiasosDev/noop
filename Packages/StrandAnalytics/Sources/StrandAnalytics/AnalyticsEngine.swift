@@ -212,7 +212,15 @@ public enum AnalyticsEngine {
                                   //     regular). nil → the consistency term is neutral (0.5) since a single
                                   //     day carries no regularity signal — the caller supplies it from history.
                                   sleepNeedHours: Double = Rest.defaultNeedHours,
-                                  sleepConsistency: Double? = nil) -> DayResult {
+                                  sleepConsistency: Double? = nil,
+                                  // The user's learned habitual midsleep (local time-of-day seconds in
+                                  // [0, 86400)) for the main-night scored pick, so a late/shift sleeper's
+                                  // real night out-scores a daytime nap. nil = cold-start: the selector
+                                  // falls back to the broad overnight-band bonus. IntelligenceEngine
+                                  // computes this once per run from the trailing sleep history and threads
+                                  // it down; pure-function callers/tests leave it nil and stay on the
+                                  // cold-start band. (#547)
+                                  habitualMidsleepSec: Int? = nil) -> DayResult {
 
         // ── Sleep detection + staging ─────────────────────────────────────────
         let allSessions = SleepStager.detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity,
@@ -221,20 +229,39 @@ public enum AnalyticsEngine {
         // the caller's local-day key; attribute by the same offset so the bucket and the key agree.
         let matched = allSessions.filter { dayString($0.end, offsetSec: tzOffsetSeconds) == day }
 
-        // ── Daily sleep aggregates (AASM, in-bed weighted) ────────────────────
+        // ── The day's MAIN night (#525) ───────────────────────────────────────
+        // A day can hold an overnight AND a daytime nap (both end on `day`, so both are in `matched`).
+        // The sleep-DURATION figures (total sleep / stage minutes / efficiency / disturbances, hence the
+        // Rest composite, the debt ledger, and the dashboard card) describe the MAIN night — the SAME
+        // block the Sleep tab's hero shows (longest, preferring an overnight-anchored onset). They must
+        // NOT silently sum the nap in, or the "your night" number disagrees across screens (the #525
+        // report). Naps stay their OWN session rows in `sleepSessions` / `cachedSleep`, where the Sleep
+        // tab lists and labels them separately. `SleepStageTotals.mainNightIndex` is the single shared
+        // selector so the analytics rollup and the Sleep tab resolve to the identical block.
+        // Pick by the LEARNED-TIMING score, threading the user's learned habitual midsleep so a
+        // late/shift sleeper's real night out-scores a daytime nap (nil = cold-start overnight band).
+        // No selector-side gap-bridge here: the SleepStager already bridges sparse-gravity gaps (up to
+        // ~90 min) when it forms `matched`, and a bridged pick would map to only ONE fragment's bounds —
+        // the AASM aggregate below reads the chosen session's stages, so re-merging across fragments is
+        // out of scope and would risk dropping the second fragment's sleep. Select over `matched` as-is. (#547)
+        let mainNight: SleepSession? = SleepStageTotals.mainNightIndex(
+            matched.map { SleepStageTotals.NightBlock(start: $0.start, end: $0.end) },
+            offsetSec: tzOffsetSeconds, habitualMidsleepSec: habitualMidsleepSec).map { matched[$0] }
+
+        // ── Daily sleep aggregates (AASM) over the MAIN night only (#525) ──────
         var deepS = 0.0, remS = 0.0, lightS = 0.0, tstS = 0.0
         var inBedS = 0.0, effWeighted = 0.0
         var disturbances = 0
-        for s in matched {
+        if let s = mainNight {
             let m = SleepStager.hypnogramMetrics(s)
             let inBed = Double(s.end - s.start)
-            inBedS += inBed
-            effWeighted += s.efficiency * inBed
-            deepS += m.deepMin * 60.0
-            remS += m.remMin * 60.0
-            lightS += m.lightMin * 60.0
-            tstS += m.tstS
-            disturbances += m.disturbances
+            inBedS = inBed
+            effWeighted = s.efficiency * inBed
+            deepS = m.deepMin * 60.0
+            remS = m.remMin * 60.0
+            lightS = m.lightMin * 60.0
+            tstS = m.tstS
+            disturbances = m.disturbances
         }
         let efficiency = inBedS > 0 ? effWeighted / inBedS : 0.0
 
@@ -253,6 +280,14 @@ public enum AnalyticsEngine {
             consistency: sleepConsistency,
             deepSeconds: deepS)
 
+        // #525 NOTE: the sleep-DURATION figures above are main-night-only (the headline "your night"),
+        // but the physiological aggregates below (resting HR, HRV, respiration) intentionally stay over
+        // ALL matched sessions. This is deliberate, not an oversight: recovery should reflect the body's
+        // best resting physiology for the day, the main overnight dominates these anyway (it is far longer
+        // than any nap and HRV is in-bed-weighted by duration), and narrowing them to the main night would
+        // widen the change's blast radius into the recovery score right at a release boundary for a
+        // negligible shift. The Rest/sleep-quality term is main-night; the recovery physiology is
+        // day-best-resting, night-dominated. Keep these two definitions distinct on purpose.
         // Daily resting HR = lowest per-session resting HR across matched sessions.
         let restingHRDaily = matched.compactMap { $0.restingHR }.min()
         // Daily avg HRV = in-bed-weighted mean of per-session avg HRV.

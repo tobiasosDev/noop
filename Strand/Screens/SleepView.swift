@@ -57,6 +57,13 @@ struct SleepView: View {
     /// gaps preserved. Oldest→newest. Falls back to `repo.sleeps` until loaded. (#170)
     @State private var allSessions: [CachedSleepSession] = []
 
+    /// The user's LEARNED habitual midsleep (local time-of-day seconds), or nil under the cold-start
+    /// threshold. Loaded from `repo.habitualMidsleepSec()` — the SAME value `AnalyticsEngine.analyzeDay`
+    /// threads into the daily total — and fed into the main-night selector so the hero, the naps split,
+    /// and the edit target pick the SAME block the analytics rollup did, for a shift/late sleeper too. nil
+    /// keeps the existing cold-start overnight-band fallback. (#547) Refreshed with `allSessions`.
+    @State private var habitualMidsleepSec: Int? = nil
+
     /// Draw-in fraction for the Rest hero gauge — owned here so the gauge animates the arc on appear /
     /// when the sleep-performance score changes, exactly as TodayView drives its rings. Presentation-only.
     @State private var heroFraction: Double = 0
@@ -75,6 +82,14 @@ struct SleepView: View {
     /// two buttons and cleared after a moment. Drives the SwiftUI haptic landing too. LOGGING-ONLY:
     /// a mark never feeds the sleep detector — it's persisted to the metric series + strap log. (#461)
     @State private var lastMark: SleepMark?
+
+    /// True while the hero's "why this is your main sleep" popover is open. The reason text comes
+    /// straight from the foundation `MainNightReason` for the displayed night's blocks — never
+    /// re-derived here — so the explainer says exactly what the selector decided. (spec 2026-06-20 C1)
+    @State private var showMainSleepWhy = false
+    /// The stable detected key of the nap whose "why this is a nap" popover is open, or nil. Keyed by
+    /// the nap's own `startTs` so one popover shows at a time even with several nap rows. (C1)
+    @State private var napWhyStartTs: Int?
 
     var body: some View {
         // Resolve the memoized model for THIS render. `dataKey` is O(1)-ish (counts + last-row
@@ -140,6 +155,9 @@ struct SleepView: View {
             // the freshly-loaded blocks. (#170)
             .task(id: repo.refreshSeq) {
                 allSessions = await repo.allSleepSessions()
+                // Load the learned habitual midsleep the engine used, so the main-night pick aligns to it
+                // (a shift/late sleeper) instead of only the cold-start band. nil under threshold. (#547)
+                habitualMidsleepSec = await repo.habitualMidsleepSec()
                 nightOffset = 0
                 navNight = nil
                 modelKey = dataKey
@@ -261,6 +279,20 @@ struct SleepView: View {
         return "On-device"
     }
 
+    // MARK: - Provenance for the displayed night (COMPONENT 4, spec 2026-06-20)
+
+    /// The REAL per-day merge winner for the DISPLAYED night's sleep numbers, as the same brand wording the
+    /// By-Day badge / Today / Intelligence use ("On-device" / "Whoop"). A WHOOP export covering the night's
+    /// wake-day wins the dashboard merge (imports win field-by-field, Repository.mergeDaily), so the badge
+    /// says "Whoop"; otherwise the night was scored on-device by NOOP. Keyed by the night's LOCAL wake-day
+    /// (the `mergeSleep` / importer convention, sleep is filed under the day you woke), so a navigated past
+    /// night reads its OWN provenance, not last night's. Honest: never a blanket "on-device". Apple Health
+    /// carries no sleep into `importedSleep`, so the sleep merge winner is only ever Whoop vs on-device. (C4)
+    private func nightSource(_ night: Night) -> String {
+        let wakeDay = Repository.localDayKey(Date(timeIntervalSince1970: TimeInterval(night.session.endTs)))
+        return repo.importedSleep[wakeDay] != nil ? "Whoop" : "On-device"
+    }
+
     // MARK: - 0b. SLEEP MARKS — tap to log "going to sleep" / "I'm awake" (#461, Phase 1)
 
     /// A compact additive card with two buttons. Tapping logs a timestamped sleep-mark — persisted to
@@ -345,7 +377,8 @@ struct SleepView: View {
             } else if let session = sessionRow(at: nightOffset) {
                 // Stage-less stub purely to reuse Night's date/time formatting.
                 let stub = Night(session: session, stages: Stages(awake: 0, light: 0, deep: 0, rem: 0),
-                                 sourceBlocks: dayBlocks(at: nightOffset))
+                                 sourceBlocks: dayBlocks(at: nightOffset),
+                                 habitualMidsleepSec: habitualMidsleepSec)
                 nightNavHeader(trailing: stub.spanLabel)
                 sleepWindowRow(stub)
                 ChartCard(
@@ -450,6 +483,24 @@ struct SleepView: View {
                     .strandOverline()
             }
             Spacer(minLength: 8)
+            // C1 — "why this is a nap" explainer: the nap-row nudge that everything other than the chosen
+            // main block is logged as a nap, with the Edit next-step. Keyed by the nap's stable startTs so
+            // one popover shows at a time across several nap rows. (spec 2026-06-20)
+            Button { napWhyStartTs = (napWhyStartTs == nap.startTs) ? nil : nap.startTs } label: {
+                Image(systemName: "info.circle")
+                    .font(StrandFont.headline)
+                    .foregroundStyle(StrandPalette.restColor)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Why this is logged as a nap")
+            .accessibilityLabel("Why this is logged as a nap")
+            .popover(isPresented: Binding(
+                get: { napWhyStartTs == nap.startTs },
+                set: { if !$0 { napWhyStartTs = nil } }), arrowEdge: .bottom) {
+                whyPopover(text: "", napSuffix: true)
+            }
             Button {
                 wakeEdit = WakeEdit(detectedStartTs: nap.startTs,
                                     bedTs: nap.effectiveStartTs,
@@ -459,12 +510,13 @@ struct SleepView: View {
                 Image(systemName: isEdited ? "pencil.circle.fill" : "pencil.circle")
                     .font(StrandFont.headline)
                     .foregroundStyle(StrandPalette.restColor)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Edit nap times")
             .accessibilityLabel(isEdited ? "Edit nap times (edited)" : "Edit nap times")
         }
-        .accessibilityElement(children: .combine)
     }
 
     /// "HH:mm–HH:mm" clock window for a nap row (device 12-/24-h setting via the shared Night formatter).
@@ -519,17 +571,87 @@ struct SleepView: View {
         // A frosted Rest-tinted card (was a flat surfaceRaised block) so the window row sits in the
         // same colour world as the rest of the screen. Bevel treatment — content unchanged.
         NoopCard(padding: 14, tint: StrandPalette.restColor) {
-            HStack(spacing: 0) {
-                sleepTime(icon: "moon.zzz.fill", label: "Asleep", value: night.onsetText)
-                Spacer(minLength: 12)
-                Rectangle().fill(StrandPalette.hairline).frame(width: 1, height: 30)
-                Spacer(minLength: 12)
-                sleepTime(icon: "sun.max.fill", label: "Woke", value: night.wakeText)
-                Spacer(minLength: 8)
-                wakeEditButton(night)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 0) {
+                    sleepTime(icon: "moon.zzz.fill", label: "Asleep", value: night.onsetText)
+                    Spacer(minLength: 12)
+                    Rectangle().fill(StrandPalette.hairline).frame(width: 1, height: 30)
+                    Spacer(minLength: 12)
+                    sleepTime(icon: "sun.max.fill", label: "Woke", value: night.wakeText)
+                    Spacer(minLength: 8)
+                    wakeEditButton(night)
+                }
+                .frame(maxWidth: .infinity)
+                // Provenance (C4) + the "why this is your main sleep" explainer (C1). The badge names the
+                // REAL per-day merge winner; the info button reveals the foundation reason for the pick.
+                Divider().overlay(StrandPalette.hairline)
+                mainSleepFooter(night)
             }
-            .frame(maxWidth: .infinity)
         }
+    }
+
+    /// The hero's footer: the night's provenance badge (the real merge winner) next to a tappable "why
+    /// this is your main sleep" affordance. Tapping reveals the foundation `MainNightReason` copy in a
+    /// popover, so the pick is explainable on the spot without leaving the hero. (spec 2026-06-20 C1/C4)
+    @ViewBuilder
+    private func mainSleepFooter(_ night: Night) -> some View {
+        HStack(spacing: 10) {
+            // C4 — provenance. Dynamic String into the badge slot, so wrap in "\()" (the
+            // String vs LocalizedStringKey SwiftUI footgun) to show it verbatim, not as a lookup key.
+            SourceBadge("\(nightSource(night))", tint: StrandPalette.restColor)
+            Spacer(minLength: 8)
+            if mainSleepReasonText(night) != nil {
+                Button { showMainSleepWhy.toggle() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "info.circle")
+                        Text("Why this sleep?")
+                    }
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.restColor)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Why this is your main sleep")
+                .accessibilityLabel("Why this is your main sleep")
+                .popover(isPresented: $showMainSleepWhy, arrowEdge: .bottom) {
+                    whyPopover(text: mainSleepReasonText(night) ?? "", napSuffix: false)
+                }
+            }
+        }
+    }
+
+    /// A compact explainer popover: the verbatim foundation reason text, with the nap suffix appended for a
+    /// nap row. Plain English, no jargon, no em-dashes (the words come straight from `mainSleepReasonText`
+    /// and the spec's nap-row suffix). Sized for both macOS and iOS. (spec 2026-06-20 C1)
+    @ViewBuilder
+    private func whyPopover(text: String, napSuffix: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "moon.stars.fill")
+                    .foregroundStyle(StrandPalette.restColor)
+                    .accessibilityHidden(true)
+                Text(napSuffix ? "About this nap" : "About your main sleep")
+                    .font(StrandFont.subhead.weight(.semibold))
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+            if !text.isEmpty {
+                Text(text)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if napSuffix {
+                Text("Logged as a nap. Wrong? Tap Edit to adjust your sleep and wake times.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+        .background(StrandPalette.surfaceOverlay)
+        .accessibilityElement(children: .combine)
     }
 
     private func sleepTime(icon: String, label: LocalizedStringKey, value: String) -> some View {
@@ -984,39 +1106,70 @@ struct SleepView: View {
 
     /// The day's MAIN sleep block — the night people mean by "last night" — and the rest (naps). (#518)
     /// A day can hold an overnight AND an afternoon nap (both end on the same calendar day, so both
-    /// bucket here). The MAIN block is the LONGEST one, preferring an OVERNIGHT-anchored block (onset in
-    /// the late-evening/early-morning window) so a long lazy afternoon nap can't out-rank a slightly
-    /// shorter real night. Picking the longest (not the latest-ending) is the #518 fix: the latest block
-    /// is the afternoon nap, which used to win and hide the overnight. `editTarget` already uses the same
-    /// longest-block rule, so the hero, the edit affordance, and this selection all agree.
+    /// bucket here). The pick is the SINGLE shared selector (`SleepStageTotals.mainNightIndex`) the
+    /// analytics rollup uses — the LEARNED-TIMING score (asleep span + alignment bonus), NOT a re-derived
+    /// overnight gate — so the hero, the edit affordance, the analytics total, and the Sleep tab ALL
+    /// resolve to the identical block (the whole point of #525/#547). Delegates to `mainNightSession`,
+    /// passing the LEARNED habitual midsleep (the same value the engine threaded into the daily total) so
+    /// a shift/late sleeper's hero and analytics total agree — not just at cold-start. (#547)
     private func mainBlock(_ sessions: [CachedSleepSession]) -> CachedSleepSession? {
-        guard !sessions.isEmpty else { return nil }
-        func duration(_ s: CachedSleepSession) -> Int { s.endTs - s.effectiveStartTs }
-        // Rank: overnight-anchored first, then by duration. An overnight block always beats a daytime
-        // one of equal/shorter length; among same-kind blocks the longer wins.
-        return sessions.max { a, b in
-            let ao = SleepView.isOvernightOnset(a.effectiveStartTs)
-            let bo = SleepView.isOvernightOnset(b.effectiveStartTs)
-            if ao != bo { return !ao && bo }   // a < b when a is daytime and b is overnight
-            return duration(a) < duration(b)
-        }
+        SleepView.mainNightSession(sessions, habitualMidsleepSec: habitualMidsleepSec)
     }
 
-    /// A nap is a short block (< `napMaxHours`), or any block that is NOT the day's main sleep — it's
-    /// daytime-onset. Computed at READ time from the day's blocks (no DB field / migration). (#518)
-    static let napMaxHours: Double = 3.0
-    /// True when a block's onset falls in the overnight window (≥ 20:00 or < 10:00 local) — the hours a
-    /// real night begins. A block onset in the afternoon is a nap, never the main night, even if long.
-    static func isOvernightOnset(_ ts: Int) -> Bool {
-        let h = Calendar.current.component(.hour, from: Date(timeIntervalSince1970: TimeInterval(ts)))
-        return h >= 20 || h < 10
+    /// The device's current UTC offset (seconds east), evaluated once per pick. Feeds the selector's
+    /// `offsetSec` so the timing test reads the user's clock via the SAME `offsetSec` math the engine
+    /// uses (`SleepStageTotals.localSecOfDay`), instead of `Calendar.current.component(.hour:)` which was
+    /// the duplicated, DST-fragile gate the audit flagged. (#547)
+    static var tzOffsetSec: Int { TimeZone.current.secondsFromGMT() }
+
+    /// THE one main-night pick for the Sleep UI, shared by `mainBlock`, `editTarget`, and the nap split,
+    /// so all three agree with `AnalyticsEngine.analyzeDay`. Scores by learned timing on each block's
+    /// EFFECTIVE onset (what the user sees) and returns the owning session. No selector-side gap-bridge —
+    /// the engine doesn't bridge at this seam either (the stager already bridged), so selecting over the
+    /// blocks as-is keeps the UI byte-aligned with the analytics pick. `habitualMidsleepSec` is the SAME
+    /// learned value the engine threads into the persisted totals (loaded via `repo.habitualMidsleepSec()`),
+    /// so a shift/late sleeper's hero and analytics total resolve to the identical block; nil keeps the
+    /// cold-start overnight-band bonus, which matches a cold-start engine run. (#525 / #547)
+    static func mainNightSession(_ sessions: [CachedSleepSession],
+                                 habitualMidsleepSec: Int? = nil) -> CachedSleepSession? {
+        SleepStageTotals.mainNightIndex(
+            sessions.map { SleepStageTotals.NightBlock(start: $0.effectiveStartTs, end: $0.endTs) },
+            offsetSec: tzOffsetSec, habitualMidsleepSec: habitualMidsleepSec).map { sessions[$0] }
     }
-    /// Classify a block as a nap relative to the day's `main` block: it's a nap when it isn't the main
-    /// block AND it's short (< `napMaxHours`) or daytime-onset. The main block is never a nap. (#518)
+
+    /// Soft nap-duration hint retained for callers/tests; the nap CLASSIFICATION is now purely "not the
+    /// chosen main block" (see `isNap`), never an independent duration/onset test. (#518/#547)
+    static let napMaxHours: Double = 3.0
+    /// Classify a block as a nap: it's a nap exactly when it is NOT the day's chosen main block. Derived
+    /// from the pick (never an independent onset/duration gate), so the label can't contradict the
+    /// selection — the contradiction the audit flagged. The main block is never a nap. (#518/#547)
     static func isNap(_ s: CachedSleepSession, main: CachedSleepSession?) -> Bool {
-        guard let main, s.startTs != main.startTs else { return false }
-        let hours = Double(s.endTs - s.effectiveStartTs) / 3600.0
-        return hours < napMaxHours || !isOvernightOnset(s.effectiveStartTs)
+        guard let main else { return false }
+        return s.startTs != main.startTs
+    }
+
+    // MARK: - Why-this-is-your-main-sleep explainer (COMPONENT 1, spec 2026-06-20)
+
+    /// The verbatim reason copy for the displayed night, with {DUR} filled as "Xh Ym" from the chosen
+    /// block's asleep duration — driven entirely by the foundation `MainNightReason`, so the explainer
+    /// states exactly what the selector decided (never a re-derived guess). Resolved over the day's blocks
+    /// via the same `mainNightSelection` API the analytics pick uses, with the SAME learned habitual the
+    /// hero used, so the words match the block the hero shows. nil only when the day has no blocks. (C1)
+    private func mainSleepReasonText(_ night: Night) -> String? {
+        guard let sel = SleepStageTotals.mainNightSelection(
+            night.sourceBlocks.map { SleepStageTotals.NightBlock(start: $0.effectiveStartTs, end: $0.endTs) },
+            offsetSec: SleepView.tzOffsetSec, habitualMidsleepSec: habitualMidsleepSec) else { return nil }
+        let dur = durationText(sel.asleepMinutes)
+        switch sel.reason {
+        case .onlyBlock:
+            return "This is your only sleep block today."
+        case .longest:
+            return "Picked as your main sleep because it was your longest block (\(dur))."
+        case .longestNearUsual:
+            return "Picked as your main sleep because it was your longest block (\(dur)), near your usual bedtime."
+        case .alignedToUsual:
+            return "Picked as your main sleep because it started near your usual sleep time."
+        }
     }
 
     /// Build the hero `Night` for a day around its MAIN sleep block (#518) — NOT a merge of the whole
@@ -1048,7 +1201,8 @@ struct SleepView: View {
         let synth = CachedSleepSession(startTs: onset, endTs: wake, efficiency: eff,
                                        restingHr: nil, avgHrv: nil, stagesJSON: nil)
         let realSegs = segs.count >= 2 ? segs.sorted { $0.start < $1.start } : nil
-        return Night(session: synth, stages: stages, realSegments: realSegs, sourceBlocks: sessions)
+        return Night(session: synth, stages: stages, realSegments: realSegs, sourceBlocks: sessions,
+                     habitualMidsleepSec: habitualMidsleepSec)
     }
 
     /// The real stored blocks composing the day at `offset` (for the stage-less stub Night, so its edit
@@ -1536,18 +1690,20 @@ private struct Night {
     /// rather than re-scanning by wake time. (#318)
     var sourceBlocks: [CachedSleepSession] = []
 
-    /// The real stored block a sleep-time edit writes against — the day's MAIN block (the longest,
-    /// preferring an OVERNIGHT-anchored block so a long afternoon nap can't out-rank the real night),
-    /// resolved by identity. Its `startTs` is always a genuine detected key, so `applySleepEdit` matches.
-    /// nil when there's no underlying block (a synthetic stub) — the edit affordance is then hidden. The
-    /// same selection backs the hero hypnogram and the naps card, so all three agree. (#318, #518)
+    /// The LEARNED habitual midsleep (local time-of-day seconds) the owning view loaded for the user — the
+    /// SAME value the engine threaded into the daily total — so `editTarget` resolves the SAME main block
+    /// the hero and the analytics rollup did, for a shift/late sleeper too. nil = cold-start band. (#547)
+    var habitualMidsleepSec: Int? = nil
+
+    /// The real stored block a sleep-time edit writes against — the day's MAIN block, resolved by the
+    /// SAME shared selector (`SleepView.mainNightSession` → `SleepStageTotals.mainNightIndex`) the hero,
+    /// the naps card, and `AnalyticsEngine.analyzeDay` use, so all of them and the edit affordance agree
+    /// (no re-derived overnight gate). Passes the same learned habitual the hero used, so the edit target
+    /// matches the hero block even for a shift/late sleeper. Its `startTs` is a genuine detected key, so
+    /// `applySleepEdit` matches. nil when there's no underlying block (a synthetic stub) — the edit
+    /// affordance is then hidden. (#318, #518, #547)
     var editTarget: CachedSleepSession? {
-        sourceBlocks.max { a, b in
-            let ao = SleepView.isOvernightOnset(a.effectiveStartTs)
-            let bo = SleepView.isOvernightOnset(b.effectiveStartTs)
-            if ao != bo { return !ao && bo }
-            return (a.endTs - a.effectiveStartTs) < (b.endTs - b.effectiveStartTs)
-        }
+        SleepView.mainNightSession(sourceBlocks, habitualMidsleepSec: habitualMidsleepSec)
     }
 
     /// Total time in bed in minutes (from reconstructed stages).

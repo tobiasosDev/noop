@@ -1,6 +1,7 @@
 package com.noop.analytics
 
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Decode a sleep session's `stagesJSON` into stage MINUTE totals, and aggregate a night's blocks into
@@ -55,7 +56,16 @@ object SleepStageTotals {
         val arr = try {
             JSONArray(json)
         } catch (_: Throwable) {
-            return null
+            // Object/dict shape {"awake":N,"light":N,"deep":N,"rem":N} of minute totals (imported
+            // sessions). Mirrors Swift minutes(fromStagesJSON:)'s dict branch so imported sleep decodes
+            // on Android too, not just the segment-array shapes.
+            val dict = try { JSONObject(json) } catch (_: Throwable) { return null }
+            val md = Minutes()
+            md.awake = dict.optDouble("awake", 0.0)
+            md.light = dict.optDouble("light", 0.0)
+            md.deep = dict.optDouble("deep", 0.0)
+            md.rem = dict.optDouble("rem", 0.0)
+            return if (md.inBed > 0.0) md else null
         }
         val m = Minutes()
         for (i in 0 until arr.length()) {
@@ -81,6 +91,228 @@ object SleepStageTotals {
             }
         }
         return if (m.inBed > 0.0) m else null
+    }
+
+    // ── Canonical main-night selection (#525 / #547 — learned-timing scored pick) ────────────────────
+
+    /** Broad overnight band used ONLY for the cold-start alignment bonus (NOT a gate). The band is
+     *  [OVERNIGHT_START_HOUR, OVERNIGHT_END_HOUR) local, reconciled with the detector's
+     *  `SleepStager.isOvernightOnset` window [20:00, 11:00) so the selector and detector agree (removes the
+     *  old [10:00, 11:00) off-by-one). Mirrors Swift. (#547) */
+    const val OVERNIGHT_START_HOUR = 20
+
+    /** Local hour (exclusive) that closes the cold-start overnight band. Now 11 (was 10) to match the
+     *  detector's [20:00, 11:00) onset window. A block onset in [OVERNIGHT_END_HOUR, OVERNIGHT_START_HOUR)
+     *  is daytime; everything else is overnight. */
+    const val OVERNIGHT_END_HOUR = 11
+
+    /** Seconds in a day, for circular time-of-day math. */
+    const val SECONDS_PER_DAY = 86_400L
+
+    /** Fixed alignment credit (MINUTES) added to a block's asleep minutes when its midpoint sits on the
+     *  habitual midsleep (or, cold-start, the overnight band center). A BONUS, not a gate — a long enough
+     *  off-timing block can still out-score a short well-timed one. ~90 min ≈ one sleep cycle. Mirrors
+     *  Swift `alignmentBonusMin`. (#547) */
+    const val ALIGNMENT_BONUS_MIN: Double = 90.0
+
+    /** Full alignment bonus within this many seconds (circular) of the habitual midsleep; decays linearly
+     *  to 0 at [ALIGNMENT_ZERO_SEC]. ±2h full, →0 by ±5h. Mirrors Swift. */
+    const val ALIGNMENT_FULL_WINDOW_SEC = 2 * 3_600L
+
+    /** Circular distance (seconds) at/after which the alignment bonus is 0. Mirrors Swift. */
+    const val ALIGNMENT_ZERO_SEC = 5 * 3_600L
+
+    /** A block is treated as having a MEANINGFUL alignment bonus when it earns ANY positive credit, i.e.
+     *  its midpoint sits inside the bonus window (circular distance < [ALIGNMENT_ZERO_SEC]). Outside the
+     *  window the bonus is exactly 0 and contributes nothing to the pick. Tiny epsilon so floating-point
+     *  noise at the window edge can't be mistaken for credit. Identical cross-platform. Mirrors Swift
+     *  `meaningfulBonusEpsilon`. (spec 2026-06-20) */
+    const val MEANINGFUL_BONUS_EPSILON = 1e-9
+
+    /** Adjacent sleep runs separated by a wake gap shorter than this (minutes) are bridged into one block
+     *  for selection, so a biphasic / briefly-interrupted main sleep is scored as one night. Matches the
+     *  research's <60 min "same sleep period" threshold. Mirrors Swift `gapBridgeMaxMin`. (#547) */
+    const val GAP_BRIDGE_MAX_MIN = 60
+
+    /** One candidate block for main-night selection: its effective onset and end (unix seconds). A user
+     *  wake/bed edit moves [end], never the detected onset key. */
+    data class NightBlock(val start: Long, val end: Long) {
+        val durationS: Long get() = end - start
+        val midpointSec: Long get() = start + (end - start) / 2
+    }
+
+    /** True when a block's onset falls in the cold-start overnight band (>= [OVERNIGHT_START_HOUR] or
+     *  < [OVERNIGHT_END_HOUR], local). Retained for callers/tests that still ask the binary question, but
+     *  the scored selector no longer GATES on it — it only feeds the cold-start alignment bonus. Mirrors
+     *  `SleepStager.isOvernightOnset`. [offsetSec] is seconds EAST of UTC. (#525 / #547) */
+    fun isOvernightOnset(ts: Long, offsetSec: Long): Boolean {
+        val local = ts + offsetSec
+        val secOfDay = ((local % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY
+        val hour = (secOfDay / 3_600L).toInt()
+        return hour >= OVERNIGHT_START_HOUR || hour < OVERNIGHT_END_HOUR
+    }
+
+    /** Local time-of-day, in seconds [0, 86400), of a unix timestamp shifted east by [offsetSec].
+     *  Mirrors Swift `localSecOfDay`. */
+    internal fun localSecOfDay(ts: Long, offsetSec: Long): Long {
+        val local = ts + offsetSec
+        return ((local % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY
+    }
+
+    /** Smallest circular distance (seconds, 0..43200) between two times-of-day, so 23:30 and 00:30 are
+     *  3600s apart, not 82800. Both inputs are seconds-of-day in [0, 86400). Mirrors Swift. */
+    internal fun circularDistanceSec(a: Long, b: Long): Long {
+        val raw = Math.abs(a - b) % SECONDS_PER_DAY
+        return minOf(raw, SECONDS_PER_DAY - raw)
+    }
+
+    /** The cold-start anchor: the CENTER of the overnight band [OVERNIGHT_START_HOUR, OVERNIGHT_END_HOUR),
+     *  as a time-of-day in seconds. The band wraps midnight (20:00 → 11:00 = 15h wide) so the center is
+     *  03:30 local. Mirrors Swift `coldStartAnchorSec`. (#547) */
+    val coldStartAnchorSec: Long
+        get() {
+            val startSec = OVERNIGHT_START_HOUR * 3_600L
+            val span = ((OVERNIGHT_END_HOUR - OVERNIGHT_START_HOUR) * 3_600L + SECONDS_PER_DAY) % SECONDS_PER_DAY
+            return (startSec + span / 2) % SECONDS_PER_DAY
+        }
+
+    /** The alignment bonus (MINUTES) a block earns for sitting near the target midsleep. Full
+     *  [ALIGNMENT_BONUS_MIN] within [ALIGNMENT_FULL_WINDOW_SEC], decaying linearly to 0 by
+     *  [ALIGNMENT_ZERO_SEC]. [blockMidSec]/[targetMidSec] are local times-of-day in seconds. Mirrors
+     *  Swift `alignmentBonusMinutes`. (#547) */
+    internal fun alignmentBonusMinutes(blockMidSec: Long, targetMidSec: Long): Double {
+        val d = circularDistanceSec(blockMidSec, targetMidSec)
+        if (d <= ALIGNMENT_FULL_WINDOW_SEC) return ALIGNMENT_BONUS_MIN
+        if (d >= ALIGNMENT_ZERO_SEC) return 0.0
+        val frac = (ALIGNMENT_ZERO_SEC - d).toDouble() / (ALIGNMENT_ZERO_SEC - ALIGNMENT_FULL_WINDOW_SEC).toDouble()
+        return ALIGNMENT_BONUS_MIN * frac
+    }
+
+    /** The target midsleep time-of-day (seconds) the scorer aligns to: the learned [habitualMidsleepSec]
+     *  when supplied, else the cold-start overnight-band center. Mirrors Swift `targetMidsleepSec`. */
+    internal fun targetMidsleepSec(habitualMidsleepSec: Long?): Long =
+        habitualMidsleepSec ?: coldStartAnchorSec
+
+    /** Merge adjacent [NightBlock]s separated by a wake gap shorter than [GAP_BRIDGE_MAX_MIN] into single
+     *  blocks for selection, so a fragmented main sleep is scored as one night. Sorts on [NightBlock.start]
+     *  first so neighbours are adjacent. Pure + deterministic. Mirrors Swift `bridgeAdjacent`. (#547) */
+    fun bridgeAdjacent(blocks: List<NightBlock>): List<NightBlock> {
+        if (blocks.size <= 1) return blocks
+        val sorted = blocks.sortedBy { it.start }
+        val bridgeS = GAP_BRIDGE_MAX_MIN * 60L
+        val out = mutableListOf(sorted[0])
+        for (b in sorted.drop(1)) {
+            val last = out[out.size - 1]
+            val gap = b.start - last.end
+            if (gap in 0 until bridgeS) {
+                out[out.size - 1] = NightBlock(last.start, maxOf(last.end, b.end))
+            } else {
+                out.add(b)
+            }
+        }
+        return out
+    }
+
+    /** Index of the day's MAIN night among [blocks], by the LEARNED-TIMING SCORE (replaces the old hard
+     *  overnight gate). score(block) = asleepMinutes + alignmentBonus, crediting a block whose midpoint
+     *  sits near [habitualMidsleepSec] (or, cold-start, the overnight-band center). No hard duration floor
+     *  and no overnight gate: a short main sleep or a nap-only day still resolves, and a genuine long
+     *  daytime sleep can win on score. Highest score wins; exact ties break toward the EARLIER onset
+     *  (stable across platforms). Null only for an empty list. This `NightBlock` overload has no decoded
+     *  stages, so "asleep minutes" is the clock span — preserving the prior duration semantics for callers
+     *  that rank by span (`analyzeDay`). Mirrors Swift `mainNightIndex`. (#525 / #547) */
+    fun mainNightIndex(blocks: List<NightBlock>, offsetSec: Long, habitualMidsleepSec: Long? = null): Int? {
+        if (blocks.isEmpty()) return null
+        val target = targetMidsleepSec(habitualMidsleepSec)
+        fun score(b: NightBlock): Double {
+            val asleepMin = b.durationS.toDouble() / 60.0
+            val midSec = localSecOfDay(b.midpointSec, offsetSec)
+            return asleepMin + alignmentBonusMinutes(midSec, target)
+        }
+        var bestIdx = 0
+        for (i in 1 until blocks.size) {
+            val cand = blocks[i]
+            val best = blocks[bestIdx]
+            val cs = score(cand)
+            val bs = score(best)
+            val candWins = when {
+                cs != bs -> cs > bs                    // higher score wins
+                else -> cand.start < best.start        // exact tie → earlier onset (stable)
+            }
+            if (candWins) bestIdx = i
+        }
+        return bestIdx
+    }
+
+    // ── Selection REASON (explainability — why THIS block won) ───────────────────────────────────────
+
+    /** Why the main-night selector chose the block it chose, the EXACT truth the score used, so the UI can
+     *  explain the pick in plain English. Computed from the SAME signals the score does (asleep duration vs
+     *  the alignment bonus). Mirrors Swift `MainNightReason`. (#547 explainability)
+     *  - [onlyBlock]        — the day had a single block, so there was nothing to choose between.
+     *  - [longest]          — the chosen block won on raw asleep duration (cold-start, or no meaningful
+     *                         timing credit); it is simply the longest. The default / fallback reason.
+     *  - [longestNearUsual] — the chosen block was BOTH the longest by duration AND earned a meaningful
+     *                         alignment bonus (a learned habitual is present and the block sits within the
+     *                         bonus window of it): longest, and near the usual sleep time.
+     *  - [alignedToUsual]   — the alignment bonus (NOT raw duration) flipped the pick: a shorter block that
+     *                         sits near the usual sleep time out-scored the longest block. Timing decided it. */
+    enum class MainNightReason { onlyBlock, longest, longestNearUsual, alignedToUsual }
+
+    /** The resolved main-night pick PLUS the truth needed to explain it: which block won ([index]), WHY it
+     *  won ([reason]), and the chosen block's ASLEEP duration ([asleepSec]) so the UI can fill "Xh Ym". For
+     *  the [NightBlock] overload "asleep" is the block's clock span (no decoded stages), matching
+     *  [mainNightIndex]'s scoring semantics exactly. Mirrors Swift `MainNightSelection`. (#547) */
+    data class MainNightSelection(val index: Int, val reason: MainNightReason, val asleepSec: Long) {
+        /** The chosen block's asleep duration in whole MINUTES (floored), for "Xh Ym" copy. */
+        val asleepMin: Long get() = asleepSec / 60L
+    }
+
+    /** The day's MAIN night AND why it won, over [blocks]. A sibling to [mainNightIndex] (same score, same
+     *  tie-break, same null-on-empty) that additionally returns the [MainNightReason] derived from the SAME
+     *  signals the score used, and the chosen block's asleep duration, so the UI can explain the pick without
+     *  re-deriving anything. Existing [mainNightIndex] callers are untouched.
+     *
+     *  The reason is decided exactly as the spec lays out, in this order:
+     *   1. one block            → [MainNightReason.onlyBlock];
+     *   2. the bonus flipped it  → [MainNightReason.alignedToUsual]  (the score winner differs from the
+     *      duration-only winner, so timing — not raw duration — decided the pick);
+     *   3. longest + near usual  → [MainNightReason.longestNearUsual] (the score winner IS the duration-only
+     *      winner AND a learned [habitualMidsleepSec] is present AND the chosen block earns a non-zero
+     *      alignment bonus, i.e. its midpoint is within the bonus window of the learned habitual);
+     *   4. otherwise             → [MainNightReason.longest] (incl. cold-start: no learned habitual, or the
+     *      chosen longest block earns no meaningful timing credit).
+     *
+     *  Mirrors Swift `mainNightSelection`. (#547 explainability) */
+    fun mainNightSelection(blocks: List<NightBlock>, offsetSec: Long, habitualMidsleepSec: Long? = null): MainNightSelection? {
+        val idx = mainNightIndex(blocks, offsetSec, habitualMidsleepSec) ?: return null
+        val chosen = blocks[idx]
+        val asleepSec = chosen.durationS
+        val reason = if (blocks.size == 1) {
+            MainNightReason.onlyBlock
+        } else {
+            // The duration-only winner: highest asleep CLOCK SPAN, exact ties → earlier onset (the SAME
+            // tie-break the score uses), so "flipped vs duration-only" is a clean, deterministic comparison.
+            var durIdx = 0
+            for (i in 1 until blocks.size) {
+                val c = blocks[i]
+                val b = blocks[durIdx]
+                val cWins = when {
+                    c.durationS != b.durationS -> c.durationS > b.durationS
+                    else -> c.start < b.start
+                }
+                if (cWins) durIdx = i
+            }
+            val target = targetMidsleepSec(habitualMidsleepSec)
+            val chosenMidSec = localSecOfDay(chosen.midpointSec, offsetSec)
+            val chosenBonus = alignmentBonusMinutes(chosenMidSec, target)
+            when {
+                idx != durIdx -> MainNightReason.alignedToUsual                       // timing flipped the pick
+                habitualMidsleepSec != null && chosenBonus > MEANINGFUL_BONUS_EPSILON -> MainNightReason.longestNearUsual
+                else -> MainNightReason.longest                                       // incl. cold-start
+            }
+        }
+        return MainNightSelection(idx, reason, asleepSec)
     }
 
     /** The night's daily sleep aggregate over these blocks' `stagesJSON`, or null if none decode.
@@ -131,9 +363,22 @@ object SleepStageTotals {
         detected: List<Pair<Long, String?>>,
         edited: Map<Long, String?>,
         manual: List<Pair<Long, String?>> = emptyList(),
+        // The block's effective onset (a wake/bed edit moves end, not the detected start key) keyed by
+        // startTs, plus the device's UTC offset, so the MAIN-NIGHT pick reads the user's local clock.
+        // When a caller can't supply onsets, leave null and the legacy SUM-of-all-blocks behaviour is
+        // preserved (no regression for older callers); the day rollup passes them so the daily total
+        // matches the Sleep tab. Mirrors Swift `onsetByStart` / `offsetSec`. (#525)
+        onsetByStart: Map<Long, Long>? = null,
+        offsetSec: Long = 0L,
+        // The learned habitual midsleep (local time-of-day seconds) so the scored pick aligns to the
+        // user's real bedtime, not a fixed clock band. null = cold-start. Existing callers compile
+        // unchanged. Mirrors Swift `habitualMidsleepSec`. (#547)
+        habitualMidsleepSec: Long? = null,
     ): HonoredAggregate? {
         var applied = false
-        val effective = detected.map { (startTs, detectedStages) ->
+        // (startTs, effective stages) for every block on the day — detected (edit-substituted) then any
+        // twinless manual block UNIONED in. Identity is preserved for the main-night selection.
+        val blocks = detected.map { (startTs, detectedStages) ->
             // `edited[startTs]` is null both when the key is ABSENT and when it maps to NULL stages
             // (an edit that reshaped to nothing) — in both cases we fall back to the detected stages
             // and do NOT mark `applied`. Only a present, non-null edit substitutes, mirroring Swift's
@@ -141,24 +386,145 @@ object SleepStageTotals {
             val editStages = edited[startTs]
             if (editStages != null) {
                 applied = true
-                editStages
+                startTs to editStages
             } else {
-                detectedStages
+                startTs to detectedStages
             }
         }.toMutableList()
-        // Union: a user-added block the detector never found (no detected twin) must still fold its
-        // minutes into the day, otherwise a manually-logged nap is silently dropped from Rest. Match on
-        // the stable startTs and add ONLY rows absent from [detected] (so a detector-found block already
-        // summed above is never double-counted), and only when the block has usable (non-null) stages.
+        // Union: a user-added block the detector never found (no detected twin) must still be on the day
+        // so the main-night pick (or the legacy sum) sees it — otherwise a manually-logged nap is dropped.
+        // Match on the stable startTs and add ONLY rows absent from [detected], with usable stages.
         val detectedStarts = detected.map { it.first }.toHashSet()
         for ((startTs, manualStages) in manual) {
             if (startTs in detectedStarts) continue
             if (manualStages != null) {
-                effective.add(manualStages)
+                blocks.add(startTs to manualStages)
                 applied = true
             }
         }
-        val agg = dailyAggregate(effective) ?: return null
+        // Canonical per-day total (#525): with block onsets supplied, the daily figure is the MAIN NIGHT
+        // only (the longest, overnight-preferring block — the SAME block the Sleep tab shows), so
+        // Intelligence / Sleep Need / the debt ledger / the card all read the same number as the Sleep
+        // tab. Nap blocks stay their own session rows elsewhere; they are NOT summed into this figure.
+        // No onsets supplied → the legacy sum-of-all-blocks total (older callers unchanged).
+        if (onsetByStart != null) {
+            val idx = mainNightIndexByStages(blocks, onsetByStart, offsetSec, habitualMidsleepSec)
+                ?: return null
+            val agg = dailyAggregate(listOf(blocks[idx].second)) ?: return null
+            return HonoredAggregate(agg, applied)
+        }
+        val agg = dailyAggregate(blocks.map { it.second }) ?: return null
         return HonoredAggregate(agg, applied)
+    }
+
+    /** Index into [blocks] of the day's MAIN night, by the LEARNED-TIMING SCORE: score(block) =
+     *  asleepMinutes + alignmentBonus, where "asleepMinutes" is the block's decoded ASLEEP minutes (the
+     *  real restorative sleep, not in-bed) and the bonus credits a midpoint near [habitualMidsleepSec]
+     *  (or, cold-start, the overnight band). [onsetByStart] gives each block's effective onset; the
+     *  midpoint is `onset + (in-bed span)/2` from the decoded minutes. Blocks whose stages don't decode
+     *  are still candidates with a 0-minute score. Exact-score ties break toward the EARLIER onset (stable
+     *  across platforms). Mirrors Swift `mainNightIndexByStages`. (#525 / #547) */
+    internal fun mainNightIndexByStages(
+        blocks: List<Pair<Long, String?>>,
+        onsetByStart: Map<Long, Long>,
+        offsetSec: Long,
+        habitualMidsleepSec: Long? = null,
+    ): Int? {
+        if (blocks.isEmpty()) return null
+        val target = targetMidsleepSec(habitualMidsleepSec)
+        fun onset(b: Pair<Long, String?>): Long = onsetByStart[b.first] ?: b.first
+        fun score(b: Pair<Long, String?>): Double {
+            val m = minutes(b.second)
+            val asleepMin = m?.asleep ?: 0.0
+            val inBedSec = ((m?.inBed ?: 0.0) * 60.0).toLong()
+            val midSec = localSecOfDay(onset(b) + inBedSec / 2, offsetSec)
+            return asleepMin + alignmentBonusMinutes(midSec, target)
+        }
+        var bestIdx = 0
+        for (i in 1 until blocks.size) {
+            val cand = blocks[i]
+            val best = blocks[bestIdx]
+            val cs = score(cand)
+            val bs = score(best)
+            val candWins = when {
+                cs != bs -> cs > bs
+                else -> onset(cand) < onset(best)
+            }
+            if (candWins) bestIdx = i
+        }
+        return bestIdx
+    }
+
+    // ── Habitual midsleep (learned timing — non-circular dependency) ──────────────────────────────
+
+    /** One detected sleep block from the trailing history, for learning the user's habitual timing.
+     *  [start]/[end] are unix seconds; [dayKey] groups blocks by local calendar day so the LONGEST block
+     *  per day can be picked selection-independently (no chicken-and-egg with main-night selection).
+     *  Mirrors Swift `HistoryBlock`. (#547) */
+    data class HistoryBlock(val start: Long, val end: Long, val dayKey: String) {
+        val durationS: Long get() = end - start
+        val midpointSec: Long get() = start + (end - start) / 2
+    }
+
+    /** Minimum number of DAYS (with at least one block) before a habitual midsleep is trusted; a shorter
+     *  history returns null (cold-start). ~2 weeks. Mirrors Swift `habitualMinDays`. (#547) */
+    const val HABITUAL_MIN_DAYS = 14
+
+    /** The user's habitual midsleep as a LOCAL TIME-OF-DAY (seconds in [0, 86400)), or null when there is
+     *  too little history (cold-start). The CIRCULAR MEAN of the midpoint-time-of-day of the LONGEST block
+     *  per local day across [history]. Longest-per-day is selection-INDEPENDENT, so no circular dependency
+     *  on main-night selection. Circular math makes 23:30 and 00:30 an hour apart, not 23h. [offsetSec]
+     *  turns each midpoint local; [minDays] is the cold-start floor. Mirrors Swift `habitualMidsleepSec`.
+     *  (#547) */
+    fun habitualMidsleepSec(
+        history: List<HistoryBlock>,
+        offsetSec: Long,
+        minDays: Int = HABITUAL_MIN_DAYS,
+    ): Long? {
+        if (history.isEmpty()) return null
+        // Longest block per local day (selection-independent). Ties within a day → earlier onset (stable).
+        val longestByDay = HashMap<String, HistoryBlock>()
+        for (b in history) {
+            val cur = longestByDay[b.dayKey]
+            if (cur == null || b.durationS > cur.durationS || (b.durationS == cur.durationS && b.start < cur.start)) {
+                longestByDay[b.dayKey] = b
+            }
+        }
+        if (longestByDay.size < minDays) return null
+        // nil when the resultant vector is degenerate (antipodal/uniform midpoints) — falls back to cold-start.
+        val midSecs = longestByDay.values.map { localSecOfDay(it.midpointSec, offsetSec) }
+        return circularMeanSec(midSecs)
+    }
+
+    /** Minimum mean-resultant-vector length (R = |Σ(sin,cos)| / n, in [0, 1]) for a circular mean to be
+     *  meaningful. Below this the midpoint angles are antipodal/uniform: their resultant is ~0 so atan2
+     *  returns an arbitrary direction that Swift and Kotlin can disagree on (a parity break in the
+     *  degenerate case). Tiny and identical cross-platform so both sides reject the SAME inputs. Mirrors
+     *  Swift `circularMeanMinResultant`. (#547) */
+    const val CIRCULAR_MEAN_MIN_RESULTANT = 1e-9
+
+    /** Circular mean of times-of-day (seconds in [0, 86400)) via the mean unit vector (atan2 of summed
+     *  sin/cos). Returns the mean direction as seconds-of-day in [0, 86400), or null when the resultant
+     *  vector is degenerate (empty, or antipodal/uniform so its magnitude is below
+     *  [CIRCULAR_MEAN_MIN_RESULTANT] and the angle is meaningless). null makes [habitualMidsleepSec] fall
+     *  back to cold-start rather than emit a meaningless (and cross-platform-divergent) anchor. Mirrors
+     *  Swift `circularMeanSec`. (#547) */
+    internal fun circularMeanSec(secs: List<Long>): Long? {
+        if (secs.isEmpty()) return null
+        var sumSin = 0.0
+        var sumCos = 0.0
+        val k = 2.0 * Math.PI / SECONDS_PER_DAY.toDouble()
+        for (s in secs) {
+            val a = s.toDouble() * k
+            sumSin += Math.sin(a)
+            sumCos += Math.cos(a)
+        }
+        // Resultant length R = |(Σsin, Σcos)| / n. Below epsilon the direction is meaningless.
+        val resultant = Math.sqrt(sumSin * sumSin + sumCos * sumCos) / secs.size.toDouble()
+        if (resultant < CIRCULAR_MEAN_MIN_RESULTANT) return null
+        var ang = Math.atan2(sumSin, sumCos)          // [-π, π]
+        if (ang < 0) ang += 2.0 * Math.PI             // → [0, 2π)
+        val sec = Math.round(ang / k) % SECONDS_PER_DAY
+        return ((sec % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY
     }
 }
