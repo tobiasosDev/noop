@@ -1,0 +1,25 @@
+Strand/Screens/ArmAlarmSheet.swift
+  s_d1017921839bd1::t_e5034934790129 133-135
+Strand/Screens/AutomationsView.swift
+  s_d1017921839bd1::t_c780dfc3b7cd73 208-215
+Strand/System/WakeAlarmNotifier.swift
+  s_d1017921839bd1::t_13981eb117aac7 22-25,30-40,44-52
+StrandTests/AlarmArmCoordinatorTests.swift
+  s_d1017921839bd1::t_aa040df7b52533 85-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "70c35b734bb04b355b1e7df705bbae474e9ea14c",
+  "prompts": {},
+  "sessions": {
+    "s_d1017921839bd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facc6b0e-499f-4f5a-b0d3-0ff066b83580",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
