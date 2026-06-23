@@ -14,6 +14,14 @@ struct SmartAlarmView: View {
     /// Earliest wake time the nudge is derived from (minutes since midnight). Seeded from the store.
     @State private var wakeMinutes = WindDownNudge.wakeMinutes
 
+    // PR#554 (MumiZed) — per-day wake overrides. `perDayOn` reflects whether ANY override is set; the
+    // `overrides` map mirrors the store so the pickers stay in sync. Additive: with none set, the nudge
+    // behaves exactly as before (one wake time for every evening).
+    @State private var perDayOn = WindDownNudge.hasPerDayOverrides
+    @State private var overrides: [Int: Int] = WindDownNudge.perDayWakeOverrides
+    /// Calendar weekday numbers laid out Monday-first (Mon…Sun → 2,3,4,5,6,7,1), matching AutomationsView.
+    private static let weekdayOrder = [2, 3, 4, 5, 6, 7, 1]
+
     var body: some View {
         ScreenScaffold(title: "Smart alarm",
                        subtitle: "A gentle evening wind-down nudge to help you reach your wake time rested.") {
@@ -141,9 +149,108 @@ struct SmartAlarmView: View {
                     Text("You'll be reminded around \(timeLabel(WindDownNudge.nudgeMinuteOfDay())).")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textSecondary)
+
+                    Divider().overlay(StrandPalette.hairline)
+                    perDaySection
                 }
             }
         }
+    }
+
+    // PR#554 — per-day wake overrides. A toggle reveals a per-weekday wake-time editor; with it off (or no
+    // override set) every evening uses the single wake time above. Each weekday row shows the effective wake
+    // (override or the default) and lets the user set or clear that day's time.
+    @ViewBuilder private var perDaySection: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Different wake time per day")
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text("Set a wake time for specific days — a lie-in at the weekend, say. Days you leave alone use the time above.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $perDayOn)
+                .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
+                .accessibilityLabel("Different wake time per day")
+                .onChangeCompat(of: perDayOn) { on in
+                    // Turning the section OFF clears every override (so the nudge reverts to the single time);
+                    // turning it ON just reveals the editor — no override is created until the user sets one.
+                    if !on {
+                        for weekday in 1...7 { WindDownNudge.setWakeOverride(weekday: weekday, minutes: nil) }
+                        overrides = [:]
+                    }
+                }
+        }
+        .frame(minHeight: 42)
+
+        if perDayOn {
+            VStack(spacing: 8) {
+                ForEach(Self.weekdayOrder, id: \.self) { weekday in
+                    weekdayOverrideRow(weekday)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    /// One weekday's override row: the day name, the effective wake time (override or default), a picker to
+    /// set it, and a clear control shown only when an override exists for that day.
+    private func weekdayOverrideRow(_ weekday: Int) -> some View {
+        let effective = overrides[weekday] ?? wakeMinutes
+        let hasOverride = overrides[weekday] != nil
+        return HStack(spacing: 12) {
+            Text(Self.weekdayName(weekday))
+                .font(StrandFont.subhead)
+                .foregroundStyle(hasOverride ? StrandPalette.textPrimary : StrandPalette.textSecondary)
+                .frame(width: 96, alignment: .leading)
+            Spacer(minLength: 0)
+            if hasOverride {
+                Button {
+                    WindDownNudge.setWakeOverride(weekday: weekday, minutes: nil)
+                    overrides[weekday] = nil
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear \(Self.weekdayName(weekday)) override, use the default wake time")
+            }
+            DatePicker("", selection: overrideBinding(weekday, effective: effective),
+                       displayedComponents: .hourAndMinute)
+                .labelsHidden()
+                .accessibilityLabel("\(Self.weekdayName(weekday)) wake time")
+        }
+    }
+
+    /// A binding for one weekday's wake override — reads the effective minute, writes a NEW override (a pick
+    /// always sets that day's override) into both the store and the local mirror, rescheduling via the store.
+    private func overrideBinding(_ weekday: Int, effective: Int) -> Binding<Date> {
+        Binding(
+            get: {
+                var c = DateComponents()
+                c.hour = effective / 60
+                c.minute = effective % 60
+                return Calendar.current.date(from: c) ?? Date()
+            },
+            set: { date in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                let m = (c.hour ?? 7) * 60 + (c.minute ?? 0)
+                WindDownNudge.setWakeOverride(weekday: weekday, minutes: m)
+                overrides[weekday] = m
+            }
+        )
+    }
+
+    /// Full weekday name for a Calendar weekday number (1=Sun…7=Sat).
+    private static func weekdayName(_ dow: Int) -> String {
+        let names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        return (1...7).contains(dow) ? names[dow - 1] : "Day \(dow)"
     }
 
     // Bridges the minutes-since-midnight store to a DatePicker's Date, persisting + rescheduling.

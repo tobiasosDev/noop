@@ -32,7 +32,10 @@ extension WhoopStore: BackfillStoreWriting {}
 /// (.withResponse) is link-layer confirmed. Never waits on the server.
 @MainActor
 final class Backfiller {
-    typealias Extractor = ([ParsedFrame], Int, Int) -> Streams
+    /// (parsed frames, deviceClockRef, wallClockRef, sessionOldestUnix?, sessionNewestUnix?) → Streams.
+    /// The trailing session-range markers are the strap's GET_DATA_RANGE oldest/newest for THIS sync
+    /// (#547 session-relative gate); nil when the range isn't known yet (the absolute-only floor applies).
+    typealias Extractor = ([ParsedFrame], Int, Int, Int?, Int?) -> Streams
 
     private let store: BackfillStoreWriting
     /// Device id offloaded chunks persist under. MUTABLE so a WHOOP↔WHOOP switch
@@ -52,6 +55,14 @@ final class Backfiller {
 
     /// The clock reference set by BLEManager when GET_CLOCK confirms (required for decoding).
     var clockRef: ClockRef?
+
+    /// #547 SESSION-RELATIVE gate: the strap's own GET_DATA_RANGE oldest/newest banked-record markers for
+    /// the CURRENT offload, set by BLEManager when the range reply lands. A record dated months outside this
+    /// window is wandering-clock pollution even if it clears the absolute 2023-11 floor, so the ingest gate
+    /// rejects it. nil (both) until the range is known — the gate then falls back to the absolute floor only,
+    /// so behaviour is unchanged on the no-range / replay paths. Reset in `begin`.
+    var sessionOldestUnix: Int?
+    var sessionNewestUnix: Int?
 
     /// True while a historical offload session is active.
     private(set) var isBackfilling = false
@@ -86,7 +97,7 @@ final class Backfiller {
     /// (a bad-clock strap — far-past / bogus-2027 / future-dated). Tallied across chunks and surfaced once
     /// at a session boundary so a clock-broken strap is visible in the strap log (observability only — the
     /// ingest gate already kept the garbage rows out of the DB).
-    private var sessionDroppedImplausible = 0
+    private(set) var sessionDroppedImplausible = 0
 
     /// The trim cursor of the LAST chunk this Backfiller acked (durably persisted + confirmed to the
     /// strap). Survives across sessions on the same connection so the auto-continue gate (#364) can ask
@@ -118,7 +129,8 @@ final class Backfiller {
          log: ((String) -> Void)? = nil,
          rejectedSink: ((_ frames: [[UInt8]], _ trim: UInt32, _ family: DeviceFamily) -> Bool)? = nil,
          onChunk: ((_ decoded: Bool, _ console: Bool) -> Void)? = nil,
-         extract: @escaping Extractor = { extractHistoricalStreams($0, deviceClockRef: $1, wallClockRef: $2) }) {
+         extract: @escaping Extractor = { extractHistoricalStreams($0, deviceClockRef: $1, wallClockRef: $2,
+                                                                    sessionOldestUnix: $3, sessionNewestUnix: $4) }) {
         self.store = store
         self.deviceId = deviceId
         self.ackTrim = ackTrim
@@ -143,6 +155,11 @@ final class Backfiller {
         loggedNoCursor = false
         sessionDroppedImplausible = 0
         loggedLayoutVersions.removeAll(keepingCapacity: true)
+        // #547: the range markers belong to a connection's GET_DATA_RANGE, which BLEManager re-sets per
+        // connect; clear them here so a fresh session never reuses a previous strap's window. BLEManager
+        // re-publishes them as soon as the range reply arrives.
+        sessionOldestUnix = nil
+        sessionNewestUnix = nil
     }
 
     /// Feed one raw BLE frame into the state machine. May trigger async store operations.
@@ -252,7 +269,7 @@ final class Backfiller {
                 loggedUnmappedVersions.insert(v)
                 log?("Historical records use firmware layout v\(v), which NOOP doesn't decode yet — no motion data, so sleep can't be computed from the strap. Please report this (issue #30).")
             }
-            let decoded = extract(parsed, ref.device, ref.wall)
+            let decoded = extract(parsed, ref.device, ref.wall, sessionOldestUnix, sessionNewestUnix)
             // #547: surface a bad-clock strap. extractHistoricalStreams DROPPED any record whose own unix
             // timestamp was implausible (far-past / bogus-2027 / future-dated) before it could pollute the
             // DB. Log it (once it's accrued at least one this session, on the first chunk that sees it) so
@@ -302,7 +319,13 @@ final class Backfiller {
             // rare insert failure — which returns and re-sends the whole chunk next session — can't
             // leave duplicate lines in the append-only reject archive.
             let counts: (hr: Int, rr: Int, events: Int, battery: Int, spo2: Int, skinTemp: Int, resp: Int, gravity: Int)
-            do { counts = try await store.insert(decoded, deviceId: deviceId) } catch { return }
+            do { counts = try await store.insert(decoded, deviceId: deviceId) } catch {
+                // Diag (#601): the decoded rows couldn't be written — this is the "history stalls but live HR
+                // works" class. We return WITHOUT acking so the strap keeps this chunk and re-sends it next
+                // session (no data loss), but a silent return left a strap log with no trace of the stall.
+                log?("Backfill: failed to persist decoded rows (trim=\(trim)): \(error) — holding ack so the strap re-sends this chunk; history won't advance until the write succeeds.")
+                return
+            }
             // Success-side observability (#150): tally what actually persisted so the session can emit
             // "persisted N rows (M with motion) across K night(s)" — the win-rate signal a log never had.
             let tally = Backfiller.chunkTally(counts: counts, timestamps: decoded.gravity.map(\.ts) + decoded.hr.map(\.ts))
@@ -334,10 +357,24 @@ final class Backfiller {
                     endTs: ref.wall,
                     frameCount: frames.count,
                     byteSize: frames.reduce(0) { $0 + $1.count })
-                do { try await store.enqueueRawBatch(meta, frames: frames) } catch { return }
+                do { try await store.enqueueRawBatch(meta, frames: frames) } catch {
+                    // Diag (#601): raw-capture is ON and the raw batch couldn't be enqueued. Hold the ack
+                    // (return) so the strap re-sends — the research toggle's contract is that raw is durable
+                    // before the trim advances. Surface it so a stalled offload with raw-capture on is visible.
+                    log?("Backfill: failed to enqueue raw batch (trim=\(trim)): \(error) — holding ack so the strap re-sends this chunk; raw capture must be durable before the trim advances.")
+                    return
+                }
             }
         }
-        do { try await store.setCursor("strap_trim", Int(trim)) } catch { return }
+        do { try await store.setCursor("strap_trim", Int(trim)) } catch {
+            // Diag (#601): decoded (and raw, if on) are durable but the strap_trim cursor write failed. We
+            // return WITHOUT acking — acking now would let the strap trim past records the cursor hasn't
+            // recorded, so on reconnect the offload could replay or skip. Holding the ack keeps it safe; the
+            // strap re-offers this chunk next session. A silent return here was a prime "history won't advance"
+            // suspect with nothing in the log to confirm it.
+            log?("Backfill: failed to write strap_trim cursor (trim=\(trim)): \(error) — holding ack so the strap re-sends this chunk; history won't advance until the cursor write succeeds.")
+            return
+        }
 
         ackTrim(trim, endData)
         lastAckedTrim = trim   // #364: record the advanced cursor for the auto-continue spin-detector

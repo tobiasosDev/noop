@@ -455,14 +455,20 @@ private func decodeWhoop5Historical(_ frame: [UInt8], fb: FieldBuilder, payloadE
 /// as `ppg_waveform` with NO invented scale. The bytes before [27] (header + a block index) and the
 /// footer after [75] are not mapped; SpO₂/skin-temp have no internal proxy and are left untouched.
 private func decodeWhoop5HistoricalV26(_ frame: [UInt8], fb: FieldBuilder) {
-    // Optical channel index @21: the strap time-multiplexes 26 optical channels, sweeping 1→26 in
-    // ~40-frame blocks (one channel per block, revisited ~20 min later). Verified against a 22 h overnight
-    // corpus — frame[21] takes exactly 26 distinct values (1–26), and on our own two real fixtures reads
-    // 1 then 2. An earlier read at frame[12] (the 0x41/0x46 "two channels") was a high-entropy counter byte
-    // mistaken for the channel during a short 2-burst capture. Gate to 1…26 so a wrong offset stores nothing.
-    if let ch = readDType(frame, 21, "u8"), (1...26).contains(ch) {
-        fb.add(21, 1, "ppg_channel", "ppg", value: .int(ch),
-               note: "time-multiplexed optical channel 1–26 (40-frame blocks)")
+    // @21 is a small per-burst counter (`burst_index`), NOT the optical channel (PR#553). An earlier read
+    // labelled it `ppg_channel` and gated it 1…26 because our two original fixtures happened to read 1 and
+    // 2 — but a later capture read 65, far outside any 26-channel sweep, so @21 is not a stable channel id.
+    // Re-surfaced as the neutral `burst_index` (gated bi > 0, the observed always-set sentinel) with NO
+    // channel/LED semantics claimed; the physical optical-channel mapping is unproven and left unasserted.
+    if let bi = readDType(frame, 21, "u8"), bi > 0 {
+        fb.add(21, 1, "burst_index", "ppg", value: .int(bi),
+               note: "per-burst counter (raw); NOT a channel id")
+    }
+    // record_index@11 (PR#563): the same monotonic lifetime per-record counter the v18/v20/v21 records
+    // carry at @11 — +1 per record, independent of unix (advances across gaps). The only @11+ v26 field
+    // proven by behaviour; everything else below stays raw/neutral.
+    if let idx = readDType(frame, 11, "u32") {
+        fb.add(11, 4, "record_index", "meta", value: .int(idx), note: "monotonic lifetime record index")
     }
     if let unix = readDType(frame, 15, "u32") {
         fb.add(15, 4, "unix", "time", value: .int(unix), note: "real unix seconds")
@@ -476,6 +482,16 @@ private func decodeWhoop5HistoricalV26(_ frame: [UInt8], fb: FieldBuilder) {
         fb.add(27, samples.count * 2, "ppg_waveform", "ppg", value: .intArray(samples),
                note: "optical PPG @24 Hz, LE-i16 ADC counts")
         fb.parsed["ppg_sample_count"] = .int(samples.count)
+    }
+    // PR#563: the remaining per-record v26 bytes, surfaced as RAW NEUTRAL fields — read off the real
+    // fixtures but with NO invented semantics (deliberately not named segment_id / signal_quality / etc.).
+    // Each is gated only to "present in range"; meaning is unpinned. The header @19/@23/@25 frame the
+    // waveform block; @75/@79/@81/@82 trail it. (`@27…@75` is the proven waveform handled above.)
+    for (name, off) in [("raw_u8_19", 19), ("raw_u8_23", 23), ("raw_u8_25", 25),
+                        ("raw_u8_75", 75), ("raw_u8_79", 79), ("raw_u8_81", 81), ("raw_u8_82", 82)] {
+        if let v = readDType(frame, off, "u8") {
+            fb.add(off, 1, name, "raw", value: .int(v), note: "raw byte @\(off); meaning not pinned")
+        }
     }
 }
 

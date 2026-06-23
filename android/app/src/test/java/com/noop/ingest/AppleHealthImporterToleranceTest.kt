@@ -91,6 +91,29 @@ class AppleHealthImporterToleranceTest {
         assertTrue(probe.skippedSpans >= 1)
     }
 
+    /**
+     * #589: overlapping step samples from DIFFERENT sources (an iPhone AND an Apple Watch both count the
+     * same walk) must NOT be summed across sources — that double-counts ~2x and poisons steps calibration.
+     * We sum WITHIN a source but take the MAX source per day, mirroring Apple Health and the macOS
+     * aggregator. Parity with `AppleHealthAggregatorTests.testStepsDoNotDoubleCountAcrossSources`.
+     */
+    @Test
+    fun stepsDoNotDoubleCountAcrossSources() {
+        val xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <HealthData>
+             <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2024-03-08 10:00:00 +0000" endDate="2024-03-08 10:00:00 +0000" value="4000"/>
+             <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2024-03-08 11:00:00 +0000" endDate="2024-03-08 11:00:00 +0000" value="3000"/>
+             <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Apple Watch" unit="count" startDate="2024-03-08 10:00:00 +0000" endDate="2024-03-08 10:00:00 +0000" value="6500"/>
+             <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Apple Watch" unit="count" startDate="2024-03-08 11:00:00 +0000" endDate="2024-03-08 11:00:00 +0000" value="1000"/>
+            </HealthData>
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+
+        val probe = AppleHealthImporter.parseStreamForTest(ByteArrayInputStream(xml))
+        // iPhone day total 7000, Watch day total 7500 → MAX 7500, NOT 14500 (the cross-source sum).
+        assertEquals(7500.0, probe.days.single { it.day == "2024-03-08" }.steps!!, 1e-9)
+    }
+
     /** A clean export reports zero skipped spans (no false positives from the sanitizer). */
     @Test
     fun cleanFileReportsNoSkippedSpans() {

@@ -49,8 +49,8 @@ struct StressCheckInCard: View {
     var body: some View {
         if let nudge = center.pending {
             StrandCard(tint: StrandPalette.restColor) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
+                    HStack(spacing: NoopMetrics.space2) {
                         Image(systemName: "wind")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(StrandPalette.restBright)
@@ -72,30 +72,18 @@ struct StressCheckInCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    HStack(spacing: 10) {
-                        Button {
+                    HStack(spacing: NoopMetrics.rowSpacing) {
+                        NoopButton("Breathe now", systemImage: "wind", kind: .primary) {
                             center.dismiss()
                             onBreatheNow()
-                        } label: {
-                            Text("Breathe now")
-                                .font(StrandFont.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
 
-                        Button("Not now") { center.dismiss() }
-                            .font(StrandFont.body)
-                            .buttonStyle(.bordered)
+                        NoopButton("Not now", kind: .secondary) { center.dismiss() }
 
-                        Button("Turn off") {
+                        NoopButton("Turn off", kind: .tertiary) {
                             BiofeedbackPrefs.checkInEnabled = false
                             center.dismiss()
                         }
-                        .font(StrandFont.body)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(StrandPalette.textSecondary)
                     }
 
                     Text("Relaxation guidance from your own numbers — not a health alert, and not a diagnosis. Trends matter more than any single number.")

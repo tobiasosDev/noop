@@ -153,10 +153,11 @@ fun IntelligenceScreen(vm: AppViewModel) {
 //
 // An evening ESTIMATE of tomorrow-morning Charge from tonight's known levers —
 // today's Effort vs your norm, your typical sleep, and the recent recovery baseline.
-// Bevel hero: the estimate as a layered Charge-world [BevelGauge] over a scenic
-// [ScenicHeroBackground], with the ± band as the caption and the plain-English read-out
-// beneath. Labelled an estimate; the real Charge is scored from tomorrow's HRV. The
-// number, band and copy are unchanged — only the container + gauge are new.
+// Design Reset (Today parity): a clean flat Charge ring on an opaque flat card — a
+// [GlowRing] (bloom off) on a [NoopCard] surfaceRaised surface, NOT a layered bevel
+// gauge floated over a scenic backdrop — with the ± band + state word beneath it and
+// the plain-English read-out below. Labelled an estimate; the real Charge is scored
+// from tomorrow's HRV. The number, band and copy are unchanged.
 
 @Composable
 private fun ForecastCard(f: RecoveryForecast) {
@@ -164,27 +165,33 @@ private fun ForecastCard(f: RecoveryForecast) {
     val band = f.band.roundToInt()
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Tomorrow's Charge", overline = "Evening forecast", trailing = "Estimate")
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(Metrics.cardRadius)),
-        ) {
-            ScenicHeroBackground(modifier = Modifier.matchParentSize(), domain = DomainTheme.Charge)
+        NoopCard(padding = 20.dp) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                BevelGauge(
-                    fraction = (f.charge / 100.0).coerceIn(0.0, 1.0),
-                    stops = Palette.recoveryStops,
-                    tipColor = Palette.recoveryColor(f.charge),
-                    numberText = "$charge",
-                    captionText = "± $band",
-                    stateText = Palette.recoveryState(f.charge),
-                    diameter = 184.dp,
-                    lineWidth = 15.dp,
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    GlowRing(
+                        fraction = (f.charge / 100.0).coerceIn(0.0, 1.0).toFloat(),
+                        value = f.charge,
+                        color = Palette.recoveryColor(f.charge),
+                        diameter = 168.dp,
+                        lineWidth = 168.dp * 0.10f,
+                    )
+                    Text(
+                        "± $band",
+                        style = NoopType.captionNumber,
+                        color = Palette.textTertiary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    Text(
+                        Palette.recoveryState(f.charge),
+                        style = NoopType.overline,
+                        color = Palette.recoveryColor(f.charge),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),

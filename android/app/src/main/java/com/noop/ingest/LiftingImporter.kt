@@ -12,6 +12,7 @@ import java.io.InputStream
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -175,16 +176,30 @@ object LiftingImporter {
         return Format.HEVY_CSV
     }
 
-    /** Parse raw bytes, auto-detecting the format. */
-    internal fun parse(data: ByteArray): Result = when (detectFormat(data)) {
-        Format.HEVY_CSV -> parseHevy(CsvTable.fromData(data))
-        Format.LIFTOSAUR_JSON -> parseLiftosaur(Bom.stripString(String(Bom.stripUtf8(data), Charsets.UTF_8)))
-    }
+    /**
+     * Parse raw bytes, auto-detecting the format.
+     *
+     * [zone] interprets Hevy's zoneless local wall-clock timestamps (#649); defaults to the device
+     * timezone. Liftosaur stamps are absolute epoch ms and ignore it.
+     */
+    internal fun parse(data: ByteArray, zone: ZoneId = ZoneId.systemDefault()): Result =
+        when (detectFormat(data)) {
+            Format.HEVY_CSV -> parseHevy(CsvTable.fromData(data), zone)
+            Format.LIFTOSAUR_JSON ->
+                parseLiftosaur(Bom.stripString(String(Bom.stripUtf8(data), Charsets.UTF_8)))
+        }
 
     // MARK: - Hevy CSV
 
-    /** Parse a Hevy CSV (one row per set) into one session per workout. */
-    internal fun parseHevy(table: CsvTable): Result {
+    /**
+     * Parse a Hevy CSV (one row per set) into one session per workout.
+     *
+     * Hevy writes zoneless **local wall-clock** timestamps (e.g. "12 Jun 2026, 18:30"), so a session
+     * logged at 18:30 must land at 18:30 in [zone], not 18:30 UTC (#649). The export carries no
+     * offset, so the device timezone is the honest interpretation; defaults to [ZoneId.systemDefault]
+     * and is injectable for deterministic tests.
+     */
+    internal fun parseHevy(table: CsvTable, zone: ZoneId = ZoneId.systemDefault()): Result {
         // Grouped by (title, start_time); the start_time string alone is a stable key, title
         // disambiguates the rare same-second back-to-back log.
         val order = ArrayList<String>()
@@ -193,7 +208,7 @@ object LiftingImporter {
 
         for (row in table.rows) {
             val startRaw = row.cell("start_time", "start", "date")
-            val start = startRaw?.let { parseEpochSeconds(it) }
+            val start = startRaw?.let { parseEpochSeconds(it, zone) }
             if (startRaw == null || start == null) { skipped++; continue }
 
             val title = row.cell("title", "workout_name", "name")
@@ -211,7 +226,7 @@ object LiftingImporter {
                 ?.takeIf { it.isFinite() && it >= 0 && it < 1e6 }?.toInt()
 
             val key = "${title ?: ""}|$startRaw"
-            val acc = byKey.getOrPut(key) { order.add(key); HevyAcc(start, title) }
+            val acc = byKey.getOrPut(key) { order.add(key); HevyAcc(start, title, zone) }
             row.cell("end_time", "end")?.let { acc.endRaw = it }
             acc.add(exercise, setType, weightKg, reps)
         }
@@ -220,7 +235,7 @@ object LiftingImporter {
     }
 
     /** Mutable per-session tally while folding Hevy set rows. */
-    private class HevyAcc(val start: Long, val title: String?) {
+    private class HevyAcc(val start: Long, val title: String?, val zone: ZoneId) {
         var endRaw: String? = null
         var volume = 0.0
         var sets = 0
@@ -246,7 +261,7 @@ object LiftingImporter {
 
         fun toSession(): Session? {
             if (sets == 0) return null
-            val end = endRaw?.let { parseEpochSeconds(it) } ?: start
+            val end = endRaw?.let { parseEpochSeconds(it, zone) } ?: start
             return Session(
                 startTs = start,
                 endTs = if (end >= start) end else start,
@@ -378,7 +393,9 @@ object LiftingImporter {
         if (ms != null && ms > 0) {
             return if (ms > 1_000_000_000_000.0) (ms / 1000).toLong() else ms.toLong()
         }
-        if (any is String) return parseEpochSeconds(any)
+        // Rare ISO-string fallback: an embedded offset wins; a zoneless string falls back to the
+        // device zone (Liftosaur's primary path is absolute epoch ms, so this is an edge case).
+        if (any is String) return parseEpochSeconds(any, ZoneId.systemDefault())
         return null
     }
 
@@ -388,22 +405,28 @@ object LiftingImporter {
         // Hevy exports an English "d MMM yyyy, HH:mm" form (e.g. "12 Jun 2026, 18:30").
         DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.ENGLISH),
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ENGLISH),
         DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss", Locale.ENGLISH),
         DateTimeFormatter.ofPattern("MM/dd/yyyy HH:mm:ss", Locale.ENGLISH),
     )
 
     /**
-     * Parse a lifting date string into UTC epoch seconds. Defers to the shared [WhoopTime] (ISO-8601
-     * with offset + "yyyy-MM-dd HH:mm:ss"), then tries Hevy's English formats at UTC (the export
-     * carries no zone, so UTC is the honest, stable choice).
+     * Parse a lifting date string into UTC epoch seconds, interpreting it in [zone].
+     *
+     * A timestamp carrying its own ISO-8601 offset ("…Z" / "…+01:00") is authoritative and ignores
+     * [zone]. Everything else — Hevy's English "d MMM yyyy, HH:mm" and plain "yyyy-MM-dd HH:mm:ss"
+     * forms — is **zoneless local wall-clock**, so it is resolved against [zone] (the device timezone),
+     * not UTC (#649). `atZone` is DST-correct, unlike a fixed offset.
      */
-    internal fun parseEpochSeconds(raw: String): Long? {
+    internal fun parseEpochSeconds(raw: String, zone: ZoneId): Long? {
         val t = raw.trim()
         if (t.isEmpty()) return null
-        WhoopTime.parseEpochSeconds(t, 0)?.let { return it }
+        // ISO-8601 with an embedded offset wins and is NOT shifted by the device zone.
+        WhoopTime.parseIsoWithOffsetEpochSeconds(t)?.let { return it }
+        // Zoneless wall-clock → interpret in the device timezone.
         for (fmt in HEVY_FORMATTERS) {
             runCatching {
-                return java.time.LocalDateTime.parse(t, fmt).toEpochSecond(ZoneOffset.UTC)
+                return java.time.LocalDateTime.parse(t, fmt).atZone(zone).toEpochSecond()
             }
         }
         return null

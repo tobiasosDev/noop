@@ -305,24 +305,13 @@ private struct BreathingContent: View {
             let diameter = maxDiameter * scale
 
             ZStack {
+                // The breath ring — the resting track the orb expands toward. Crisp 1px stroke, no glow.
                 Circle()
                     .strokeBorder(StrandPalette.restColor.opacity(0.28), lineWidth: 1)
                     .frame(width: maxDiameter, height: maxDiameter)
 
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [StrandPalette.restBright.opacity(0.30),
-                                     StrandPalette.restGlow.opacity(0.0)],
-                            center: .center,
-                            startRadius: diameter * 0.20,
-                            endRadius: diameter * 0.70
-                        )
-                    )
-                    .frame(width: diameter * 1.35, height: diameter * 1.35)
-                    .blur(radius: 18)
-                    .opacity(0.55 + 0.45 * Double(orbProgress))
-
+                // The breathing orb — a flat radial-shaded disc (shading, not a bloom halo): no blur layer,
+                // no drop shadow. Its scale (not a glow) is what cues inhale/exhale.
                 Circle()
                     .fill(
                         RadialGradient(
@@ -338,14 +327,18 @@ private struct BreathingContent: View {
                         Circle().strokeBorder(StrandPalette.restBright.opacity(0.50), lineWidth: 1)
                     )
                     .frame(width: diameter, height: diameter)
-                    .shadow(color: StrandPalette.restGlow.opacity(0.18 * orbProgress), radius: 12)
 
                 VStack(spacing: 2) {
-                    Text(model.bpm.map(String.init) ?? "—")
-                        .font(StrandFont.number(40))
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .contentTransition(.numericText())
-                        .animation(.snappy, value: model.bpm)
+                    if let bpm = model.bpm {
+                        CountUpText(value: Double(bpm),
+                                    format: { "\(Int($0.rounded()))" },
+                                    font: StrandFont.number(40),
+                                    color: StrandPalette.textPrimary)
+                    } else {
+                        Text("—")
+                            .font(StrandFont.number(40))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                    }
                     Text("BPM")
                         .font(StrandFont.footnote)
                         .tracking(0.8)
@@ -359,28 +352,16 @@ private struct BreathingContent: View {
     // MARK: - Controls
 
     private var controlRow: some View {
-        HStack(spacing: 12) {
-            Button {
+        HStack(spacing: NoopMetrics.space3) {
+            NoopButton(running ? "Stop session" : "Start session",
+                       systemImage: running ? "stop.fill" : "play.fill",
+                       kind: running ? .destructive : .primary, fullWidth: true) {
                 running ? stop() : start()
-            } label: {
-                Label(running ? "Stop session" : "Start session",
-                      systemImage: running ? "stop.fill" : "play.fill")
-                    .font(StrandFont.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(running ? StrandPalette.statusCritical : StrandPalette.accent)
 
-            Button {
+            NoopButton("Test buzz", systemImage: "waveform.path", kind: .secondary) {
                 model.buzz(loops: 1)
-            } label: {
-                Label("Test buzz", systemImage: "waveform.path")
-                    .font(StrandFont.body)
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 8)
             }
-            .buttonStyle(.bordered)
             .disabled(!live.bonded)
             .help("Fire a single haptic pulse on the strap (requires a bonded connection)")
         }
@@ -760,27 +741,16 @@ private struct ResonanceModeView: View {
 
     private var startCard: some View {
         StrandCard {
-            VStack(spacing: 12) {
-                Button {
+            VStack(spacing: NoopMetrics.space3) {
+                NoopButton("Full sweep · ~13 min", systemImage: "waveform.path.ecg",
+                           kind: .primary, fullWidth: true) {
                     controller.startSweep(quick: false)
-                } label: {
-                    Label("Full sweep · ~13 min", systemImage: "waveform.path.ecg")
-                        .font(StrandFont.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
 
-                Button {
+                NoopButton("Quick sweep · ~7 min", systemImage: "bolt",
+                           kind: .secondary, fullWidth: true) {
                     controller.startSweep(quick: true)
-                } label: {
-                    Label("Quick sweep · ~7 min", systemImage: "bolt")
-                        .font(StrandFont.body)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
                 }
-                .buttonStyle(.bordered)
 
                 Text("Sit still and breathe with the buzz. You can stop anytime; a stopped sweep won't lock a pace.")
                     .font(StrandFont.footnote)
@@ -801,30 +771,15 @@ private struct ResonanceModeView: View {
                     StatePill("Live", tone: .accent, showsDot: true, pulsing: true)
                 }
 
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(StrandPalette.surfaceInset)
-                        Capsule()
-                            .fill(LinearGradient(colors: [StrandPalette.restDeep, StrandPalette.restBright],
-                                                 startPoint: .leading, endPoint: .trailing))
-                            .frame(width: max(6, geo.size.width * controller.sweepProgress))
-                            .animation(.easeInOut(duration: 0.4), value: controller.sweepProgress)
-                    }
-                }
-                .frame(height: 10)
-                .accessibilityLabel("Sweep progress")
-                .accessibilityValue("\(Int(controller.sweepProgress * 100)) percent")
+                // Sweep progress as the NOOP signature segmented bar — cascades up in the Rest world.
+                PipBar(value: controller.sweepProgress, range: 0...1, segments: 28,
+                       tint: StrandPalette.restColor, height: 10)
+                    .accessibilityLabel("Sweep progress")
+                    .accessibilityValue("\(Int(controller.sweepProgress * 100)) percent")
 
-                Button {
+                NoopButton("Stop sweep", systemImage: "stop.fill", kind: .destructive, fullWidth: true) {
                     controller.stop()
-                } label: {
-                    Label("Stop sweep", systemImage: "stop.fill")
-                        .font(StrandFont.body)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
                 }
-                .buttonStyle(.bordered)
-                .tint(StrandPalette.statusCritical)
             }
         }
     }
@@ -840,9 +795,10 @@ private struct ResonanceModeView: View {
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(String(format: "%.1f", result.lockedBpm))
-                        .font(StrandFont.number(40))
-                        .foregroundStyle(StrandPalette.restBright)
+                    CountUpText(value: result.lockedBpm,
+                                format: { String(format: "%.1f", $0) },
+                                font: StrandFont.number(40),
+                                color: StrandPalette.restBright)
                     Text("br/min")
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textTertiary)
@@ -875,9 +831,10 @@ private struct ResonanceModeView: View {
                     StatePill("Locked", tone: .positive, showsDot: true)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(String(format: "%.1f", bpm))
-                        .font(StrandFont.number(34))
-                        .foregroundStyle(StrandPalette.restBright)
+                    CountUpText(value: bpm,
+                                format: { String(format: "%.1f", $0) },
+                                font: StrandFont.number(34),
+                                color: StrandPalette.restBright)
                     Text("br/min")
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textTertiary)
@@ -998,17 +955,11 @@ private struct CalmModeView: View {
 
     private var startCard: some View {
         StrandCard {
-            VStack(spacing: 10) {
-                Button {
+            VStack(spacing: NoopMetrics.rowSpacing) {
+                NoopButton("Calm me · 3 min", systemImage: "heart.fill",
+                           kind: .primary, fullWidth: true) {
                     controller.startCalmMe()
-                } label: {
-                    Label("Calm me · 3 min", systemImage: "heart.fill")
-                        .font(StrandFont.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
                 .disabled(!canRun)
 
                 if !controller.canBuzz {
@@ -1036,11 +987,16 @@ private struct CalmModeView: View {
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(model.bpm.map(String.init) ?? "—")
-                        .font(StrandFont.number(48))
-                        .foregroundStyle(StrandPalette.metricRose)
-                        .contentTransition(.numericText())
-                        .animation(.snappy, value: model.bpm)
+                    if let bpm = model.bpm {
+                        CountUpText(value: Double(bpm),
+                                    format: { "\(Int($0.rounded()))" },
+                                    font: StrandFont.number(48),
+                                    color: StrandPalette.metricRose)
+                    } else {
+                        Text("—")
+                            .font(StrandFont.number(48))
+                            .foregroundStyle(StrandPalette.metricRose)
+                    }
                     Image(systemName: "arrow.right")
                         .foregroundStyle(StrandPalette.textTertiary)
                         .accessibilityHidden(true)
@@ -1063,16 +1019,9 @@ private struct CalmModeView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Button {
+                NoopButton("Stop", systemImage: "stop.fill", kind: .destructive, fullWidth: true) {
                     controller.stop()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .font(StrandFont.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.statusCritical)
             }
         }
     }

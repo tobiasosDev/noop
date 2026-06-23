@@ -67,21 +67,31 @@ struct StrandiOSApp: App {
                 // clipping; the common Larger-Text range still scales fully.
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .onReceive(model.live.$heartRate) { _ in
+                    let day = model.repo.days.last(where: { $0.recovery != nil })
                     liveActivity.update(
                         bpm: model.live.connected ? (model.bpm ?? model.live.heartRate) : nil,
-                        recovery: model.repo.days.last(where: { $0.recovery != nil })?
-                            .recovery.map { Int($0.rounded()) },
-                        connected: model.live.connected
+                        recovery: day?.recovery.map { Int($0.rounded()) },
+                        connected: model.live.connected,
+                        effort: day?.strain.map { Int($0.rounded()) }
                     )
                 }
                 // End the Live Activity the moment the link drops, even if no further HR tick arrives.
                 .onReceive(model.live.$connected) { isConnected in
+                    let day = model.repo.days.last(where: { $0.recovery != nil })
                     liveActivity.update(
                         bpm: isConnected ? (model.bpm ?? model.live.heartRate) : nil,
-                        recovery: model.repo.days.last(where: { $0.recovery != nil })?
-                            .recovery.map { Int($0.rounded()) },
-                        connected: isConnected
+                        recovery: day?.recovery.map { Int($0.rounded()) },
+                        connected: isConnected,
+                        effort: day?.strain.map { Int($0.rounded()) }
                     )
+                }
+                // #581: the `noop://import-health` deep link the iOS Shortcut opens after building the
+                // HealthKit-free payload. Filter on the host so other future schemes don't trip the
+                // importer; macOS never registers the scheme so this stays iOS-only.
+                .onOpenURL { url in
+                    if url.host == "import-health" {
+                        model.handleHealthImportURL(url)
+                    }
                 }
         }
         // HealthKit authorization is intentionally NOT requested on launch. The system permission
@@ -101,7 +111,7 @@ struct StrandiOSApp: App {
                 Task {
                     health.refreshAuthIfPreviouslyGranted()
                     await health.sync()
-                    WidgetSnapshot.publish(from: model)
+                    await WidgetSnapshot.publish(from: model)
                 }
             } else if phase == .background {
                 // #155: refresh the Documents/noop_sync.txt drop file the user's Siri Shortcut logs
@@ -149,7 +159,7 @@ private struct iOSRootView: View {
     private var shell: some View {
         ZStack {
             RootTabView()
-            if !onboarded {
+            if !onboarded && !demoBypass {
                 OnboardingWizard(onFinished: {
                     onboarded = true
                     // A brand-new user just saw the expectations in onboarding — don't also pop the
@@ -161,7 +171,7 @@ private struct iOSRootView: View {
             }
             // Terms acknowledgment gate — over EVERYTHING (before onboarding/pairing/Bluetooth) until
             // the current terms version is accepted; re-appears if the terms materially change.
-            if acceptedTerms != Terms.currentVersion {
+            if acceptedTerms != Terms.currentVersion && !demoBypass {
                 TermsGateView(onAccept: { acceptedTerms = Terms.currentVersion })
                     .transition(.opacity)
                     .zIndex(2)
@@ -187,7 +197,18 @@ private struct iOSRootView: View {
         .onChange(of: acceptedTerms) { _, _ in showWhatsNewIfDue() }
     }
 
+    /// DEBUG: launched with --demo-seed, skip the first-run gates (onboarding / terms / What's New) so the
+    /// FULL shell with the tab bar renders populated for verification + screenshots. No-op in Release.
+    private var demoBypass: Bool {
+        #if DEBUG
+        return CommandLine.arguments.contains("--demo-seed")
+        #else
+        return false
+        #endif
+    }
+
     private func showWhatsNewIfDue() {
+        if demoBypass { return }
         // Existing users who updated: their last-seen version is behind the current one.
         if onboarded && acceptedTerms == Terms.currentVersion
             && lastSeenChangelog != AppChangelog.currentVersion {

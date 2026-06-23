@@ -325,4 +325,55 @@ class ChargeEffortRestScoringTest {
         assertEquals("building", ScoreConfidence.BUILDING.raw)
         assertEquals("solid", ScoreConfidence.SOLID.raw)
     }
+
+    // H9: a high-efficiency night whose deep+REM share is implausibly low is flagged LOW-CONFIDENCE
+    // (downgraded SOLID → BUILDING) — honest "staging may be off", no faked stages. Mirrors Swift.
+    @Test
+    fun confidence_restH9DowngradesLowRestorativeHighEfficiencyNight() {
+        val asleep = 8.0 * 3600.0
+        assertEquals(
+            ScoreConfidence.BUILDING,
+            ScoreConfidence.forRest(
+                hasSession = true, hasStagedSleep = true,
+                asleepSeconds = asleep, restorativeSeconds = asleep * 0.03, efficiency = 0.95,
+            ),
+        )
+    }
+
+    @Test
+    fun confidence_restH9KeepsSolidWhenRestorativeHealthy() {
+        val asleep = 8.0 * 3600.0
+        assertEquals(
+            ScoreConfidence.SOLID,
+            ScoreConfidence.forRest(
+                hasSession = true, hasStagedSleep = true,
+                asleepSeconds = asleep, restorativeSeconds = asleep * 0.45, efficiency = 0.95,
+            ),
+        )
+    }
+
+    @Test
+    fun confidence_restH9DoesNotFlagLowEfficiencyNight() {
+        // A fragmented (low-efficiency) night legitimately carries little deep/REM — must NOT flag it.
+        val asleep = 8.0 * 3600.0
+        assertEquals(
+            ScoreConfidence.SOLID,
+            ScoreConfidence.forRest(
+                hasSession = true, hasStagedSleep = true,
+                asleepSeconds = asleep, restorativeSeconds = asleep * 0.03, efficiency = 0.60,
+            ),
+        )
+    }
+
+    @Test
+    fun confidence_restH9NeverUpgradesNonSolidBase() {
+        // No staged sleep → base BUILDING; H9 only DOWNGRADES, so it can't lift to SOLID.
+        assertEquals(
+            ScoreConfidence.BUILDING,
+            ScoreConfidence.forRest(
+                hasSession = true, hasStagedSleep = false,
+                asleepSeconds = 8.0 * 3600.0, restorativeSeconds = 0.0, efficiency = 0.95,
+            ),
+        )
+    }
 }

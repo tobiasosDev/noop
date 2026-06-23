@@ -34,6 +34,14 @@ public struct GlowRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
+    /// The centre-number font for a ring of the given diameter — the house numeral at `diameter * 0.36`,
+    /// bold. Exposed so an EMPTY / carried / "No data" ring (which doesn't draw a `GlowRing`) can render
+    /// its centre text in the EXACT same size + weight as a filled ring, keeping the hero trio's three
+    /// centre read-outs visually consistent regardless of state.
+    public static func centerFont(diameter: CGFloat) -> Font {
+        StrandFont.rounded(diameter * 0.36, weight: .bold)
+    }
+
     private var clamped: CGFloat { CGFloat(min(max(fraction, 0), 1)) }
     private var filled: CGFloat { appeared ? clamped : 0 }
     private var shown: Double { appeared ? value : 0 }
@@ -46,19 +54,12 @@ public struct GlowRing: View {
                 .stroke(StrandPalette.textPrimary.opacity(0.10),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
-            // A TIGHT glow hugging the arc — subtle, additive on dark, hidden on light. Kept narrow so
-            // the ring stays crisp; the sharp arc below carries the read.
-            arc.stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .blur(radius: lineWidth * 0.45)
-                .opacity(0.45)
-                .additiveBloom()
-
-            // The crisp, solid arc.
+            // Design Reset: NO glow. A flat, crisp solid arc only — the clean Material-style look.
             arc.stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
             // Centred rolling number.
             Text(format(shown))
-                .font(StrandFont.rounded(diameter * 0.36, weight: .bold))
+                .font(Self.centerFont(diameter: diameter))
                 .foregroundStyle(StrandPalette.textPrimary)
                 .monospacedDigit()
                 .lineLimit(1)

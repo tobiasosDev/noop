@@ -234,6 +234,50 @@ public enum SleepStageTotals {
         return out
     }
 
+    /// The indices (into the ORIGINAL `blocks`) of the MAIN-NIGHT GROUP: the main night plus any adjacent
+    /// fragments bridged into it. A biphasic / briefly-interrupted main sleep that reaches the selector still
+    /// split into two blocks (a wake gap shorter than `gapBridgeMaxMin` between them) is scored as ONE night
+    /// rather than two competing fragments, then the winning bridged group's fragments are ALL returned so the
+    /// caller can SUM their stages for the day's headline figure. (#561)
+    ///
+    /// Pipeline:
+    ///   1. `bridgeAdjacent` merges blocks whose gap is in `[0, gapBridgeMaxMin*60)` into bridged spans, in
+    ///      `start` order, recording which original indices fell into each bridged group.
+    ///   2. `mainNightIndex` scores the BRIDGED spans (so a two-fragment night's combined span out-scores a
+    ///      lone nap) and picks the winning bridged group.
+    ///   3. The original indices of that winning group are returned, ascending.
+    ///
+    /// Returns nil only for an empty list. A day with no bridgeable gap collapses to the single-block group the
+    /// bare `mainNightIndex` would pick — byte-identical to the old behaviour for the common case. Pure +
+    /// deterministic; shares `bridgeAdjacent` + `mainNightIndex` so the bridged pick stays cross-platform
+    /// stable. (#561)
+    public static func mainNightGroupIndices(_ blocks: [NightBlock], offsetSec: Int,
+                                             habitualMidsleepSec: Int? = nil) -> [Int]? {
+        guard !blocks.isEmpty else { return nil }
+        // Sort indices by onset so bridging sees neighbours, exactly as `bridgeAdjacent` sorts the blocks.
+        let order = blocks.indices.sorted { blocks[$0].start < blocks[$1].start }
+        let bridgeS = gapBridgeMaxMin * 60
+        // Build the bridged spans AND the original indices that compose each one, in one pass over `order`.
+        var bridged: [NightBlock] = []
+        var groups: [[Int]] = []
+        for idx in order {
+            let b = blocks[idx]
+            if let last = bridged.last {
+                let gap = b.start - last.end
+                if gap >= 0 && gap < bridgeS {
+                    bridged[bridged.count - 1] = NightBlock(start: last.start, end: max(last.end, b.end))
+                    groups[groups.count - 1].append(idx)
+                    continue
+                }
+            }
+            bridged.append(b)
+            groups.append([idx])
+        }
+        guard let winner = mainNightIndex(bridged, offsetSec: offsetSec,
+                                          habitualMidsleepSec: habitualMidsleepSec) else { return nil }
+        return groups[winner].sorted()
+    }
+
     /// Index of the day's MAIN night among `blocks`, by the LEARNED-TIMING SCORE (replaces the old hard
     /// overnight gate). score(block) = asleepMinutes + alignmentBonus, where the bonus credits a block
     /// whose midpoint sits near the user's habitual midsleep (`habitualMidsleepSec`), or — cold-start —
@@ -404,17 +448,96 @@ public enum SleepStageTotals {
         // No onsets supplied → the legacy sum-of-all-blocks total (older callers unchanged).
         if let onsetByStart {
             // Pick by the same LEARNED-TIMING score the Sleep tab uses (asleep minutes + alignment bonus,
-            // measured by each block's decoded in-bed span) and report ONLY that block's totals as the
-            // day's figure. A day's naps are unaffected here; they remain their own session rows.
-            if let idx = mainNightIndexByStages(blocks, onsetByStart: onsetByStart, offsetSec: offsetSec,
-                                                habitualMidsleepSec: habitualMidsleepSec),
-               let agg = dailyAggregate([blocks[idx].stagesJSON]) {
+            // measured by each block's decoded in-bed span). BIPHASIC GAP-BRIDGE (#561): bridge adjacent
+            // blocks split by a short wake gap into the main-night GROUP and SUM that group's stages, so the
+            // edit/recompute seam reports the SAME night `analyzeDay` does (a briefly-interrupted main sleep
+            // is one night, not the longer fragment only). Naps outside the group remain their own rows.
+            let group = mainNightGroupIndicesByStages(blocks, onsetByStart: onsetByStart, offsetSec: offsetSec,
+                                                      habitualMidsleepSec: habitualMidsleepSec)
+            if let group, let agg = dailyAggregate(group.map { blocks[$0].stagesJSON }) {
                 return (agg, applied)
             }
             return nil
         }
         guard let agg = dailyAggregate(blocks.map(\.stagesJSON)) else { return nil }
         return (agg, applied)
+    }
+
+    /// The original-index group (ascending) of the day's MAIN night on the STAGES path: the main night plus
+    /// any adjacent fragments bridged into it (a wake gap shorter than `gapBridgeMaxMin`), so the edit/
+    /// recompute seam SUMS the same fragments `analyzeDay` does for a biphasic night. Each block's effective
+    /// span is `[onset, onset + decoded in-bed]`; bridging tests the gap between one block's effective end and
+    /// the next block's onset. The bridged spans are then scored by `mainNightIndexByStages` (decoded asleep
+    /// minutes + alignment), and the winning group's original indices are returned. nil only for an empty list.
+    /// A day with no bridgeable gap returns the single block `mainNightIndexByStages` would pick — no #525
+    /// regression. (#561)
+    static func mainNightGroupIndicesByStages(_ blocks: [(startTs: Int, stagesJSON: String?)],
+                                              onsetByStart: [Int: Int], offsetSec: Int,
+                                              habitualMidsleepSec: Int? = nil) -> [Int]? {
+        guard !blocks.isEmpty else { return nil }
+        func onset(_ b: (startTs: Int, stagesJSON: String?)) -> Int { onsetByStart[b.startTs] ?? b.startTs }
+        func effEnd(_ b: (startTs: Int, stagesJSON: String?)) -> Int {
+            onset(b) + Int((minutes(fromStagesJSON: b.stagesJSON)?.inBed ?? 0) * 60.0)
+        }
+        // Order by effective onset so bridging sees neighbours.
+        let order = blocks.indices.sorted { onset(blocks[$0]) < onset(blocks[$1]) }
+        let bridgeS = gapBridgeMaxMin * 60
+        // Bridged groups of ORIGINAL indices, plus the representative (startTs, stages) the score reads.
+        var groups: [[Int]] = []
+        var groupEnd: [Int] = []     // running effective end of each bridged group
+        for idx in order {
+            let b = blocks[idx]
+            if let last = groupEnd.last {
+                let gap = onset(b) - last
+                if gap >= 0 && gap < bridgeS {
+                    groups[groups.count - 1].append(idx)
+                    groupEnd[groupEnd.count - 1] = max(last, effEnd(b))
+                    continue
+                }
+            }
+            groups.append([idx])
+            groupEnd.append(effEnd(b))
+        }
+        // Score each bridged group by its FIRST fragment's onset + the group's SUMMED decoded minutes, via
+        // the same per-stages scorer (asleep minutes + alignment), so the pick matches the bare path on a
+        // single-block day and prefers the well-timed, longest combined night otherwise.
+        let groupBlocks: [(startTs: Int, stagesJSON: String?)] = groups.map { g in
+            // Representative block: its startTs is the group's EARLIEST-onset fragment (so the score's
+            // midpoint anchors on the group's onset + its SUMMED in-bed span), and its stages are the group's
+            // SUMMED stages so the scorer ranks the combined night, not a single fragment.
+            let summed = SleepStageTotals.summedStagesJSON(g.map { blocks[$0].stagesJSON })
+            let anchor = g.min(by: { onset(blocks[$0]) < onset(blocks[$1]) }) ?? g[0]
+            return (startTs: blocks[anchor].startTs, stagesJSON: summed)
+        }
+        // The group's anchor onsets feed `onsetByStart` so the score reads each group's earliest onset.
+        var groupOnsets: [Int: Int] = [:]
+        for (gi, g) in groups.enumerated() {
+            let anchor = g.min(by: { onset(blocks[$0]) < onset(blocks[$1]) }) ?? g[0]
+            groupOnsets[groupBlocks[gi].startTs] = onset(blocks[anchor])
+        }
+        guard let winner = mainNightIndexByStages(groupBlocks, onsetByStart: groupOnsets, offsetSec: offsetSec,
+                                                  habitualMidsleepSec: habitualMidsleepSec) else { return nil }
+        return groups[winner].sorted()
+    }
+
+    /// A synthetic minute-dict `stagesJSON` whose per-stage minutes are the SUM of the inputs' decoded
+    /// minutes — used only to SCORE a bridged group as one block (decoded asleep minutes + in-bed span). Pure;
+    /// returns nil when nothing decodes (the group then scores 0, like an undecodable block). (#561)
+    static func summedStagesJSON(_ stagesJSONs: [String?]) -> String? {
+        var total = Minutes()
+        var any = false
+        for j in stagesJSONs {
+            if let m = minutes(fromStagesJSON: j) {
+                total.awake += m.awake; total.light += m.light
+                total.deep += m.deep; total.rem += m.rem
+                any = true
+            }
+        }
+        guard any else { return nil }
+        let dict: [String: Double] = ["awake": total.awake, "light": total.light,
+                                      "deep": total.deep, "rem": total.rem]
+        return (try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Index into `blocks` of the day's MAIN night, by the LEARNED-TIMING SCORE: score(block) =

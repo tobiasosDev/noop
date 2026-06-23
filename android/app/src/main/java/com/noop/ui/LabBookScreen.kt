@@ -745,7 +745,7 @@ internal fun NoopBottomSheet(onDismiss: () -> Unit, content: @Composable () -> U
     }
 }
 
-/** The gold primary CTA, matching the .noopPrimary button style on Apple. */
+/** The accent primary CTA, matching the .noopPrimary button style on Apple. */
 @Composable
 internal fun PrimaryActionButton(
     label: String,
@@ -759,8 +759,8 @@ internal fun PrimaryActionButton(
         modifier = Modifier
             .fillMaxWidth()
             .height(46.dp)
-            // A crisp, subtle NEUTRAL elevation (soft dark lift, no gold bloom) — matching the iOS
-            // .noopPrimary refresh, which traded the old gold cast-glow for a clean neutral shadow.
+            // A crisp, subtle NEUTRAL elevation (soft dark lift, no bloom) — matching the iOS
+            // .noopPrimary refresh, which trades any cast-glow for a clean neutral shadow.
             .let { if (enabled) it.shadow(elevation = 4.dp, shape = shape, clip = false) else it }
             .clip(shape)
             .background(container)
@@ -770,9 +770,9 @@ internal fun PrimaryActionButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = Palette.goldDeepText, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = null, tint = Palette.surfaceBase, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text(label, style = NoopType.body, color = Palette.goldDeepText)
+        Text(label, style = NoopType.body, color = Palette.surfaceBase)
     }
 }
 

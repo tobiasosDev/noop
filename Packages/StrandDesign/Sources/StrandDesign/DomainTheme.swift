@@ -109,37 +109,9 @@ public struct ScenicHeroBackground: View {
                 endRadius: 520
             )
 
-            // A subtle domain-tinted bloom near the top, if a world is named. Kept minimal
-            // (≈⅓ the old opacity) so the hero reads as a clean field, not a gold wash.
-            if let domain {
-                RadialGradient(
-                    gradient: Gradient(colors: [domain.glow.opacity(0.06), .clear]),
-                    center: .init(x: 0.5, y: 0.30),
-                    startRadius: 0,
-                    endRadius: 320
-                )
-                .additiveBloom()
-            }
-
-            // Deterministic starfield — fixed positions/sizes so it can't flicker. A starfield only
-            // belongs on the dark night-sky hero; on the warm-paper light field it reads as dirt, so
-            // it's suppressed (the radial + domain bloom carry the light hero alone).
-            if scheme == .dark {
-            Canvas { context, size in
-                let w = max(1, Int(size.width))
-                let topBand = max(1, Int(size.height * 0.55))
-                for i in 0..<starCount {
-                    let x = CGFloat((i * 73 + 31) % w)
-                    let y = CGFloat(18 + ((i * 41) % topBand))
-                    let r: CGFloat = (i % 9 == 0) ? 1.3 : 0.7
-                    let alpha = (i % 5 == 0) ? 0.34 : 0.18
-                    context.fill(
-                        Path(ellipseIn: CGRect(x: x, y: y, width: r * 2, height: r * 2)),
-                        with: .color(StrandPalette.scenicStar.opacity(alpha))
-                    )
-                }
-            }
-            }
+            // Design Reset (Aaron 2026-06-22): the domain bloom + starfield are removed for the flat
+            // WHOOP look. The hero is now a clean blue-grey radial — no glow, no stars. `domain` and
+            // `starCount` stay on the type for API stability but no longer paint.
 
             // Bottom fade so a hero number / card reads cleanly over the field.
             if fadesToBase {

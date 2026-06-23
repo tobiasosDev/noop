@@ -24,8 +24,9 @@ enum ProjectInfo {
               address: "addr1qxsju3y0mlke2h6h2g6qgnq4r3jstngtyjxs0nnp5zrv28zv8p5rgzruxyjz33j9k23pffta8z639e2snjdd4vcetfqsn4vwr3"),
         .init(symbol: "ETH", name: "Ethereum",
               address: "0xd64D508b531c4b1297Ca4023C774e0E97aA67B7F"),
-        .init(symbol: "XRP", name: "XRP",
-              address: "rpvijHi2nVY9WWAJhojsAX5tJmHdmLtFhq"),
+        // XRP intentionally NOT offered in-app: it's an exchange-hosted address
+        // that needs a destination tag, and a scan-to-donate QR can't carry the
+        // tag reliably, so a tagless scan could be lost. XRP stays in docs only.
     ]
 
     struct CryptoAddress: Identifiable {

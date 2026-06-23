@@ -3,6 +3,7 @@ package com.noop.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -152,7 +154,9 @@ private val builtInMetrics: List<MetricSpec> = listOf(
     ),
     MetricSpec(
         key = "sleep", title = "Sleep", unit = "h", category = "Rest",
-        accent = Palette.metricPurple, higherIsBetter = true, decimals = 1,
+        // Rest-score accent rides the reset accent token (iOS metricAccent maps every Rest metric —
+        // sleep_performance / sleep_total_min — to StrandPalette.accent), not a stray metric hue.
+        accent = Palette.accent, higherIsBetter = true, decimals = 1,
         dailyPick = { it.totalSleepMin?.let { m -> m / 60.0 } },
         description = "How restorative your sleep was — duration, efficiency, deep+REM, timing.",
     ),
@@ -177,6 +181,14 @@ private val builtInMetrics: List<MetricSpec> = listOf(
  *  check-in — matching the macOS MetricCatalog entries exactly (v2.2.0 parity). seriesKey/
  *  seriesSource are filled in at discovery time. */
 private val knownSeriesMetrics: Map<String, MetricSpec> = mapOf(
+    // #605/#608: imported avg/max HR is written to metricSeries (Apple Health / WHOOP CSV / Xiaomi) and
+    // the Compare screen exposes it, but Explore's picker didn't — iOS MetricCatalog has had both. Series-
+    // backed (no DailyMetric column), "Heart" category, parity. (Strap-only per-second HR lives in the
+    // Deep Timeline; this surfaces the per-day avg/max for imported sources.)
+    "avg_hr" to MetricSpec("avg_hr", "Average Heart Rate", "bpm", "Heart",
+        Palette.metricRose, null, 0),
+    "max_hr" to MetricSpec("max_hr", "Max Heart Rate", "bpm", "Heart",
+        Palette.metricRose, null, 0),
     "calories_in" to MetricSpec("calories_in", "Calories In", "kcal", "Nutrition",
         Palette.metricAmber, null, 0),
     "protein_g" to MetricSpec("protein_g", "Protein", "g", "Nutrition",
@@ -217,6 +229,14 @@ private fun statOf(values: List<Double>): Stat {
 
 @Composable
 fun TrendsExploreScreen(vm: AppViewModel) {
+    // The Deep Timeline (#575) is presented INLINE from Explore — no NavHost route needed, so this stays
+    // self-contained in the Explore entry-point file. System back / the in-screen reset returns here.
+    var showDeepTimeline by remember { mutableStateOf(false) }
+    if (showDeepTimeline) {
+        FullDayChartScreen(vm = vm, onBack = { showDeepTimeline = false })
+        return
+    }
+
     val deviceId = "my-whoop"
     val recentDays by vm.recentDays.collectAsStateWithLifecycle()
 
@@ -303,6 +323,11 @@ fun TrendsExploreScreen(vm: AppViewModel) {
 
     ScreenScaffold(title = "Explore", subtitle = "Every signal, one tap deep.") {
 
+        // The headline tap-through (#575): a full-day, full-resolution, zoomable timeline. Sits above the
+        // per-metric catalog because it's a different kind of view — every second of one day, not one
+        // number per day. Mirrors the macOS MetricExplorerView "Deep Timeline" hero row.
+        DeepTimelineEntry(onClick = { showDeepTimeline = true })
+
         // Nothing to explore until history is imported — lead with the verbatim note so
         // the empty picker/chart below is explained.
         if (series.isEmpty()) {
@@ -367,6 +392,42 @@ fun TrendsExploreScreen(vm: AppViewModel) {
             windowed = windowed,
             effectiveRange = effectiveRange,
         )
+    }
+}
+
+// MARK: - Deep Timeline entry (#575)
+
+/** The hero entry that opens the Deep Timeline — a full-bleed card above the per-metric catalog. */
+@Composable
+private fun DeepTimelineEntry(onClick: () -> Unit) {
+    NoopCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(Palette.metricRose.copy(alpha = StrandAlpha.chartFillStrong)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("∿", style = NoopType.title2, color = Palette.metricRose)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Deep Timeline", style = NoopType.headline, color = Palette.textPrimary)
+                Text(
+                    "Every second of your day, zoomable.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+            }
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = Palette.textTertiary,
+            )
+        }
     }
 }
 

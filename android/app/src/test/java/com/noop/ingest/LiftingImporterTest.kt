@@ -87,6 +87,57 @@ class LiftingImporterTest {
         assertNull(r.sessions[0].topSetKg)
     }
 
+    @Test
+    fun hevyTimestampUsesDeviceTimezoneNotUtc() {
+        // #649: Hevy writes zoneless local wall-clock times. "12 Jun 2026, 18:30" must land at 18:30
+        // in the device zone, not 18:30 UTC. The "d MMM yyyy, HH:mm" form contains a comma, so it is a
+        // quoted CSV field (as Hevy exports). At UTC+2, 18:30 local == 16:30 UTC.
+        val zone = java.time.ZoneId.of("UTC+02:00")
+        val csv =
+            """
+            title,start_time,exercise_title,set_type,weight_kg,reps
+            Evening,"12 Jun 2026, 18:30",Squat,normal,100,5
+            """.trimIndent()
+        val r = LiftingImporter.parseHevy(CsvTable.fromData(csv.toByteArray()), zone)
+        assertEquals(1, r.sessions.size)
+        val expected = java.time.LocalDateTime.of(2026, 6, 12, 18, 30)
+            .atZone(zone).toEpochSecond()
+        assertEquals(expected, r.sessions[0].startTs)
+        // Same wall-clock parsed at UTC would be 7200 s later — confirm we are NOT doing that.
+        val asUtc = java.time.LocalDateTime.of(2026, 6, 12, 18, 30)
+            .toEpochSecond(java.time.ZoneOffset.UTC)
+        assertEquals(7200L, asUtc - r.sessions[0].startTs)
+    }
+
+    @Test
+    fun hevyPlainTimestampHonoursDeviceTimezone() {
+        // The "yyyy-MM-dd HH:mm:ss" Hevy form is equally zoneless → device-zone, not UTC.
+        val zone = java.time.ZoneId.of("UTC-05:00")
+        val csv =
+            """
+            title,start_time,exercise_title,set_type,weight_kg,reps
+            Morning,2026-06-01 09:00:00,Bench,normal,80,5
+            """.trimIndent()
+        val r = LiftingImporter.parseHevy(CsvTable.fromData(csv.toByteArray()), zone)
+        // 09:00 at UTC-5 == 14:00 UTC.
+        val expected = java.time.OffsetDateTime.parse("2026-06-01T14:00:00Z").toEpochSecond()
+        assertEquals(expected, r.sessions[0].startTs)
+    }
+
+    @Test
+    fun hevyTimestampWithExplicitOffsetIgnoresDeviceTimezone() {
+        // A timestamp that already carries an offset is authoritative — the device zone must NOT shift
+        // it. "...+01:00" at 12:00 is 11:00 UTC regardless of the passed zone.
+        val csv =
+            """
+            title,start_time,exercise_title,set_type,weight_kg,reps
+            Zoned,2026-06-01T12:00:00+01:00,Row,normal,70,5
+            """.trimIndent()
+        val r = LiftingImporter.parseHevy(CsvTable.fromData(csv.toByteArray()), java.time.ZoneId.of("UTC+09:00"))
+        val expected = java.time.OffsetDateTime.parse("2026-06-01T11:00:00Z").toEpochSecond()
+        assertEquals(expected, r.sessions[0].startTs)
+    }
+
     // MARK: - Liftosaur JSON
 
     @Test

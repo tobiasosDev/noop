@@ -12,15 +12,9 @@ import android.graphics.pdf.PdfDocument
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.IosShare
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -161,10 +155,10 @@ object TrendsReportData {
 
 private fun ReportMetric.accentArgb(): Int = when (this) {
     ReportMetric.WORKOUTS -> 0xFFD98A3D.toInt()       // activity → the Effort (amber) world
-    ReportMetric.STRESS -> 0xFFE8B84B.toInt()         // the Stress world hue (matches stressColor)
-    ReportMetric.RECOVERY -> 0xFFE8B84B.toInt()      // charge gold
-    ReportMetric.STRAIN -> 0xFFD98A3D.toInt()         // effort amber
-    ReportMetric.SLEEP_HOURS -> 0xFF4A90E2.toInt()    // rest blue
+    ReportMetric.STRESS -> 0xFFF0A020.toInt()         // the Stress world hue (matches stressColor)
+    ReportMetric.RECOVERY -> 0xFF03E095.toInt()       // charge — WHOOP green (matches chargeColor)
+    ReportMetric.STRAIN -> 0xFF4090E0.toInt()         // effort — WHOOP blue (matches effortColor)
+    ReportMetric.SLEEP_HOURS -> 0xFF83A0B8.toInt()    // rest — slate (matches restColor)
     ReportMetric.HRV -> 0xFF4A90E2.toInt()            // HRV shares the rest/blue world
     ReportMetric.RESTING_HR -> 0xFFE0662F.toInt()     // burnt-orange risk hue
     ReportMetric.RESP_RATE -> 0xFF3FA9C9.toInt()      // breath / air — teal (metricCyan)
@@ -181,16 +175,16 @@ object TrendsReportRenderer {
     private const val PAGE_H = 850
     private const val MARGIN = 28f
 
-    // Palette (raw ARGB — the same hex tokens as Theme.kt's Palette / StrandPalette).
-    private const val SURFACE_BASE = 0xFF070C16.toInt()
+    // Palette (raw ARGB — the same hex tokens as Theme.kt's Palette / StrandPalette dark, WHOOP-reset).
+    private const val SURFACE_BASE = 0xFF121518.toInt()
     private const val CARD_TOP = 0xFF15243C.toInt()
     private const val CARD_BOTTOM = 0xFF0B1424.toInt()
     private const val HAIRLINE = 0xFF21304A.toInt()
     private const val TEXT_PRIMARY = 0xFFF4F6F8.toInt()
     private const val TEXT_SECONDARY = 0xFFC8CFD8.toInt()
     private const val TEXT_TERTIARY = 0xFF8A94A4.toInt()
-    private const val ACCENT = 0xFFE8B84B.toInt()
-    private const val POSITIVE = 0xFFE8B84B.toInt()
+    private const val ACCENT = 0xFF60A0E0.toInt()     // WHOOP blue accent (gold killed 2026-06-22)
+    private const val POSITIVE = 0xFF03E095.toInt()   // WHOOP green (matches statusPositive)
     private const val NEGATIVE = 0xFFE0662F.toInt()
 
     private val sans = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -642,19 +636,15 @@ fun TrendsReportExportSection(vm: AppViewModel, modifier: Modifier = Modifier) {
             )
             Text(range.longName, style = NoopType.footnote, color = Palette.textTertiary)
 
-            Button(
+            // Routed through the unified NoopButton (crisp filled accent, no gold) — the same button
+            // system every other CTA uses, mirroring the iOS exportReportRow.
+            NoopButton(
+                text = "Export PDF",
+                leadingIcon = Icons.Filled.IosShare,
+                kind = NoopButtonKind.Primary,
+                fullWidth = true,
                 onClick = { TrendsReportShare.export(context, days, range, stressByDay) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(13.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Palette.accent,
-                    contentColor = Palette.goldDeepText,
-                ),
-            ) {
-                Icon(Icons.Filled.IosShare, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("Export PDF", style = NoopType.body, color = Palette.goldDeepText)
-            }
+            )
 
             Text(
                 "The share sheet can save the PDF to Files, or send it on.",

@@ -6,9 +6,8 @@ import SwiftUI
 //   • a soft frosted inner disc (subtle radial fill, hairline rim)
 //   • a faint full-span track ring carved from `surfaceInset` (the Titanium "well")
 //   • a gradient-stroked progress arc (AngularGradient over the domain ramp:
-//     Charge=gold, Effort=amber, Rest=blue, Stress=blue→gold→orange — caller-supplied)
-//   • a faint, static outer bloom whose intensity scales with the fill (calm, not glowing)
-//   • a clean end-cap dot at the arc tip (small white core, very faint shadow)
+//     Charge=green, Effort=blue, Rest=slate-blue — caller-supplied score tokens; WHOOP, no gold)
+//   • a clean end-cap dot at the arc tip (small white core, very faint shadow) — NO outer bloom
 //   • a centred SF Pro **Rounded** bold number with an "of N" caption + state word
 //
 // It owns no domain logic — callers pass the fraction, the stroke gradient, the tip
@@ -72,11 +71,6 @@ public struct BevelGauge: View {
     private var startAngle: Angle { .degrees(150) }
     private var endAngle: Angle { .degrees(150 + arcSpanDegrees) }
 
-    // Material-style restraint: a faint, static bloom (≈⅓ the old opacity, ≈½ the old
-    // blur) so the arc reads as a clean flat ring rather than a skeuomorphic glow.
-    private var bloomOpacity: Double { 0.05 + 0.13 * fraction }
-    private var bloomRadius: CGFloat { lineWidth * (0.45 + 0.7 * fraction) }
-
     private var gradient: Gradient { Gradient(stops: stops) }
 
     public var body: some View {
@@ -103,20 +97,11 @@ public struct BevelGauge: View {
 
     private var ring: some View {
         ZStack {
-            // Outer bloom — a faint, STATIC blurred copy of the filled arc. No breathing
-            // pulse: it sits calm so the ring reads flat/Material, not glowing. `bloomActive`
-            // is kept in the signature but no longer drives an animation here.
-            arcShape(to: animatedFraction)
-                .stroke(
-                    AngularGradient(gradient: gradient, center: .center,
-                                    startAngle: startAngle, endAngle: endAngle),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .blur(radius: bloomRadius)
-                .opacity(bloomOpacity)
-                .additiveBloom()
+            // Design Reset (WHOOP): NO outer bloom. Fill-contrast carries the arc edge, so the
+            // ring reads as a clean, crisp Material instrument rather than a skeuomorphic glow.
+            // `bloomActive` stays in the signature (callers still pass it) but no longer renders.
 
-            // Faint full-span track — the inset "well" the gold/amber/blue arc sits in.
+            // Faint full-span track — the inset "well" the score arc sits in.
             arcShape(to: 1.0)
                 .stroke(StrandPalette.surfaceInset,
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))

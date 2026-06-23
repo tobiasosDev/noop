@@ -98,6 +98,22 @@ final class IntelligenceEngine: ObservableObject {
         return n % 2 == 1 ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2
     }
 
+    /// The per-day RHR floor-vs-mean diagnostic line (#691). NOOP's `floor` is the WHOOP-style resting
+    /// HR — the lowest SUSTAINED 5-min in-bed level (SleepStager picks the min 5-min rolling-mean HR per
+    /// session, the day takes the .min() across them) — whereas a "sleeping HR" app reports the night MEAN
+    /// over the whole asleep span. The mean always sits at-or-above the floor, so NOOP reading lower is BY
+    /// DESIGN, not a bug; logging both makes a "NOOP RHR is lower than my other app" report explainable
+    /// from the strap log. `inBedBpms` is the bpm of every HR sample inside a matched in-bed session (the
+    /// SAME span the floor came from, so the two numbers are directly comparable). Empty in-bed → nightMean
+    /// is "nil". Counts/bpm only — no timestamps or PII. Pure so it's unit-tested directly and is the SAME
+    /// line `analyzeRecent` ships. Byte-identical to the Android `rhrFloorMeanLogLine`.
+    static func rhrFloorMeanLogLine(day: String, floor: Int, inBedBpms: [Int]) -> String {
+        let meanLog: String = inBedBpms.isEmpty ? "nil"
+            : String(Int((Double(inBedBpms.reduce(0, +)) / Double(inBedBpms.count)).rounded()))
+        return "rhr day=\(day) floor=\(floor) nightMean=\(meanLog) inBedSamples=\(inBedBpms.count) "
+            + "(floor = WHOOP-style lowest-sustained = NOOP RHR; mean = sleeping-HR-app number)"
+    }
+
     /// The Saturday on-or-before a "yyyy-MM-dd" local-day string — the weekly key Fitness Age writes to.
     static func saturdayKey(onOrBefore dayStr: String) -> String {
         var cal = Calendar(identifier: .gregorian); cal.timeZone = .current
@@ -139,6 +155,21 @@ final class IntelligenceEngine: ObservableObject {
     /// heal completes so it never re-runs.
     static let timestampHealFlagKey = "intelligence.timestampHeal.v547.done"
 
+    /// #547 RE-POLLUTION re-arm: a one-shot heal isn't enough when a strap with a WANDERING clock keeps
+    /// re-sending bad-dated records across syncs. Whenever a sync's ingest gate drops implausible records
+    /// (the strap demonstrably has a bad clock THIS session), `BLEManager` sets this pending flag so the
+    /// next analyze tick re-runs the purge — clearing any pollution that slipped in on an OLDER build whose
+    /// gate was weaker, rather than permanently gating behind the one-shot `done` flag. Cleared once the
+    /// re-heal runs. Pure UserDefaults so the BLE layer can set it without an engine reference.
+    static let timestampHealPendingKey = "intelligence.timestampHeal.v547.pending"
+
+    /// Mark the #547 heal as needing a re-run because a sync just dropped implausible (bad-clock) records.
+    /// Called from `BLEManager.exitBackfilling` (no engine handle there); the next `runTimestampHealIfNeeded`
+    /// honours it even after the one-shot `done` flag is set.
+    static func requestTimestampReheal() {
+        UserDefaults.standard.set(true, forKey: timestampHealPendingKey)
+    }
+
     /// One-shot, on-upgrade heal of a database polluted by a bad-clock strap (#547, pikapik). The ingest
     /// gate now keeps garbage-timestamped records out, but a user who synced on an older build already has
     /// rows dated to scattered garbage (far-past, a bogus 2027, FUTURE dates) — which made one ~12h block
@@ -148,7 +179,11 @@ final class IntelligenceEngine: ObservableObject {
     /// re-running is harmless, but a persisted flag skips it on every later launch. Runs BEFORE the normal
     /// `analyzeRecent` loop so the rescore it triggers operates on an already-cleaned DB.
     func runTimestampHealIfNeeded(historyDays: Int = 4000) async {
-        guard !UserDefaults.standard.bool(forKey: Self.timestampHealFlagKey) else { return }
+        // Run when the one-shot heal hasn't run yet OR a sync just flagged a re-heal (#547 re-pollution): a
+        // wandering-clock strap re-sends bad-dated records across syncs, so a single on-upgrade pass can't
+        // be the only line of defence. The pending flag is cleared below once the re-heal completes.
+        let pending = UserDefaults.standard.bool(forKey: Self.timestampHealPendingKey)
+        guard pending || !UserDefaults.standard.bool(forKey: Self.timestampHealFlagKey) else { return }
         guard let store = await repo.storeHandle() else { return }   // no store yet → retry next launch
         let result: WhoopStore.TimestampHealResult
         do {
@@ -167,6 +202,8 @@ final class IntelligenceEngine: ObservableObject {
             guard !computing else { return }
         }
         UserDefaults.standard.set(true, forKey: Self.timestampHealFlagKey)
+        // Clear the re-pollution request now that this re-heal has run — a future bad-clock sync re-arms it.
+        UserDefaults.standard.set(false, forKey: Self.timestampHealPendingKey)
     }
 
     /// Compute on-device scores for each of the last `maxDays` that actually has raw HR data.
@@ -222,7 +259,8 @@ final class IntelligenceEngine: ObservableObject {
         // except recovery is baseline-independent, so pass 2 only re-scores the cheap recovery
         // composite. The hr/rr/resp/gravity arrays go out of scope each iteration (memory stays bounded).
         var scoredNights: [(daily: DailyMetric, strain: Double?, cachedSleep: [CachedSleepSession],
-                            workouts: [ExerciseSession], nightlySkin: Double?)] = []
+                            workouts: [ExerciseSession], nightlySkin: Double?,
+                            sessionMotion: [Int: [Double]])] = []
         // Nightly values harvested in pass 1, keyed by day, to seed the pass-2 baseline.
         var nightlyHrvByDay: [String: Double?] = [:]
         var nightlyRhrByDay: [String: Double?] = [:]
@@ -318,6 +356,20 @@ final class IntelligenceEngine: ObservableObject {
             // detector see the whole day, so a 5 pm run shows up on the same day.
             let dayGrav = (try? await store.gravitySamples(deviceId: owner, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
 
+            // CONSUME (#531 / H8): the prior pass's persisted v18 BAND sleep_state for sessions overlapping
+            // the night window, expanded to timestamped (ts, state) samples on the 30 s grid, so the H7
+            // morning-stillness guard can confirm a borderline re-onset against the strap's OWN scored band.
+            // Read under `computedId` (where the prior pass banded its detected sessions); empty on the first
+            // pass (no banded sessions yet) → the guard simply falls back to the HR bar. Honest: only real
+            // banded "asleep" epochs rescue a block, never a fabricated one.
+            let bandSleepState = await bandSleepStateSamples(computedId: deviceId + "-noop",
+                                                             from: from, to: to, store: store)
+
+            // #690: read the experimental-V2 toggle ONCE here (off the detached executor, matching the
+            // Repository self-heal call site) and capture the Bool, so the Settings toggle now drives the
+            // NORMAL detected-night staging path — not only the userEdited self-heal restage.
+            let useSleepStagerV2 = PuffinExperiment.experimentalSleepV2Enabled
+
             let res = await Task.detached(priority: .utility) {
                 AnalyticsEngine.analyzeDay(day: day, hr: hr, rr: rr, resp: resp, gravity: grav,
                                            steps: steps, dayHr: dayHr, daySteps: daySteps,
@@ -325,14 +377,36 @@ final class IntelligenceEngine: ObservableObject {
                                            skinTemp: skin,
                                            profile: up, baselines: baselines1, maxHROverride: maxHR,
                                            tzOffsetSeconds: tzOffset, wristOff: wristOff,
-                                           habitualMidsleepSec: habitualMidsleepSec)
+                                           habitualMidsleepSec: habitualMidsleepSec,
+                                           bandSleepState: bandSleepState,
+                                           // #690: thread the V2 toggle into the NORMAL staging path so
+                                           // it affects detected nights, not just the self-heal restage.
+                                           useSleepStagerV2: useSleepStagerV2)
             }.value
             nightlyHrvByDay[res.daily.day] = res.daily.avgHrv
             nightlyRhrByDay[res.daily.day] = res.daily.restingHr.map(Double.init)
             nightlyRespByDay[res.daily.day] = res.daily.respRateBpm
             nightlySkinByDay[res.daily.day] = res.nightlySkinTempC
+            // ── RHR floor-vs-mean diagnostic (#691) ────────────────────────────────────────────────
+            // Make the recurring "NOOP's resting HR reads LOWER than my sleeping-HR app" reports
+            // explainable from the strap log instead of a guess. The two numbers measure different
+            // things BY DESIGN, not a bug: NOOP's `restingHr` is the WHOOP-style FLOOR (the lowest
+            // sustained 5-min in-bed level — SleepStager picks the min 5-min rolling-mean HR per session,
+            // and the day takes the .min() across them), whereas a "sleeping HR" app reports the night
+            // MEAN over the whole asleep span. The mean always sits above the floor, so NOOP looking
+            // lower is correct. Log BOTH so a report ships proof of the gap. Mean is computed over the
+            // SAME matched in-bed span the floor came from (so they're directly comparable); a night
+            // with no banked floor (no matched sleep) logs nil and the line is skipped. Logging only —
+            // no scoring change. Counts/bpm only; no timestamps or PII (LiveState.append also scrubs).
+            if let floor = res.daily.restingHr {
+                let inBedBpms = hr.filter { s in
+                    res.cachedSleep.contains { s.ts >= $0.startTs && s.ts < $0.endTs }
+                }.map { $0.bpm }
+                diagnosticSink?(Self.rhrFloorMeanLogLine(day: res.daily.day, floor: floor, inBedBpms: inBedBpms))
+            }
             scoredNights.append((daily: res.daily, strain: res.strain, cachedSleep: res.cachedSleep,
-                                 workouts: res.workouts, nightlySkin: res.nightlySkinTempC))
+                                 workouts: res.workouts, nightlySkin: res.nightlySkinTempC,
+                                 sessionMotion: res.sessionMotionByStart))
             await Task.yield()
         }
 
@@ -579,10 +653,14 @@ final class IntelligenceEngine: ObservableObject {
         let calOldest = AnalyticsEngine.dayString(
             nowLocalMidnight - (stepsCalDays - 1) * 86_400, offsetSec: tzOffset)
         // Phone reference steps per day, from the apple-health daily rows (steps > 0 only).
-        let appleRows = (try? await store.dailyMetrics(deviceId: Repository.appleHealthSource,
-                                                       from: calOldest, to: newestDay)) ?? []
+        // #693: read `appleDaily`, NOT `dailyMetrics`. Apple-Health import writes the phone step count into
+        // `appleDaily.steps` (Int?), never into a dailyMetric `steps` row — so the old `dailyMetrics` read
+        // was always empty and the calibration never advanced past "Need 3 more days" (Android already reads
+        // appleDaily here, IntelligenceEngine.kt:676). `store.appleDaily(deviceId:from:to:)` already exists.
+        let appleRows = (try? await store.appleDaily(deviceId: Repository.appleHealthSource,
+                                                     from: calOldest, to: newestDay)) ?? []
         var refStepsByDay: [String: Double] = [:]
-        for r in appleRows where (r.steps ?? 0) > 0 { refStepsByDay[r.day] = Double(r.steps!) }
+        for r in appleRows { if let s = r.steps, s > 0 { refStepsByDay[r.day] = Double(s) } }
         // Per-day motion volume over the calibration window, read from the owner-resolved strap streams.
         // (Owner resolution mirrors the scoring loop; one device installs resolve to `deviceId`.)
         var motionByDay: [String: Double] = [:]
@@ -605,6 +683,9 @@ final class IntelligenceEngine: ObservableObject {
         }
         if let cal = StepsEstimateEngine.calibrate(calPoints, manualOverride: profile.stepsManualOverride) {
             // Estimate + upsert for each recent scored day that has motion but NO real phone step count.
+            // (Days the phone DID count keep their real value — surfaced directly by the Today tile, not
+            // overwritten by an estimate.) This runs AFTER any timestamp-heal upstream, so the motion it
+            // reads is the healed-day motion, never pre-heal.
             var estPts: [MetricPoint] = []
             for dm in dailies where refStepsByDay[dm.day] == nil {
                 guard let motion = motionByDay[dm.day],
@@ -617,6 +698,19 @@ final class IntelligenceEngine: ObservableObject {
             profile.stepsCalibrationSampleDays = cal.sampleDays
             profile.stepsCalibrationConfidence = cal.confidence
             profile.stepsCalibrationManual = cal.manual
+        } else {
+            // Not yet calibrated (too few overlapping phone-counted days, no manual override). Classify the
+            // STATE (#589) and persist the PROGRESS so the Today tile/Settings can say how many more days are
+            // needed rather than going silently blank. `status` uses the SAME usable-day filter the fit does.
+            // Coefficient stays 0 (the "not calibrated" gate the UI already keys off); sampleDays carries the
+            // usable-day count so the message can compute "need N more".
+            let stepsStatus = StepsEstimateEngine.status(calPoints, manualOverride: profile.stepsManualOverride)
+            if case let .needsMoreDays(have, _) = stepsStatus {
+                profile.stepsCalibrationCoefficient = 0
+                profile.stepsCalibrationSampleDays = have
+                profile.stepsCalibrationConfidence = 0
+                profile.stepsCalibrationManual = false
+            }
         }
 
         // Drop any freshly-detected session that overlaps a night the user has already hand-corrected.
@@ -636,6 +730,21 @@ final class IntelligenceEngine: ObservableObject {
             !skipWindows.contains { s.startTs < $0.end && $0.start < s.endTs }   // time-overlap test
         }
         if !cachedSleepKept.isEmpty { _ = try? await store.upsertSleepSessions(cachedSleepKept, deviceId: computedId) }
+        // ── Persist per-epoch motion (H8) beside each kept session's stagesJSON ──────────────────────────
+        // The sleepSession rows exist now (just upserted), so the targeted motion UPDATE lands. Persist ONLY
+        // for the sessions actually kept (not edited/dismissed), keyed by the detected start `analyzeDay`
+        // returned. A session whose gravity wouldn't grid was omitted from the map and is left as NULL — an
+        // absent motion series stays absent, never a fabricated zero array.
+        let keptStarts = Set(cachedSleepKept.map { $0.startTs })
+        var motionByStart: [Int: [Double]] = [:]
+        for night in scoredNights {
+            for (start, motion) in night.sessionMotion where keptStarts.contains(start) {
+                motionByStart[start] = motion
+            }
+        }
+        for (start, motion) in motionByStart {
+            _ = try? await store.persistSessionMotion(deviceId: computedId, sessionStart: start, motionEpochs: motion)
+        }
         // Make re-detection idempotent across runs: clear the prior computed detected workouts in the
         // scored window (a bout's startTs can drift as more HR arrives, which would otherwise orphan
         // stale rows under the (deviceId,startTs,sport) key), then re-insert.
@@ -797,6 +906,30 @@ final class IntelligenceEngine: ObservableObject {
     /// `SleepStageTotals.habitualMidsleepSec`, which keeps the longest block per day (naps drop out). The
     /// imported + computed sets can overlap; both are unioned and the learner de-dupes per day by length.
     /// (#547) Mirrors the Android `computeHabitualMidsleep`.
+    /// CONSUME (#531 / H8): the prior pass's persisted v18 BAND sleep_state for sessions overlapping
+    /// `[from, to]`, expanded to timestamped `(ts, state)` samples on the 30 s epoch grid, for the H7
+    /// morning-stillness guard's re-onset confirmation. Reads the computed sessions in the window, then each
+    /// one's persisted per-epoch sleep_state (NULL when never banded — first pass / imported night), and maps
+    /// epoch `i` to `startTs + i*30`. Empty when nothing is banded yet, so the guard simply falls back to the
+    /// HR bar. Honest: only real banded states are surfaced, never a fabricated reading. The grid here mirrors
+    /// `SleepStager`'s 30 s epoch grid, so an epoch's timestamp lands inside the candidate run it scores.
+    private func bandSleepStateSamples(computedId: String, from: Int, to: Int,
+                                       store: WhoopStore) async -> [(ts: Int, state: Int)] {
+        let epochS = 30
+        let sessions = (try? await store.sleepSessions(deviceId: computedId, from: from, to: to,
+                                                       limit: 4000)) ?? []
+        var samples: [(ts: Int, state: Int)] = []
+        for s in sessions {
+            guard let states = try? await store.sessionSleepState(deviceId: computedId,
+                                                                  sessionStart: s.startTs),
+                  !states.isEmpty else { continue }
+            for (i, st) in states.enumerated() {
+                samples.append((ts: s.startTs + i * epochS, state: st))
+            }
+        }
+        return samples
+    }
+
     private static func computeHabitualMidsleep(
         store: WhoopStore, importedId: String, computedId: String,
         windowStart: Int, windowEnd: Int, offsetSec: Int

@@ -18,6 +18,7 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
@@ -31,9 +32,10 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * Home-screen widget: today's recovery (band-coloured), live HR and strap battery at a glance.
- * Renders purely from the [WidgetSnapshotStore] SharedPreferences snapshot — no BLE, no DB — so it
- * costs nothing and survives process death. Tapping anywhere opens the app.
+ * Home-screen widget: today's three top scores (Rest · Charge · Effort, Charge centred), with live HR
+ * and strap battery at a glance (#516). Renders purely from the [WidgetSnapshotStore] SharedPreferences
+ * snapshot — no BLE, no DB — so it costs nothing and survives process death. Tapping anywhere opens the
+ * app. Each score is honest-null ("—") until NOOP has scored it; it never fabricates a number.
  *
  * Colours are hardcoded mirrors of the Titanium & Gold [com.noop.ui.Palette] (navy surface / textPrimary
  * / textSecondary, and the gold → amber → burnt-orange recovery tiers): Glance composes outside our
@@ -83,7 +85,8 @@ private fun widgetSurface(dark: Boolean) = ColorProvider(if (dark) Color(0xFF0A1
 private fun widgetTextPrimary(dark: Boolean) = ColorProvider(if (dark) Color(0xFFF4F6F8) else Color(0xFF1A2230))
 private fun widgetTextSecondary(dark: Boolean) = ColorProvider(if (dark) Color(0xFF8A94A4) else Color(0xFF7C8696))
 
-/** Recovery-band colour, the app-wide 67 / 34 cuts (RecoveryScorer.band); deepened on light. */
+/** Recovery-band colour, the app-wide 67 / 34 cuts (RecoveryScorer.band); deepened on light. Charge and
+ *  Rest both read on the recovery band in the app, so they share this. */
 private fun bandColor(recovery: Int, dark: Boolean): ColorProvider = ColorProvider(
     when {
         recovery >= 67 -> if (dark) Color(0xFFE8B84B) else Color(0xFFB07D17)
@@ -91,6 +94,11 @@ private fun bandColor(recovery: Int, dark: Boolean): ColorProvider = ColorProvid
         else -> if (dark) Color(0xFFE0662F) else Color(0xFFC84E1E)
     },
 )
+
+/** Effort tint — the app's strain colour (Palette.strain066), a distinct teal so Effort doesn't read as
+ *  another recovery band. Deepened on light for contrast on the warm-paper card. (#516) */
+private fun effortColor(dark: Boolean): ColorProvider =
+    ColorProvider(if (dark) Color(0xFF4FB6A8) else Color(0xFF2E7D74))
 
 @Composable
 private fun WidgetContent(snap: WidgetSnapshot, dark: Boolean) {
@@ -103,22 +111,43 @@ private fun WidgetContent(snap: WidgetSnapshot, dark: Boolean) {
             .background(surface)
             .cornerRadius(16.dp)
             .clickable(actionStartActivity<MainActivity>())
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "CHARGE",
-            style = TextStyle(color = textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium),
-        )
-        Text(
-            text = snap.recoveryPct?.let { "$it%" } ?: "—",
-            style = TextStyle(
+        // The three top scores in one row, Charge centred + enlarged (the app's hero order Rest · Charge ·
+        // Effort). Each cell is honest-null until that score exists — never a fabricated number. (#516)
+        Row(
+            modifier = GlanceModifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            ScoreCell(
+                label = "REST",
+                pct = snap.restPct,
+                color = snap.restPct?.let { bandColor(it, dark) } ?: textSecondary,
+                valueSize = 22.sp,
+                textSecondary = textSecondary,
+                modifier = GlanceModifier.defaultWeight(),
+            )
+            ScoreCell(
+                label = "CHARGE",
+                pct = snap.recoveryPct,
                 color = snap.recoveryPct?.let { bandColor(it, dark) } ?: textSecondary,
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-            ),
-        )
-        Spacer(modifier = GlanceModifier.height(4.dp))
+                valueSize = 30.sp,
+                textSecondary = textSecondary,
+                modifier = GlanceModifier.defaultWeight(),
+            )
+            ScoreCell(
+                label = "EFFORT",
+                pct = snap.effortPct,
+                color = snap.effortPct?.let { effortColor(dark) } ?: textSecondary,
+                valueSize = 22.sp,
+                textSecondary = textSecondary,
+                modifier = GlanceModifier.defaultWeight(),
+            )
+        }
+        Spacer(modifier = GlanceModifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = snap.heartRate?.let { "♥ $it" } ?: "♥ —",
@@ -139,6 +168,33 @@ private fun WidgetContent(snap: WidgetSnapshot, dark: Boolean) {
                 else -> "Open NOOP to connect"
             },
             style = TextStyle(color = textSecondary, fontSize = 11.sp),
+        )
+    }
+}
+
+/** One score column in the 2x2 widget: a small overline label over a big band-coloured "N%" (or a calm
+ *  "—" in the secondary colour while that score is still null, so an unscored cell reads honestly rather
+ *  than as a broken zero). (#516) */
+@Composable
+private fun ScoreCell(
+    label: String,
+    pct: Int?,
+    color: ColorProvider,
+    valueSize: androidx.compose.ui.unit.TextUnit,
+    textSecondary: ColorProvider,
+    modifier: GlanceModifier = GlanceModifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = label,
+            style = TextStyle(color = textSecondary, fontSize = 10.sp, fontWeight = FontWeight.Medium),
+        )
+        Text(
+            text = pct?.let { "$it%" } ?: "—",
+            style = TextStyle(color = color, fontSize = valueSize, fontWeight = FontWeight.Bold),
         )
     }
 }

@@ -21,6 +21,15 @@ struct CaffeineLogCard: View {
     /// "How long ago" quick options for logging — hours back from now.
     private let quickHoursAgo: [Int] = [0, 1, 2, 3]
 
+    // PR#566 (mvanhorn) — caffeine cutoff window + late-intake nudge. OPT-IN (default OFF, manual-first):
+    // when enabled, NOOP works back from the user's bedtime by the dose's decay lead and flags any logged
+    // intake that lands past that cutoff, with a calm inline nudge. Keys MIRROR the Android prefs
+    // (KEY_CAFFEINE_CUTOFF / KEY_CAFFEINE_BEDTIME_MIN, default 23:00) so a layout reads the same on both.
+    @AppStorage(Self.cutoffEnabledKey) private var cutoffEnabled = false
+    @AppStorage(Self.bedtimeMinutesKey) private var bedtimeMinutes = 23 * 60
+    static let cutoffEnabledKey = "noop.caffeine.cutoffNudge"
+    static let bedtimeMinutesKey = "noop.caffeine.bedtimeMinutes"
+
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Caffeine", overline: "Log")
@@ -32,6 +41,10 @@ struct CaffeineLogCard: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     activeHint
+
+                    // PR#566 — the late-intake nudge sits right under the active hint when the cutoff is on
+                    // and a logged intake is past it, so the timing warning is the first thing read.
+                    lateIntakeNudge
 
                     Divider().overlay(StrandPalette.hairline)
 
@@ -58,6 +71,9 @@ struct CaffeineLogCard: View {
                         }
                     }
 
+                    Divider().overlay(StrandPalette.hairline)
+                    cutoffSection
+
                     if !store.intakes.isEmpty {
                         Divider().overlay(StrandPalette.hairline)
                         loggedList
@@ -67,6 +83,127 @@ struct CaffeineLogCard: View {
         }
         .onReceive(ticker) { tick = $0 }
     }
+
+    // MARK: - Cutoff window (PR#566) — bedtime + late-intake nudge
+
+    /// The bedtime + cutoff controls: a toggle, and (when on) a bedtime picker plus the derived "stop after"
+    /// time. OFF by default — nothing here surfaces or nags until the user opts in. The cutoff time itself is
+    /// computed from the dose-decay lead (`CaffeineDecay.cutoffMinutesSinceMidnight`), so it's never a magic
+    /// number and matches the "still active" math.
+    @ViewBuilder private var cutoffSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cutoff before bed")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text("Warn me when I log caffeine too close to bedtime. A timing guide from your own bedtime, not a measurement.")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: $cutoffEnabled)
+                    .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
+                    .accessibilityLabel("Warn me about caffeine close to bedtime")
+            }
+            if cutoffEnabled {
+                HStack {
+                    Text("Bedtime")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                    Spacer()
+                    DatePicker("", selection: bedtimeBinding, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .accessibilityLabel("Bedtime")
+                }
+                Text("Stop caffeine after about \(cutoffTimeLabel) to keep most of it cleared by \(timeLabel(bedtimeMinutes)).")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The late-intake nudge — shown only when the cutoff is ON and at least one logged intake (today) falls
+    /// past the cutoff for the user's bedtime. Honest: it warns about TIMING ("may keep you up"), never a
+    /// health claim, and it disappears the moment no logged intake is past cutoff.
+    @ViewBuilder private var lateIntakeNudge: some View {
+        if cutoffEnabled, latePastCutoffCount > 0 {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "moon.zzz")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.statusWarning)
+                    .accessibilityHidden(true)
+                Text(lateNudgeText)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.statusWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(StrandPalette.statusWarning.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// Count of logged intakes whose local time-of-day is past the bedtime cutoff. Uses the shared decay
+    /// model's `isPastCutoff` so the UI and the cutoff math can't drift. Each intake's wall-clock minute is
+    /// compared against the cutoff derived from the user's bedtime.
+    private var latePastCutoffCount: Int {
+        store.intakes.filter { intake in
+            CaffeineDecay.isPastCutoff(intakeMinutes: minutesSinceMidnight(intake.at),
+                                       bedtimeMinutes: bedtimeMinutes)
+        }.count
+    }
+
+    private var lateNudgeText: String {
+        let n = latePastCutoffCount
+        let lead = n == 1 ? "A logged caffeine is" : "\(n) logged caffeines are"
+        return "\(lead) past your bedtime cutoff — it may still be on board and keep you up. Just a timing heads-up."
+    }
+
+    /// The cutoff time-of-day label, derived from bedtime minus the dose-decay lead (shared model).
+    private var cutoffTimeLabel: String {
+        timeLabel(CaffeineDecay.cutoffMinutesSinceMidnight(bedtimeMinutes: bedtimeMinutes))
+    }
+
+    /// Local minutes-since-midnight for a logged intake's wall-clock time.
+    private func minutesSinceMidnight(_ date: Date) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// Bridges the minutes-since-midnight bedtime pref to the DatePicker's Date.
+    private var bedtimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                var c = DateComponents()
+                c.hour = bedtimeMinutes / 60
+                c.minute = bedtimeMinutes % 60
+                return Calendar.current.date(from: c) ?? Date()
+            },
+            set: { date in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                bedtimeMinutes = min(max((c.hour ?? 23) * 60 + (c.minute ?? 0), 0), 24 * 60 - 1)
+            }
+        )
+    }
+
+    private func timeLabel(_ minutes: Int) -> String {
+        var c = DateComponents()
+        c.hour = minutes / 60
+        c.minute = minutes % 60
+        let date = Calendar.current.date(from: c) ?? Date()
+        return Self.cutoffTimeFormatter.string(from: date)
+    }
+
+    private static let cutoffTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
 
     // MARK: - Active hint
 

@@ -25,11 +25,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -119,22 +123,20 @@ fun Modifier.frostedCardSurface(
             style = Stroke(width = 1.dp.toPx()),
         )
     } else {
-        // TINTED card: the per-domain bevel — navy vertical fill, faint diagonal hue wash and a
-        // hue-biased hairline border.
-        // 1) Dark blue-black vertical fill.
+        // TINTED card (iOS parity, Aaron 2026-06-23 "synthesis has the old blue style"): a FLAT raised
+        // surface — the SAME WHOOP grey as the neutral card, NO navy bevel gradient — carrying only a
+        // whisper of the domain tint as a diagonal hue wash so it stays in the grey family.
+        // 1) Flat raised fill — identical to the neutral card.
         drawRoundRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(Palette.cardFillTop, Palette.cardFillBottom),
-                startY = 0f, endY = size.height,
-            ),
+            color = Palette.surfaceRaised,
             cornerRadius = corner,
         )
-        // 2) Faint diagonal accent hue wash over the navy fill (top-leading → bottom-trailing).
+        // 2) Faint diagonal accent hue wash over the flat fill (matches iOS FrostedCardSurface ~0.05).
         drawRoundRect(
             brush = Brush.linearGradient(
                 colorStops = arrayOf(
-                    0.0f to tint.copy(alpha = 0.08f * washStrength),
-                    0.5f to tint.copy(alpha = 0.02f * washStrength),
+                    0.0f to tint.copy(alpha = 0.05f * washStrength),
+                    0.5f to tint.copy(alpha = 0.015f * washStrength),
                     1.0f to Color.Transparent,
                 ),
                 start = Offset(0f, 0f),
@@ -142,17 +144,9 @@ fun Modifier.frostedCardSurface(
             ),
             cornerRadius = corner,
         )
-        // 3) Flat 1px hairline border (no shadow) with a faint top sheen + accent bias.
+        // 3) Plain 1px hairline (no accent bias) — matches the neutral card.
         drawRoundRect(
-            brush = Brush.linearGradient(
-                colorStops = arrayOf(
-                    0.0f to Palette.hairlineStrong.copy(alpha = 0.55f),
-                    0.5f to Palette.hairline,
-                    1.0f to tint.copy(alpha = 0.14f),
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(size.width, size.height),
-            ),
+            color = Palette.hairline,
             cornerRadius = corner,
             style = Stroke(width = 1.dp.toPx()),
         )
@@ -827,6 +821,16 @@ fun BevelGauge(
 // A clean solid arc with round caps over a clearly-visible full-circle track, a bold centred number
 // that counts up from 0, and a tight low-alpha glow hugging the arc. The arc springs in from 12
 // o'clock and re-animates when the value changes (day nav). minSdk-safe (no RenderEffect blur).
+
+/**
+ * The centre-number text style for a ring of the given [diameter] — the house numeral at `diameter * 0.36`,
+ * Bold. The ONE source of truth for a ring's centre number, shared by [GlowRing]'s live label and the
+ * carried-value overlay on the Today hero so a carried Charge, a clean value and (at the headline size)
+ * "No Data" read with one consistent size + weight. Mirrors iOS `GlowRing.centerFont(diameter:)`.
+ */
+fun glowRingCenterTextStyle(diameter: Dp, color: Color = Palette.textPrimary): TextStyle =
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = (diameter.value * 0.36f).sp, color = color)
+
 @Composable
 fun GlowRing(
     fraction: Float,
@@ -892,11 +896,7 @@ fun GlowRing(
         if (showsLabel) {
             Text(
                 text = format(animValue.toDouble()),
-                style = TextStyle(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = (diameter.value * 0.36f).sp,
-                    color = Palette.textPrimary,
-                ),
+                style = glowRingCenterTextStyle(diameter),
                 maxLines = 1,
             )
         }
@@ -1067,43 +1067,84 @@ fun ScreenScaffold(
     topPadding: Dp = 28.dp,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    // Optional full-bleed view drawn behind the scroll content at the TOP of the screen (e.g. Today's
+    // day-cycle scene). Defaults to null so other screens stay on the flat canvas; null draws nothing.
+    // Mirrors the iOS ScreenScaffold `topBackground` slot — the scene is a SCREEN-level backdrop the
+    // cards float OVER, not a card-clipped hero atmosphere.
+    topBackground: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Palette.surfaceBase)
-            .verticalScroll(rememberScrollState())
-            .padding(start = 28.dp, end = 28.dp, top = topPadding, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        // Compact top bar: an optional LEADING action (e.g. the Today profile avatar, mirroring iOS's
-        // avatar-leading header), the screen title/subtitle, then an optional trailing action (e.g. the
-        // Support heart on Today). Mirrors the iOS ScreenScaffold slots from the WHOOP-style redesign (#23).
-        // When BOTH title and subtitle are null the large-title header block is omitted entirely, so a
-        // screen can supply its own custom header in `content` (iOS Today's compact top bar) — mirroring
-        // the iOS ScreenScaffold which only renders the header `if title != nil || subtitle != nil`.
-        if (title != null || subtitle != null) {
-            Row(verticalAlignment = Alignment.Top) {
-                if (leading != null) {
-                    leading()
-                    Spacer(Modifier.width(12.dp))
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    if (title != null) {
-                        Text(title, style = NoopType.title1, color = Palette.textPrimary)
-                    }
-                    if (subtitle != null) {
-                        Text(subtitle, style = NoopType.subhead, color = Palette.textSecondary)
-                    }
-                }
-                if (trailing != null) trailing()
-            }
+    // The scrolling content column. Its OUTER modifier differs by path: with no topBackground it is the
+    // original root Column (the caller's `modifier` + an opaque-canvas background — byte-for-byte the old
+    // layout); with a topBackground the canvas + scene paint in the wrapping Box's background (below) and
+    // the column stays TRANSPARENT so the scene shows through behind the scroll content. Pulled out so the
+    // two paths share one body.
+    val columnModifier: Modifier =
+        if (topBackground == null) {
+            modifier.fillMaxWidth().background(Palette.surfaceBase)
+        } else {
+            Modifier.fillMaxWidth()
         }
-        content()
+    val column: @Composable () -> Unit = {
+        Column(
+            modifier = columnModifier
+                .verticalScroll(rememberScrollState())
+                .padding(start = 28.dp, end = 28.dp, top = topPadding, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // Compact top bar: an optional LEADING action (e.g. the Today profile avatar, mirroring iOS's
+            // avatar-leading header), the screen title/subtitle, then an optional trailing action (e.g. the
+            // Support heart on Today). Mirrors the iOS ScreenScaffold slots from the WHOOP redesign (#23).
+            // When BOTH title and subtitle are null the large-title header block is omitted entirely, so a
+            // screen can supply its own custom header in `content` (iOS Today's compact top bar) — mirroring
+            // the iOS ScreenScaffold which only renders the header `if title != nil || subtitle != nil`.
+            if (title != null || subtitle != null) {
+                Row(verticalAlignment = Alignment.Top) {
+                    if (leading != null) {
+                        leading()
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        if (title != null) {
+                            Text(title, style = NoopType.title1, color = Palette.textPrimary)
+                        }
+                        if (subtitle != null) {
+                            Text(subtitle, style = NoopType.subhead, color = Palette.textSecondary)
+                        }
+                    }
+                    if (trailing != null) trailing()
+                }
+            }
+            content()
+        }
+    }
+
+    if (topBackground == null) {
+        // Unchanged path: the column IS the root, with the caller's `modifier` + opaque canvas background
+        // applied to it directly — byte-for-byte the previous layout (no wrapping Box).
+        column()
+    } else {
+        // Scene-backed path (Today): the wrapping Box paints the flat canvas, then the SCREEN-level scene
+        // backdrop over it, anchored to the TOP and bled UP behind the status bar so it reads as a
+        // full-bleed scenic header; the (transparent) scroll content floats OVER both. Mirrors the iOS
+        // scaffold's `.background(alignment: .top){ ZStack { surfaceBase; topBackground }.ignoresSafeArea() }`.
+        // Pull the scene up by the status-bar inset (the Scaffold already pushed this content below the
+        // bar), so the scene bleeds behind the status bar rather than starting under it.
+        val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+        Box(modifier = modifier.fillMaxSize().background(Palette.surfaceBase)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .offset(y = -statusBarTop),
+            ) {
+                topBackground()
+            }
+            column()
+        }
     }
 }
 

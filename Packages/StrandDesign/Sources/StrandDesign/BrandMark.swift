@@ -64,22 +64,21 @@ public struct BrandMark: View {
         Circle()
             .fill(
                 LinearGradient(
-                    colors: [Color(hex: "#0A1322"), Color(hex: "#05080F")],
+                    colors: [Color(hex: "#1A1E24"), Color(hex: "#0E1116")],
                     startPoint: .top,
                     endPoint: .bottom
                 )
             )
-            // Faint cool top sheen — a soft light catch across the upper third.
+            // Faint cool top sheen — a soft light catch across the upper third (flat, no bloom).
             .overlay(
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color(hex: "#17263E").opacity(0.55), .clear],
+                            colors: [Color(hex: "#2A2F37").opacity(0.5), .clear],
                             startPoint: .top,
                             endPoint: .center
                         )
                     )
-                    .additiveBloom()
                     .opacity(0.6)
             )
             // 1px hairline rim so the disc reads cleanly on the navy canvas.
@@ -101,12 +100,7 @@ public struct BrandMark: View {
             lineWidth: ringWidth
         )
         .stroke(
-            AngularGradient(
-                gradient: StrandPalette.goldGradient,
-                center: .center,
-                startAngle: startAngle,
-                endAngle: .degrees(startAngle.degrees + 360 * openFraction)
-            ),
+            StrandPalette.chargeColor,
             style: StrokeStyle(lineWidth: ringWidth, lineCap: .round)
         )
         .frame(width: ringDiameter, height: ringDiameter)
@@ -118,7 +112,7 @@ public struct BrandMark: View {
     /// open-ring + core-dot lock-up.
     private var coreDot: some View {
         Circle()
-            .fill(StrandPalette.gold)
+            .fill(Color.white)
             .frame(width: coreDiameter, height: coreDiameter)
     }
 }

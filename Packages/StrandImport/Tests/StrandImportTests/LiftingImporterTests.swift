@@ -72,6 +72,54 @@ final class LiftingImporterTests: XCTestCase {
         XCTAssertNil(r.sessions[0].topSetKg)
     }
 
+    func testHevyTimestampUsesDeviceTimezoneNotUTC() {
+        // #649: Hevy writes zoneless local wall-clock times. A set logged at "12 Jun 2026, 18:30"
+        // must land at 18:30 *in the device timezone*, not 18:30 UTC. With a fixed UTC+2 zone the
+        // wall-clock 18:30 is 16:30 UTC.
+        let zone = TimeZone(secondsFromGMT: 2 * 3600)!
+        // The "d MMM yyyy, HH:mm" form contains a comma, so it is a quoted CSV field (as Hevy exports).
+        let csv = """
+        title,start_time,exercise_title,set_type,weight_kg,reps
+        Evening,"12 Jun 2026, 18:30",Squat,normal,100,5
+        """
+        let r = LiftingImporter.parseHevy(text: csv, zone: zone)
+        XCTAssertEqual(r.sessionCount, 1)
+        // 18:30 local (UTC+2) == 16:30 UTC.
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 6; comps.day = 12; comps.hour = 18; comps.minute = 30
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = zone
+        XCTAssertEqual(r.sessions[0].start, cal.date(from: comps)!)
+        // Same wall-clock parsed at UTC would be two hours later — confirm we are NOT doing that.
+        XCTAssertNotEqual(r.sessions[0].start,
+                          ISO8601DateFormatter().date(from: "2026-06-12T18:30:00Z"))
+    }
+
+    func testHevyPlainTimestampHonoursDeviceTimezone() {
+        // The "yyyy-MM-dd HH:mm:ss" Hevy form is equally zoneless → also device-zone, not UTC.
+        let zone = TimeZone(secondsFromGMT: -5 * 3600)!   // UTC-5
+        let csv = """
+        title,start_time,exercise_title,set_type,weight_kg,reps
+        Morning,2026-06-01 09:00:00,Bench,normal,80,5
+        """
+        let r = LiftingImporter.parseHevy(text: csv, zone: zone)
+        // 09:00 at UTC-5 == 14:00 UTC.
+        XCTAssertEqual(r.sessions[0].start,
+                       ISO8601DateFormatter().date(from: "2026-06-01T14:00:00Z"))
+    }
+
+    func testHevyTimestampWithExplicitOffsetIgnoresDeviceTimezone() {
+        // A timestamp that already carries an offset is authoritative — the device zone must NOT shift
+        // it. "...+01:00" at 12:00 is 11:00 UTC regardless of the passed zone.
+        let csv = """
+        title,start_time,exercise_title,set_type,weight_kg,reps
+        Zoned,2026-06-01T12:00:00+01:00,Row,normal,70,5
+        """
+        let r = LiftingImporter.parseHevy(text: csv, zone: TimeZone(secondsFromGMT: 9 * 3600)!)
+        XCTAssertEqual(r.sessions[0].start,
+                       ISO8601DateFormatter().date(from: "2026-06-01T11:00:00Z"))
+    }
+
     // MARK: - Liftosaur JSON
 
     func testLiftosaurParsesHistoryRecords() {

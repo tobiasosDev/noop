@@ -14,11 +14,21 @@ class PushGateTests {
 
     private fun snap(
         recovery: Int? = null,
+        rest: Int? = null,
+        effort: Int? = null,
         hr: Int? = null,
         battery: Int? = null,
         connected: Boolean = true,
         at: Long = 0L,
-    ) = WidgetSnapshot(recoveryPct = recovery, heartRate = hr, batteryPct = battery, connected = connected, updatedAtMs = at)
+    ) = WidgetSnapshot(
+        recoveryPct = recovery,
+        restPct = rest,
+        effortPct = effort,
+        heartRate = hr,
+        batteryPct = battery,
+        connected = connected,
+        updatedAtMs = at,
+    )
 
     @Before
     fun reset() = PushGate.resetForTest()
@@ -66,5 +76,29 @@ class PushGateTests {
     fun connectionFlipIsAdmittedImmediately() {
         PushGate.markPushed(snap(connected = true, at = 1_000))
         assertTrue(PushGate.admit(snap(connected = false, at = 2_000)))
+    }
+
+    // MARK: #516 — the 2x2 widget's Rest + Effort join the change-key so a freshly-scored score lands
+    // immediately, exactly like recovery, rather than waiting out the 60s HR refresh window.
+
+    @Test
+    fun restScoreChangeIsAdmittedImmediately() {
+        // Last night's Rest lands (null → scored) within the HR window: the widget must update at once.
+        PushGate.markPushed(snap(rest = null, at = 1_000))
+        assertTrue(PushGate.admit(snap(rest = 84, at = 2_000)))
+    }
+
+    @Test
+    fun effortScoreChangeIsAdmittedImmediately() {
+        // Effort climbing during the day is a meaningful change — admit straight away, don't wait 60s.
+        PushGate.markPushed(snap(effort = 5, at = 1_000))
+        assertTrue(PushGate.admit(snap(effort = 9, at = 2_000)))
+    }
+
+    @Test
+    fun unchangedThreeScoreSnapshotWithinWindowIsStillRejected() {
+        // With all three scores stable and inside the window, the gate still throttles (HR-only churn).
+        PushGate.markPushed(snap(recovery = 60, rest = 80, effort = 12, hr = 70, at = 1_000))
+        assertFalse(PushGate.admit(snap(recovery = 60, rest = 80, effort = 12, hr = 71, at = 2_000)))
     }
 }

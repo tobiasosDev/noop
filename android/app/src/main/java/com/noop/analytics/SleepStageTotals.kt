@@ -213,6 +213,49 @@ object SleepStageTotals {
         return out
     }
 
+    /** The indices (into the ORIGINAL [blocks]) of the MAIN-NIGHT GROUP: the main night plus any adjacent
+     *  fragments bridged into it. A biphasic / briefly-interrupted main sleep that reaches the selector still
+     *  split into two blocks (a wake gap shorter than [GAP_BRIDGE_MAX_MIN] between them) is scored as ONE
+     *  night rather than two competing fragments, then the winning bridged group's fragments are ALL returned
+     *  so the caller can SUM their stages for the day's headline figure. (#561)
+     *
+     *  Pipeline:
+     *   1. [bridgeAdjacent]-style merge of blocks whose gap is in `[0, GAP_BRIDGE_MAX_MIN*60)` into bridged
+     *      spans, in `start` order, recording which original indices fell into each bridged group;
+     *   2. [mainNightIndex] scores the BRIDGED spans (so a two-fragment night's combined span out-scores a
+     *      lone nap) and picks the winning bridged group;
+     *   3. the original indices of that winning group are returned, ascending.
+     *
+     *  Null only for an empty list. A day with no bridgeable gap collapses to the single-block group the bare
+     *  [mainNightIndex] would pick — byte-identical to the old behaviour for the common case. Pure +
+     *  deterministic; shares the bridge logic + [mainNightIndex] so the pick stays cross-platform stable.
+     *  Mirrors Swift `mainNightGroupIndices`. (#561) */
+    fun mainNightGroupIndices(blocks: List<NightBlock>, offsetSec: Long, habitualMidsleepSec: Long? = null): List<Int>? {
+        if (blocks.isEmpty()) return null
+        // Sort indices by onset so bridging sees neighbours, exactly as `bridgeAdjacent` sorts the blocks.
+        val order = blocks.indices.sortedBy { blocks[it].start }
+        val bridgeS = GAP_BRIDGE_MAX_MIN * 60L
+        // Build the bridged spans AND the original indices that compose each one, in one pass over `order`.
+        val bridged = ArrayList<NightBlock>()
+        val groups = ArrayList<MutableList<Int>>()
+        for (idx in order) {
+            val b = blocks[idx]
+            val last = bridged.lastOrNull()
+            if (last != null) {
+                val gap = b.start - last.end
+                if (gap in 0 until bridgeS) {
+                    bridged[bridged.size - 1] = NightBlock(last.start, maxOf(last.end, b.end))
+                    groups[groups.size - 1].add(idx)
+                    continue
+                }
+            }
+            bridged.add(b)
+            groups.add(mutableListOf(idx))
+        }
+        val winner = mainNightIndex(bridged, offsetSec, habitualMidsleepSec) ?: return null
+        return groups[winner].sorted()
+    }
+
     /** Index of the day's MAIN night among [blocks], by the LEARNED-TIMING SCORE (replaces the old hard
      *  overnight gate). score(block) = asleepMinutes + alignmentBonus, crediting a block whose midpoint
      *  sits near [habitualMidsleepSec] (or, cold-start, the overnight-band center). No hard duration floor
@@ -408,13 +451,87 @@ object SleepStageTotals {
         // tab. Nap blocks stay their own session rows elsewhere; they are NOT summed into this figure.
         // No onsets supplied → the legacy sum-of-all-blocks total (older callers unchanged).
         if (onsetByStart != null) {
-            val idx = mainNightIndexByStages(blocks, onsetByStart, offsetSec, habitualMidsleepSec)
+            // BIPHASIC GAP-BRIDGE (#561): bridge adjacent blocks split by a short wake gap into the
+            // main-night GROUP and SUM that group's stages, so the edit/recompute seam reports the SAME
+            // night `analyzeDay` does. Naps outside the group remain their own rows. Mirrors Swift.
+            val group = mainNightGroupIndicesByStages(blocks, onsetByStart, offsetSec, habitualMidsleepSec)
                 ?: return null
-            val agg = dailyAggregate(listOf(blocks[idx].second)) ?: return null
+            val agg = dailyAggregate(group.map { blocks[it].second }) ?: return null
             return HonoredAggregate(agg, applied)
         }
         val agg = dailyAggregate(blocks.map { it.second }) ?: return null
         return HonoredAggregate(agg, applied)
+    }
+
+    /** The original-index group (ascending) of the day's MAIN night on the STAGES path: the main night plus
+     *  any adjacent fragments bridged into it (a wake gap shorter than [GAP_BRIDGE_MAX_MIN]), so the edit/
+     *  recompute seam SUMS the same fragments `analyzeDay` does for a biphasic night. Each block's effective
+     *  span is `[onset, onset + decoded in-bed]`; bridging tests the gap between one block's effective end and
+     *  the next block's onset. The bridged spans are scored by [mainNightIndexByStages] (decoded asleep
+     *  minutes + alignment), and the winning group's original indices are returned. Null only for an empty
+     *  list. A day with no bridgeable gap returns the single block [mainNightIndexByStages] would pick — no
+     *  #525 regression. Mirrors Swift `mainNightGroupIndicesByStages`. (#561) */
+    internal fun mainNightGroupIndicesByStages(
+        blocks: List<Pair<Long, String?>>,
+        onsetByStart: Map<Long, Long>,
+        offsetSec: Long,
+        habitualMidsleepSec: Long? = null,
+    ): List<Int>? {
+        if (blocks.isEmpty()) return null
+        fun onset(b: Pair<Long, String?>): Long = onsetByStart[b.first] ?: b.first
+        fun effEnd(b: Pair<Long, String?>): Long = onset(b) + ((minutes(b.second)?.inBed ?: 0.0) * 60.0).toLong()
+        // Order by effective onset so bridging sees neighbours.
+        val order = blocks.indices.sortedBy { onset(blocks[it]) }
+        val bridgeS = GAP_BRIDGE_MAX_MIN * 60L
+        val groups = ArrayList<MutableList<Int>>()
+        val groupEnd = ArrayList<Long>()     // running effective end of each bridged group
+        for (idx in order) {
+            val b = blocks[idx]
+            val last = groupEnd.lastOrNull()
+            if (last != null) {
+                val gap = onset(b) - last
+                if (gap in 0 until bridgeS) {
+                    groups[groups.size - 1].add(idx)
+                    groupEnd[groupEnd.size - 1] = maxOf(last, effEnd(b))
+                    continue
+                }
+            }
+            groups.add(mutableListOf(idx))
+            groupEnd.add(effEnd(b))
+        }
+        // Score each bridged group by a synthesized SUMMED block anchored at the group's earliest onset, via
+        // the same per-stages scorer, so the pick matches the bare path on a single-block day.
+        val groupBlocks = ArrayList<Pair<Long, String?>>()
+        val groupOnsets = HashMap<Long, Long>()
+        for (g in groups) {
+            val anchorIdx = g.minByOrNull { onset(blocks[it]) } ?: g[0]
+            val anchorStart = blocks[anchorIdx].first
+            val summed = summedStagesJSON(g.map { blocks[it].second })
+            groupBlocks.add(anchorStart to summed)
+            groupOnsets[anchorStart] = onset(blocks[anchorIdx])
+        }
+        val winner = mainNightIndexByStages(groupBlocks, groupOnsets, offsetSec, habitualMidsleepSec)
+            ?: return null
+        return groups[winner].sorted()
+    }
+
+    /** A synthetic minute-dict `stagesJSON` whose per-stage minutes are the SUM of the inputs' decoded
+     *  minutes — used only to SCORE a bridged group as one block (decoded asleep minutes + in-bed span).
+     *  Pure; null when nothing decodes (the group then scores 0, like an undecodable block). Mirrors Swift
+     *  `summedStagesJSON`. (#561) */
+    internal fun summedStagesJSON(stagesJSONs: List<String?>): String? {
+        val total = Minutes()
+        var any = false
+        for (j in stagesJSONs) {
+            val m = minutes(j) ?: continue
+            total.awake += m.awake; total.light += m.light
+            total.deep += m.deep; total.rem += m.rem
+            any = true
+        }
+        if (!any) return null
+        // Keys alphabetical (awake, deep, light, rem) to match Swift's .sortedKeys, though the decoder is
+        // key-order-independent — this is only ever fed back into `minutes(...)` to score the group.
+        return "{\"awake\":${total.awake},\"deep\":${total.deep},\"light\":${total.light},\"rem\":${total.rem}}"
     }
 
     /** Index into [blocks] of the day's MAIN night, by the LEARNED-TIMING SCORE: score(block) =

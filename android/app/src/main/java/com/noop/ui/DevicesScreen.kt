@@ -239,7 +239,8 @@ fun DevicesScreen(viewModel: AppViewModel) {
 // MARK: - Device card
 
 /** One paired device as a [NoopCard]: name, brand·model, a capabilities line, a state pill, last-seen,
- *  and a per-device actions menu. The active device is tinted (gold) and carries an "Active" pill. */
+ *  and a per-device actions menu. The active device is tinted with the accent (WHOOP blue) and carries
+ *  an "Active" pill. */
 @Composable
 private fun DeviceCard(
     device: PairedDeviceRow,
@@ -394,22 +395,19 @@ private fun MenuItem(
 
 @Composable
 private fun AddDeviceButton(onClick: () -> Unit) {
-    Row(
+    // Routed through the unified NoopButton (Design Reset) so the add affordance is the crisp
+    // filled-accent-blue / white-label primary the iOS DevicesView uses (`NoopButton(... kind: .primary,
+    // fullWidth: true)`) — no hand-rolled gold-text fill, no glow.
+    NoopButton(
+        text = "Add a device",
+        leadingIcon = Icons.Filled.Add,
+        kind = NoopButtonKind.Primary,
+        fullWidth = true,
         modifier = Modifier
-            .fillMaxWidth()
             .padding(top = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Palette.accent)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = "Add a device" }
-            .padding(vertical = 12.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.Add, contentDescription = null, tint = Palette.goldDeepText, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Add a device", style = NoopType.headline, color = Palette.goldDeepText)
-    }
+            .semantics { contentDescription = "Add a device" },
+        onClick = onClick,
+    )
 }
 
 @Composable

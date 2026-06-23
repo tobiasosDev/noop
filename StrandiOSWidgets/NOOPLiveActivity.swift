@@ -20,10 +20,13 @@ struct NOOPLiveActivity: Widget {
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
                 Spacer()
-                if let r = context.state.recovery {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("Charge").font(.caption2).foregroundStyle(StrandPalette.textSecondary)
-                        Text("\(r)%").font(.headline).foregroundStyle(StrandPalette.textPrimary)
+                // Charge + Effort (#446) on the banner, mirroring the Dynamic Island expanded stats.
+                HStack(spacing: 12) {
+                    if let r = context.state.recovery {
+                        bannerStat(label: "Charge", value: "\(r)%")
+                    }
+                    if let e = context.state.effort {
+                        bannerStat(label: "Effort", value: "\(e)")
                     }
                 }
             }
@@ -37,8 +40,14 @@ struct NOOPLiveActivity: Widget {
                         .foregroundStyle(StrandPalette.statusCritical)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if let r = context.state.recovery {
-                        Text("\(r)%").font(.headline)
+                    // Charge + Effort (#446) — one more stat alongside the leading live HR.
+                    HStack(spacing: 10) {
+                        if let r = context.state.recovery {
+                            statColumn(label: "Charge", value: "\(r)%")
+                        }
+                        if let e = context.state.effort {
+                            statColumn(label: "Effort", value: "\(e)")
+                        }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -52,5 +61,25 @@ struct NOOPLiveActivity: Widget {
                 Image(systemName: "heart.fill").foregroundStyle(StrandPalette.statusCritical)
             }
         }
+    }
+}
+
+/// Lock-Screen banner stat column (label over value, right-aligned). File-scope because the
+/// `ActivityConfiguration` content closure isn't a method of `NOOPLiveActivity`.
+@ViewBuilder
+private func bannerStat(label: String, value: String) -> some View {
+    VStack(alignment: .trailing, spacing: 2) {
+        Text(label).font(.caption2).foregroundStyle(StrandPalette.textSecondary)
+        Text(value).font(.headline).foregroundStyle(StrandPalette.textPrimary)
+    }
+}
+
+/// Dynamic Island expanded-region stat column (label over value). File-scope for the same reason as
+/// `bannerStat` — the `dynamicIsland` closure has no enclosing `self`.
+@ViewBuilder
+private func statColumn(label: String, value: String) -> some View {
+    VStack(alignment: .trailing, spacing: 1) {
+        Text(label).font(.caption2).foregroundStyle(.secondary)
+        Text(value).font(.headline)
     }
 }

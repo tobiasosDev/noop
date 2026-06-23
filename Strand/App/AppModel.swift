@@ -3,6 +3,9 @@ import Combine
 import WhoopProtocol
 import WhoopStore
 import StrandAnalytics
+#if os(iOS)
+import UserNotifications
+#endif
 
 /// Data source currently running an import from the Data Sources screen.
 enum DataSourceImportKind {
@@ -203,6 +206,9 @@ final class AppModel: ObservableObject {
         // firmware pushes STRAP_DRIVEN_ALARM_EXECUTED). Gated on enabled inside applySmartAlarm.
         live.onSmartAlarmFired = { [weak self] in
             guard let self, self.behavior.smartAlarmEnabled else { return }
+            // PR #577 (iOS): mirror the strap's wake buzz to a local notification so a phone-in-pocket
+            // user still gets woken; no-op on macOS / when wrist alerts are off.
+            AppModel.postSmartAlarm()
             self.applySmartAlarm()
         }
         // Strap battery alerts (#368): low-battery warning + full-charge note. The notifier self-gates
@@ -268,6 +274,12 @@ final class AppModel: ObservableObject {
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.
         // IntelligenceEngine computes, persists under "my-whoop-noop", and refreshes the dashboard.
+        // One-shot reclaim of any stale Documents/Inbox picker drops a previous build left behind
+        // before cleanup() reclaimed the original, PLUS any stranded `noop-*` temp scratch (e.g. the
+        // multi-GB `noop-health-*` export.xml an interrupted import leaves behind — #590). Off the main
+        // actor; no-op on macOS for the Inbox part.
+        Task.detached { AppModel.purgeImportInbox(); AppModel.purgeImportTemp() }
+
         Task { [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -294,6 +306,11 @@ final class AppModel: ObservableObject {
             // the 0–100 axis. Guarded by a persisted flag, so this is a no-op on every subsequent launch.
             await self.intelligence.runEffortRescoreIfNeeded()
             while !Task.isCancelled {
+                // #547 RE-POLLUTION: a sync since the last tick may have armed a re-heal (its ingest gate
+                // dropped bad-clock records). `runTimestampHealIfNeeded` honours the pending flag even after
+                // the one-shot done flag is set, purges any pollution, and rescores the affected days — so a
+                // wandering-clock strap can't keep re-polluting. A no-op when nothing's pending.
+                await self.intelligence.runTimestampHealIfNeeded()
                 await self.intelligence.analyzeRecent()
                 // v5: recompute the skin-temp suite snapshots (cycle phase + body clock) from the
                 // freshly-scored history so the Health hub cards read a ready result.
@@ -641,16 +658,44 @@ final class AppModel: ObservableObject {
         if makeActive { registry.setActive(device.id) }
     }
 
-    /// Enable the realtime stream + mark it wanted so the keep-alive re-arms it (can't lapse).
-    /// Blanks the stale smoothing window first (#46): on Live-tab entry / resume we don't want the
-    /// pre-gap median republished, so the hero shows "—" until a fresh sample lands. The keep-alive
-    /// re-arm goes through `ble.startRealtime()` directly, NOT here, so steady-state is untouched.
+    /// How many on-screen surfaces currently want the realtime HR stream (the Live tab and the
+    /// in-exercise LiveWorkoutView, which can be open at the same time — the workout sheet sits over
+    /// Live, or is reached straight from the Workouts tab without Live ever appearing). The stream
+    /// stays armed while ANY of them is visible, so a second surface arming it never disarms it out
+    /// from under the first (#681 — a WHOOP 5/MG manual workout started without first opening Live got
+    /// no live HR, so every sample was dropped and the session was silently discarded). Ref-counted to
+    /// match Android's `realtimeWanters` (AppViewModel.requestRealtimeHr/releaseRealtimeHr).
+    private var realtimeWanters = 0
+
+    /// A surface that shows live HR appeared. Arms the realtime stream on the 0→1 edge — and ONLY on
+    /// that edge blanks the stale smoothing window (#46) so a resume shows "—" until a fresh sample
+    /// lands, never re-clearing an already-live window when a second concurrent HR surface opens. The
+    /// keep-alive re-arm goes through `ble.startRealtime()` directly, NOT here, so steady-state is
+    /// untouched. Each surface must balance this with exactly one `stopRealtimeHR()` on disappear.
     func startRealtimeHR() {
-        resetSmoothing()
+        if realtimeWanters == 0 {
+            resetSmoothing()
+            ble.startRealtime()
+        }
+        realtimeWanters += 1
+    }
+    /// A live-HR surface went away. Stops the realtime stream only when the last one leaves (1→0 edge);
+    /// the lightweight 0x2A37 HR keeps recording regardless. Clamped at 0 so an unbalanced extra stop
+    /// can't drive the count negative and wedge the stream off.
+    func stopRealtimeHR() {
+        realtimeWanters = max(0, realtimeWanters - 1)
+        if realtimeWanters == 0 { ble.stopRealtime() }
+    }
+
+    /// Re-issue the BLE realtime arm WITHOUT touching the ref-count — used when a fresh
+    /// connection/bond lands while a surface is already showing live HR (Apple's `ble.startRealtime()`
+    /// must be re-sent on a new connection). A no-op when nothing wants the stream, so a stray
+    /// connection event can't arm it behind a closed Live tab. Mirrors that Android re-arms via its
+    /// own keep-alive rather than re-calling `requestRealtimeHr` on reconnect.
+    func rearmRealtimeIfWanted() {
+        guard realtimeWanters > 0 else { return }
         ble.startRealtime()
     }
-    /// Stop the realtime stream (the lightweight 0x2A37 HR keeps recording regardless).
-    func stopRealtimeHR() { ble.stopRealtime() }
     /// Ask the strap for a fresh battery reading.
     func getBattery() { ble.refreshBattery() }
 
@@ -666,6 +711,58 @@ final class AppModel: ObservableObject {
     func buzz(pattern: UInt8, loops: UInt8 = 1) {
         ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
     }
+
+    // MARK: - Wrist-buzz mirror notifications (PR #577 — iOS only)
+    //
+    // iOS can't keep the strap buzz silent in a pocket the way macOS surfaces it on screen, so a wrist
+    // buzz the user might miss (a long sedentary stretch, the smart-alarm wake) is ALSO posted as a
+    // local notification. macOS keeps routing to its dedicated Notifications screen and never calls
+    // these — `#if os(iOS)` makes them no-ops there so that path is untouched. Both are gated on the
+    // same `notif.masterEnabled` master switch the iOS Automations "Wrist alerts" toggle (PR #572) and
+    // the SedentaryDetector read, so turning wrist alerts off silences these too.
+
+    /// The master wrist-alerts gate (PR #572). One key, shared with the iOS Automations toggle and the
+    /// SedentaryDetector, so all three honour the same switch.
+    static let wristAlertsMasterKey = "notif.masterEnabled"
+
+    /// Post the local notification mirroring the inactivity (sedentary) wrist nudge. Called right after
+    /// `BLEManager.maybeBuzzInactivity` fires its buzz (see crossLaneNotes). `minutes` = the seated bout
+    /// length the detector reported. No-op on macOS and when wrist alerts are off.
+    static func postInactivity(minutes: Int) {
+        #if os(iOS)
+        let body = minutes > 0
+            ? "You've been seated for about \(minutes) min. Time to move."
+            : "Time to move — you've been seated a while."
+        postWristAlert(identifier: "inactivity-nudge", title: "Move reminder", body: body)
+        #endif
+    }
+
+    /// Post the local notification mirroring the smart-alarm wake buzz. Called from the
+    /// `onSmartAlarmFired` hook. No-op on macOS and when wrist alerts are off.
+    static func postSmartAlarm() {
+        #if os(iOS)
+        postWristAlert(identifier: "smart-alarm-wake", title: "Smart alarm",
+                       body: "Good morning — your smart alarm just woke you.")
+        #endif
+    }
+
+    #if os(iOS)
+    /// Shared post path: gate on the wrist-alerts master, then deliver only if the OS already authorized
+    /// notifications (no second system prompt — BatteryNotifier-style status-only check). A fresh
+    /// identifier per category means a new alert replaces the old one rather than stacking.
+    private static func postWristAlert(identifier: String, title: String, body: String) {
+        guard UserDefaults.standard.bool(forKey: wristAlertsMasterKey) else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+        }
+    }
+    #endif
 
     /// Arm (or clear) the strap's firmware alarm from the smart-alarm settings. The firmware alarm
     /// fires even if the Mac is asleep / NOOP is closed. No-op until bonded (send is gated on bond).
@@ -795,6 +892,17 @@ final class AppModel: ObservableObject {
         hhmm.locale = Locale(identifier: "en_US_POSIX")
         hhmm.dateFormat = "HH:mm"
         live.append(log: "Sleep mark @ \(hhmm.string(from: date))")
+        // Persistence parity with Android's `AppViewModel.markSleep` (#461): also upsert the TYPED
+        // `sleep_mark` metric-series row that the Sleep screen reads back (SleepView.logMark writes the
+        // same row when the user taps a button). A physical double-tap can't choose bedtime vs wake, so
+        // it defaults to `.bedtime` — the boundary the gesture most naturally marks. Idempotent by
+        // (deviceId, day, key) through the repo's live store handle: no new Repository API, no schema
+        // change. The UserDefaults list + buzz + freetext log line above are unchanged.
+        let mark = SleepMark(type: .bedtime, at: date)
+        Task { [weak self] in
+            guard let self, let store = await self.repo.storeHandle() else { return }
+            try? await store.upsertMetricSeries([mark.metricPoint], deviceId: self.repo.deviceId)
+        }
     }
 
     private func handleWristChange(_ worn: Bool) {
@@ -1108,12 +1216,37 @@ final class AppModel: ObservableObject {
     /// importer reads a stable LOCAL file. That's what makes import work for iCloud Drive files (they
     /// arrive as un-downloaded placeholders that ZIPFoundation can't open in place) and removes the
     /// scoped-access timing fragility that blocked iPhone imports (#179). On macOS the picked URL is
-    /// read in place. `cleanup()` removes the temp copy. Sendable so it can cross the actor boundary.
+    /// read in place. `cleanup()` removes the temp copy AND the original `Documents/Inbox/` copy that
+    /// `UIDocumentPickerViewController(asCopy: true)` leaves behind — a multi-GB Apple Health
+    /// `export.zip` parked there was the runaway "Documents & Data" growth in #590 (one import → the
+    /// store rows AND a permanent ~19 GB Inbox duplicate the OS never reclaims). Sendable so it can
+    /// cross the actor boundary.
     struct ImportFile: Sendable {
         let url: URL
         private let temp: URL?
-        init(url: URL, temp: URL?) { self.url = url; self.temp = temp }
-        func cleanup() { if let temp { try? FileManager.default.removeItem(at: temp) } }
+        /// The picker's `asCopy:true` drop in `Documents/Inbox/`, deleted on cleanup so it can't
+        /// accumulate. nil on macOS (the URL is read in place, nothing to reclaim).
+        private let inboxOriginal: URL?
+        init(url: URL, temp: URL?, inboxOriginal: URL? = nil) {
+            self.url = url; self.temp = temp; self.inboxOriginal = inboxOriginal
+        }
+        func cleanup() {
+            if let temp { try? FileManager.default.removeItem(at: temp) }
+            if let inboxOriginal, Self.isInImportInbox(inboxOriginal) {
+                try? FileManager.default.removeItem(at: inboxOriginal)
+            }
+        }
+
+        /// Only ever delete files the picker placed in OUR app's `Documents/Inbox/` — never a
+        /// user-chosen in-place file on macOS or an iCloud URL outside the sandbox. The guard keeps
+        /// `cleanup()` from removing anything the user still owns.
+        static func isInImportInbox(_ url: URL) -> Bool {
+            guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            else { return false }
+            let inbox = docs.appendingPathComponent("Inbox").standardizedFileURL.path
+            let candidate = url.standardizedFileURL.path
+            return candidate.hasPrefix(inbox + "/")
+        }
     }
 
     /// Runs off the main actor (nonisolated) so copying a large export never blocks the UI; the
@@ -1137,9 +1270,32 @@ final class AppModel: ObservableObject {
         }
         if let coordError { throw coordError }
         if let ioError { throw ioError }
-        return ImportFile(url: dst, temp: dst)
+        // The picked URL is the picker's own `asCopy:true` duplicate in Documents/Inbox; pass it
+        // through so cleanup() can reclaim it (it's the original of `dst`, not a user file).
+        return ImportFile(url: dst, temp: dst, inboxOriginal: picked)
         #else
         return ImportFile(url: picked, temp: nil)
+        #endif
+    }
+
+    /// One-shot launch sweep of `Documents/Inbox/`: deletes any stale `asCopy:true` picker drops a
+    /// previous build left behind before `cleanup()` reclaimed them (#590). Best-effort, off-main, and
+    /// safe — `Inbox` only ever holds picker hand-offs, never user data. Skips files newer than 60 s so
+    /// it can't race an import that's mid-flight at launch.
+    nonisolated static func purgeImportInbox() {
+        #if os(iOS)
+        let fm = FileManager.default
+        guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let inbox = docs.appendingPathComponent("Inbox")
+        guard let items = try? fm.contentsOfDirectory(at: inbox,
+                                                      includingPropertiesForKeys: [.contentModificationDateKey],
+                                                      options: []) else { return }
+        let cutoff = Date().addingTimeInterval(-60)
+        for item in items {
+            let modified = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let modified, modified > cutoff { continue }   // leave an in-flight hand-off alone
+            try? fm.removeItem(at: item)
+        }
         #endif
     }
 
@@ -1156,6 +1312,7 @@ final class AppModel: ObservableObject {
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
                 let summary = try await WhoopImporter.importExport(url: local.url, into: store, deviceId: deviceId)
+                try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 let span: String
                 if let a = summary.earliest, let b = summary.latest {
@@ -1184,6 +1341,7 @@ final class AppModel: ObservableObject {
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
                 let summary = try await XiaomiImporter.importExport(url: local.url, into: store)
+                try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 let span: String
                 if let a = summary.earliest, let b = summary.latest {
@@ -1212,10 +1370,131 @@ final class AppModel: ObservableObject {
                 let local = try await Self.materializeForImport(url)
                 defer { local.cleanup() }
                 let summary = try await AppleHealthImport.importExport(url: local.url, into: store, deviceId: appleDeviceId)
+                try? await store.checkpointWAL()   // reclaim the WAL a bulk import grew (#590)
                 await repo.refresh()
                 finishImport(.appleHealth, summary: "Imported \(summary.recordCount) records")
             } catch {
                 finishImport(.appleHealth, summary: "Import failed: \(error)", failed: true)
+            }
+        }
+    }
+
+    // MARK: - Storage diagnostics (#590 — StorageView)
+
+    /// A point-in-time snapshot of where the app's on-disk footprint is going, for the Storage screen.
+    /// All sizes in bytes; `db` is nil only for an unopened/in-memory store.
+    struct StorageReport: Equatable, Sendable {
+        var db: Int64?
+        var inbox: Int64
+        var importTemp: Int64
+    }
+
+    /// Gather the storage report off the main actor: the GRDB file (+ WAL/SHM) from the store, plus the
+    /// `Documents/Inbox/` picker-drop directory and the import temp files this app writes.
+    func storageReport() async -> StorageReport {
+        let db = await repo.storeHandle()?.databaseFileSizeBytes()
+        let inbox = Self.inboxSizeBytes()
+        let temp = Self.importTempSizeBytes()
+        return StorageReport(db: db, inbox: inbox, importTemp: temp)
+    }
+
+    /// Total bytes in `Documents/Inbox/` (the picker's `asCopy:true` drops). 0 on macOS / when absent.
+    nonisolated static func inboxSizeBytes() -> Int64 {
+        #if os(iOS)
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { return 0 }
+        return directorySizeBytes(docs.appendingPathComponent("Inbox"))
+        #else
+        return 0
+        #endif
+    }
+
+    /// True for any scratch file/dir NOOP itself writes into the temp directory — import copies, the
+    /// decompressed export.xml, exports, backups, raw captures: every one is prefixed `noop-`. #590: the
+    /// import decompresses `export.xml` to a `noop-health-*` temp file (up to 8 GB), but a previous build
+    /// only matched `noop-import-*`, so an interrupted import stranded multi-GB extractions the Storage
+    /// screen never saw OR reclaimed. Matching the shared `noop-` prefix counts + sweeps them all and is
+    /// future-proof. Safe: the temp dir is NOOP's private sandbox and the 60 s in-flight guard in
+    /// `purgeImportTemp` protects a live import.
+    nonisolated static func isNoopTempScratch(_ name: String) -> Bool { name.hasPrefix("noop-") }
+
+    /// Total bytes of NOOP's own `noop-*` temp scratch (a crash mid-import can strand a multi-GB one).
+    /// Recurses into directories (the Xiaomi importer stages a `noop-xiaomi-*` folder).
+    nonisolated static func importTempSizeBytes() -> Int64 {
+        let tmp = FileManager.default.temporaryDirectory
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: tmp, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey], options: []) else { return 0 }
+        var total: Int64 = 0
+        for item in items where isNoopTempScratch(item.lastPathComponent) {
+            let vals = try? item.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if vals?.isDirectory == true { total += directorySizeBytes(item) }
+            else { total += Int64(vals?.fileSize ?? 0) }
+        }
+        return total
+    }
+
+    /// Sum every regular file under `dir` (one level — Inbox is flat). Best-effort; missing dir → 0.
+    nonisolated private static func directorySizeBytes(_ dir: URL) -> Int64 {
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey], options: []) else { return 0 }
+        var total: Int64 = 0
+        for item in items {
+            let vals = try? item.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if vals?.isDirectory == true { total += directorySizeBytes(item) }
+            else { total += Int64(vals?.fileSize ?? 0) }
+        }
+        return total
+    }
+
+    /// The Storage screen's "Clean up" action: purge the Inbox + stranded import temps, then truncate
+    /// the WAL so the freed pages return to the OS. Returns a fresh report so the screen updates. Safe —
+    /// Inbox/temp hold only picker hand-offs + this app's own temp copies, never user data or live rows.
+    @discardableResult
+    func cleanUpStorage() async -> StorageReport {
+        Self.purgeImportInbox()
+        Self.purgeImportTemp()
+        if let store = await repo.storeHandle() { try? await store.checkpointWAL() }
+        return await storageReport()
+    }
+
+    /// Remove NOOP's stranded `noop-*` temp scratch (import copies, the multi-GB `noop-health-*`
+    /// export.xml an interrupted import leaves behind — #590, exports, backups, raw captures). Mirrors
+    /// `purgeImportInbox`'s 60 s in-flight guard so a concurrent import/export isn't disturbed.
+    nonisolated static func purgeImportTemp() {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory
+        guard let items = try? fm.contentsOfDirectory(
+            at: tmp, includingPropertiesForKeys: [.contentModificationDateKey], options: []) else { return }
+        let cutoff = Date().addingTimeInterval(-60)
+        for item in items where isNoopTempScratch(item.lastPathComponent) {
+            let modified = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let modified, modified > cutoff { continue }
+            try? fm.removeItem(at: item)
+        }
+    }
+
+    /// Handle a `noop://import-health` deep link (PR #581) — the HealthKit-free Shortcuts import for
+    /// sideloaded installs. Ingests the Shortcut-built payload into the `apple-health` source (NEVER the
+    /// strap — `ShortcutHealthImport` enforces the loop guard), then refreshes the dashboard. Surfaces
+    /// the result on the Apple Health card like the file import does. The iOS `.onOpenURL` in StrandiOS/
+    /// calls this; macOS never registers the scheme.
+    func handleHealthImportURL(_ url: URL) {
+        beginImport(.appleHealth)
+        Task {
+            guard let store = await repo.storeHandle() else {
+                finishImport(.appleHealth, summary: "Couldn't open the local store.", failed: true)
+                return
+            }
+            let outcome = await ShortcutHealthImport.ingest(url: url, into: store)
+            switch outcome {
+            case .imported(let days, let workouts):
+                await repo.refresh()
+                let w = workouts > 0 ? " · \(workouts) workouts" : ""
+                finishImport(.appleHealth, summary: "Imported \(days) days\(w)")
+            case .nothingToImport:
+                finishImport(.appleHealth, summary: "Nothing new to import.")
+            case .rejected(let reason):
+                finishImport(.appleHealth, summary: reason, failed: true)
             }
         }
     }

@@ -46,6 +46,16 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_BROADCAST_HR, false)
         set(v) = prefs.edit().putBoolean(KEY_BROADCAST_HR, v).apply()
 
+    /** True if the user opted in to "Experimental sleep staging (V2)": detected nights are re-staged with
+     *  [com.noop.analytics.SleepStagerV2] (the transparent cardiorespiratory recipe, reimplemented from
+     *  contributor PR #600) instead of the default V1 [com.noop.analytics.SleepStager]. Pure analysis switch
+     *  — it changes ONLY which staging engine runs over an already-detected sleep window; detection, scoring
+     *  and the default V1 path are untouched. Model-agnostic (works on WHOOP 4 and 5). Default false.
+     *  Mirrors the macOS `PuffinExperiment.experimentalSleepV2Key`. */
+    var experimentalSleepV2: Boolean
+        get() = prefs.getBoolean(KEY_EXPERIMENTAL_SLEEP_V2, false)
+        set(v) = prefs.edit().putBoolean(KEY_EXPERIMENTAL_SLEEP_V2, v).apply()
+
     companion object {
         /** Persisted preferences file. */
         private const val PREFS = "noop_experiments"
@@ -61,6 +71,9 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
 
         /** "Broadcast heart rate" opt-in (mirrors macOS `PuffinExperiment.broadcastHrKey`). */
         const val KEY_BROADCAST_HR = "noopBroadcastHr"
+
+        /** "Experimental sleep staging (V2)" opt-in (mirrors macOS `PuffinExperiment.experimentalSleepV2Key`). */
+        const val KEY_EXPERIMENTAL_SLEEP_V2 = "noopExperimentalSleepV2"
 
         fun from(context: Context): PuffinExperiment =
             PuffinExperiment(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))

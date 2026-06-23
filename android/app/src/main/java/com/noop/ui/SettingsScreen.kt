@@ -31,20 +31,29 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -294,6 +303,11 @@ fun SettingsScreen(vm: AppViewModel) {
     // from About — the plain-English tour of sleep sorting, scores, recording and provenance.
     var showHowNoopWorks by remember { mutableStateOf(false) }
 
+    // "WHOOP 4.0 vs 5.0/MG: what each can read and why" explainer (FI-2 / #490), reachable from the
+    // Strap section by BOTH model owners. Clears up which features each strap supports — e.g. why the
+    // strap-firmware broadcast-out is 5/MG-only while NOOP's own re-broadcast works on any strap.
+    var showModelComparison by remember { mutableStateOf(false) }
+
     // "Recalibrate Charge baseline" confirm dialog (Charge advanced). Writes now-seconds to BOTH the
     // noop.hrvBaselineEpoch and noop.recoveryBaselineEpoch prefs so foldHistory re-seeds every baseline
     // that feeds Charge from tonight onward; the standing analyze loop picks it up on its next pass.
@@ -312,6 +326,9 @@ fun SettingsScreen(vm: AppViewModel) {
     var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
     var deepData by remember { mutableStateOf(puffinExperiment.isDeepDataEnabled) }
     var broadcastHr by remember { mutableStateOf(puffinExperiment.broadcastHr) }
+    // Opt-in "Experimental sleep staging (V2)" (off by default). Model-agnostic, so it lives outside the
+    // 5/MG-only card — it works on WHOOP 4 and 5. Re-stages detected nights with SleepStagerV2; V1 default.
+    var experimentalSleepV2 by remember { mutableStateOf(puffinExperiment.experimentalSleepV2) }
 
     // Whether to surface the WHOOP 5/MG-only probes (puffin / R22 / broadcast-HR / frame-capture). Gated
     // so a confident 4.0 owner never sees 5/MG controls that can't touch their strap (#22). The model
@@ -344,10 +361,12 @@ fun SettingsScreen(vm: AppViewModel) {
     // the engines pick up on the next analytics pass / offload. All opt-in / safe-default per spec.
     var illnessWatch by remember { mutableStateOf(NoopPrefs.illnessWatch(context)) }
     var cycleTracking by remember { mutableStateOf(NoopPrefs.cycleTracking(context)) }
+    var hydrationTracking by remember { mutableStateOf(NoopPrefs.hydrationTracking(context)) }
     var stressCheckIn by remember { mutableStateOf(BiofeedbackPrefs.checkInEnabled(context)) }
     var stressAutoNudge by remember { mutableStateOf(BiofeedbackPrefs.autoNudge(context)) }
     var rhythmEnabled by remember { mutableStateOf(RhythmConsent.isEnabled(context)) }
     var coachSignals by remember { mutableStateOf(NoopPrefs.coachSignals(context)) }
+    var autoDetectWorkouts by remember { mutableStateOf(NoopPrefs.autoDetectWorkouts(context)) }
 
     // Scheduled debug export (#510) — the daily auto-export toggle + time-of-day. The settings object is
     // its own SharedPreferences store; SharedPreferences isn't reactive, so the Switch + TimeChip mirror
@@ -497,24 +516,23 @@ fun SettingsScreen(vm: AppViewModel) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(
+                        NoopButton(
+                            text = if (ProfileAvatarStore.hasAvatar) "Change photo" else "Choose photo",
+                            kind = NoopButtonKind.Secondary,
+                            modifier = Modifier.weight(1f),
                             onClick = {
                                 avatarPickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                                 )
                             },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                        ) {
-                            Text(
-                                if (ProfileAvatarStore.hasAvatar) "Change photo" else "Choose photo",
-                                style = NoopType.captionNumber,
-                            )
-                        }
+                        )
                         if (ProfileAvatarStore.hasAvatar) {
-                            OutlinedButton(
+                            NoopButton(
+                                text = "Remove photo",
+                                kind = NoopButtonKind.Tertiary,
+                                modifier = Modifier.weight(1f),
                                 onClick = { ProfileAvatarStore.clearAvatar(context) },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.statusCritical),
-                            ) { Text("Remove photo", style = NoopType.captionNumber) }
+                            )
                         }
                     }
                 }
@@ -790,7 +808,7 @@ fun SettingsScreen(vm: AppViewModel) {
         SettingsSection(
             icon = Icons.Filled.Brightness6,
             title = "Appearance",
-            blurb = "Choose Light, Dark, or follow your system. Light keeps NOOP's gold on warm paper; Dark is the signature navy.",
+            blurb = "Choose Light, Dark, or follow your system. Dark is the signature near-black; Light keeps the same clean look on a bright canvas.",
         ) {
             FormRow(label = "Theme") {
                 SegmentedPillControl(
@@ -871,20 +889,21 @@ fun SettingsScreen(vm: AppViewModel) {
                     color = Palette.textSecondary,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = { requestScan() },
+                    NoopButton(
+                        text = if (live.scanning) "Searching…" else "Re-scan",
+                        leadingIcon = Icons.Filled.Refresh,
+                        kind = NoopButtonKind.Primary,
                         enabled = !live.scanning,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Palette.accent,
-                            contentColor = Palette.surfaceBase,
-                        ),
-                    ) { Text(if (live.scanning) "Searching…" else "Re-scan", style = NoopType.captionNumber) }
+                        onClick = { requestScan() },
+                    )
 
-                    OutlinedButton(
-                        onClick = { vm.disconnect() },
+                    NoopButton(
+                        text = "Disconnect",
+                        leadingIcon = Icons.Filled.Cancel,
+                        kind = NoopButtonKind.Secondary,
                         enabled = live.connected || live.bonded,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.statusCritical),
-                    ) { Text("Disconnect", style = NoopType.captionNumber) }
+                        onClick = { vm.disconnect() },
+                    )
                 }
 
                 // Rename the strap's BLE advertising name (WHOOP 4.0 only). Writes the name to the strap
@@ -917,14 +936,13 @@ fun SettingsScreen(vm: AppViewModel) {
                             ),
                         )
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = { vm.ble.renameStrap(nameDraft) },
+                            NoopButton(
+                                text = "Rename",
+                                leadingIcon = Icons.Filled.Edit,
+                                kind = NoopButtonKind.Primary,
                                 enabled = live.bonded && nameDraft.isNotBlank(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Palette.accent,
-                                    contentColor = Palette.surfaceBase,
-                                ),
-                            ) { Text("Rename", style = NoopType.captionNumber) }
+                                onClick = { vm.ble.renameStrap(nameDraft) },
+                            )
                             live.renameStatus?.let {
                                 Text(it, style = NoopType.footnote, color = Palette.textSecondary, modifier = Modifier.weight(1f))
                             }
@@ -1045,11 +1063,49 @@ fun SettingsScreen(vm: AppViewModel) {
                 }
 
                 // Diagnostics: export the strap connection log so people can attach it to a bug report.
-                OutlinedButton(
+                NoopButton(
+                    text = "Share strap log (for bug reports)",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = { LogExport.shareStrapLog(context, vm.ble.exportLogText()) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Share strap log (for bug reports)", style = NoopType.captionNumber) }
+                )
+
+                // "WHOOP 4.0 vs 5.0/MG — what each can read and why" (FI-2 / #490). Shown to BOTH model
+                // owners, so a 4.0 user understands their strap is fully supported (and why the firmware
+                // broadcast-out is 5/MG-only while NOOP's own re-broadcast in Data Sources works on a 4.0).
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.surfaceInset)
+                        .border(1.dp, Palette.hairline, RoundedCornerShape(10.dp))
+                        .clickable { showModelComparison = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                        .semantics { contentDescription = "WHOOP 4.0 versus 5.0 — what each can read and why" },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Info,
+                            contentDescription = null,
+                            tint = Palette.accent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("WHOOP 4.0 vs 5.0/MG", style = NoopType.headline, color = Palette.textPrimary)
+                            Text(
+                                "What each strap can read, and why some features differ.",
+                                style = NoopType.footnote,
+                                color = Palette.textSecondary,
+                            )
+                        }
+                        Text("›", style = NoopType.title2, color = Palette.accent)
+                    }
+                }
             }
         }
 
@@ -1169,13 +1225,13 @@ fun SettingsScreen(vm: AppViewModel) {
                     color = Palette.textTertiary,
                 )
                 if (deepData) {
-                    Button(
-                        onClick = { vm.ble.enableWhoop5DeepData() },
+                    NoopButton(
+                        text = "Send enable sequence to strap",
+                        leadingIcon = Icons.Filled.Bolt,
+                        kind = NoopButtonKind.Primary,
                         enabled = live.encryptedBond && live.worn,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Palette.accent, contentColor = Palette.surfaceBase,
-                        ),
-                    ) { Text("Send enable sequence to strap") }
+                        onClick = { vm.ble.enableWhoop5DeepData() },
+                    )
                     Text(
                         if (!live.encryptedBond) "Needs the full encrypted bond — close the official WHOOP app and pair the strap to NOOP first (a live-HR-only link can't carry the unlock)."
                         else if (!live.worn) "Put the strap on first — the deep stream is on-wrist only."
@@ -1241,20 +1297,24 @@ fun SettingsScreen(vm: AppViewModel) {
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
-                OutlinedButton(
+                NoopButton(
+                    text = "Share 5/MG capture (for the decode effort)",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = { LogExport.shareWhoop5Capture(context, live.whoop5Detected) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Share 5/MG capture (for the decode effort)", style = NoopType.captionNumber) }
+                )
 
                 // One-tap "matched pair" export (#510): hands a reporter BOTH the raw capture file and
                 // the strap log together (timestamped, same minute) so a protocol-mapping issue arrives
                 // with the frames AND the context that produced them.
-                OutlinedButton(
+                NoopButton(
+                    text = "Export raw + log (matched pair)",
+                    leadingIcon = Icons.Filled.IosShare,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = { LogExport.shareRawAndLog(context, vm.ble.exportLogText(), live.whoop5Detected) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Export raw + log (matched pair)", style = NoopType.captionNumber) }
+                )
             }
         }
         } // end if (showFiveMGControls)
@@ -1267,14 +1327,55 @@ fun SettingsScreen(vm: AppViewModel) {
             blurb = "A read-only export of the decoded sensor streams NOOP already stores. Works on any strap — nothing is written to your device, and nothing is uploaded.",
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // --- Experimental sleep staging (V2) — opt-in, default OFF, every model. (V7 Pillar 3b) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Experimental sleep staging (V2)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = experimentalSleepV2,
+                        onCheckedChange = {
+                            experimentalSleepV2 = it
+                            puffinExperiment.experimentalSleepV2 = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Experimental sleep staging V2"
+                        },
+                    )
+                }
+                Text(
+                    "A transparent cardiorespiratory recipe that recovers deep and REM better than the " +
+                        "default staging. Opt-in and experimental — it only changes how already-detected " +
+                        "nights are split into stages (detection and scores are unchanged), and the default " +
+                        "staging stays in place if you leave this off. Takes effect on the next nights staged.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
                 // Diagnostics: dump the decoded per-sample sensor streams (last 24h) to one long-format
                 // CSV so power users / external devs can prototype sleep/activity/VBT algorithms on real
                 // data without a BLE stream (#308/#276/#322). On-device only; plain text, no BLE hex.
-                OutlinedButton(
+                NoopButton(
+                    text = "Export raw sensor data (CSV)",
+                    leadingIcon = Icons.Filled.Upload,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = { scope.launch { RawSensorExport.export(context, vm.repo) } },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Export raw sensor data (CSV)", style = NoopType.captionNumber) }
+                )
                 Text(
                     "Saves the last 24h of decoded sensor samples (heart rate, R-R, motion, steps and any 5/MG deep streams you've unlocked) as one CSV you can share — for tinkering with your own data. Nothing leaves the phone unless you share it.",
                     style = NoopType.caption,
@@ -1285,13 +1386,15 @@ fun SettingsScreen(vm: AppViewModel) {
                 // safely when disconnected, so it stays enabled regardless of connection (matches the
                 // "Share strap log" row above, which also doesn't gate on a live strap). 12/24h follows the
                 // phone's own clock setting.
-                OutlinedButton(
+                NoopButton(
+                    text = "Buzz the time on your strap",
+                    leadingIcon = Icons.Filled.Vibration,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = {
                         vm.ble.buzzTimeNow(is24h = android.text.format.DateFormat.is24HourFormat(context))
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Buzz the time on your strap", style = NoopType.captionNumber) }
+                )
                 Text(
                     "Feel the current time as a sequence of buzzes (#460). Does nothing unless your strap is connected.",
                     style = NoopType.caption,
@@ -1377,7 +1480,11 @@ fun SettingsScreen(vm: AppViewModel) {
                 // "Export now" writes the dated file immediately (off the main thread, like the CSV export
                 // above) and confirms with a Toast naming the folder, so the user sees the feature work
                 // without waiting for the scheduled run.
-                OutlinedButton(
+                NoopButton(
+                    text = "Export now",
+                    leadingIcon = Icons.Filled.SaveAlt,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     onClick = {
                         scope.launch {
                             val files = withContext(Dispatchers.IO) {
@@ -1391,9 +1498,7 @@ fun SettingsScreen(vm: AppViewModel) {
                             ).show()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textSecondary),
-                ) { Text("Export now", style = NoopType.captionNumber) }
+                )
             }
         }
 
@@ -1425,6 +1530,26 @@ fun SettingsScreen(vm: AppViewModel) {
                     onCheckedChange = {
                         cycleTracking = it
                         vm.setCycleTrackingEnabled(it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Hydration tracking",
+                    detail = "Adds a simple fluid log with a daily goal that adjusts to your effort. Tap to add a sip, cup or bottle and watch a progress ring fill. On this phone only — nothing is synced.",
+                    checked = hydrationTracking,
+                    onCheckedChange = {
+                        hydrationTracking = it
+                        NoopPrefs.setHydrationTracking(context, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    title = "Auto-detect workouts",
+                    detail = "After a sync, NOOP looks over your recent heart rate for a sustained, raised stretch that looks like exercise and offers to save it. It only ever suggests — nothing is saved until you tap Save, and you can dismiss any suggestion. Deliberately conservative, so the odd workout may be missed. On this phone only.",
+                    checked = autoDetectWorkouts,
+                    onCheckedChange = {
+                        autoDetectWorkouts = it
+                        NoopPrefs.setAutoDetectWorkouts(context, it)
                     },
                 )
                 RowDivider()
@@ -1501,13 +1626,14 @@ fun SettingsScreen(vm: AppViewModel) {
                         color = Palette.textTertiary,
                     )
                 }
-                OutlinedButton(
+                NoopButton(
+                    text = "Recalibrate Charge baseline",
+                    leadingIcon = Icons.Filled.Autorenew,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
+                    modifier = Modifier.semantics { contentDescription = "Recalibrate Charge baseline" },
                     onClick = { showRecalibrateConfirm = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = "Recalibrate Charge baseline" },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                ) { Text("Recalibrate Charge baseline", style = NoopType.captionNumber) }
+                )
             }
         }
 
@@ -1563,46 +1689,58 @@ fun SettingsScreen(vm: AppViewModel) {
             blurb = "Move all your NOOP data to another phone. Export saves everything — history, sleeps, workouts, settings — to a single file you can copy across; import replaces this phone's data with a backup.",
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Three equal-width buttons share the row (each takes a third via weight) — mirrors the
+                // iOS Backup card's three fullWidth NoopButtonStyle buttons. The busy spinner sits BELOW
+                // the row (not inside it) so it never steals a button's share of the width.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Button(
+                    NoopButton(
+                        text = "Export…",
+                        kind = NoopButtonKind.Primary,
+                        enabled = !backupBusy,
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
                             exportLauncher.launch("noop-backup-${java.time.LocalDate.now()}.noopbak")
                         },
-                        enabled = !backupBusy,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Palette.accent,
-                            contentColor = Palette.surfaceBase,
-                        ),
-                    ) { Text("Export…", style = NoopType.captionNumber) }
+                    )
 
-                    OutlinedButton(
+                    NoopButton(
+                        text = "Import…",
+                        kind = NoopButtonKind.Secondary,
+                        enabled = !backupBusy,
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
                             importLauncher.launch(arrayOf("*/*"))
                         },
-                        enabled = !backupBusy,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                    ) { Text("Import…", style = NoopType.captionNumber) }
+                    )
 
-                    OutlinedButton(
+                    NoopButton(
+                        text = "Export CSV…",
+                        kind = NoopButtonKind.Secondary,
+                        enabled = !backupBusy,
+                        modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
                             csvExportLauncher.launch("noop-export-${java.time.LocalDate.now()}.zip")
                         },
-                        enabled = !backupBusy,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                    ) { Text("Export CSV…", style = NoopType.captionNumber) }
+                    )
+                }
 
-                    if (backupBusy) {
+                if (backupBusy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         CircularProgressIndicator(
                             color = Palette.accent,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(18.dp),
                         )
+                        Text("Working…", style = NoopType.footnote, color = Palette.textSecondary)
                     }
                 }
 
@@ -1726,14 +1864,14 @@ fun SettingsScreen(vm: AppViewModel) {
                                     style = NoopType.subhead, color = Palette.textPrimary,
                                     modifier = Modifier.weight(1f),
                                 )
-                                Button(
+                                NoopButton(
+                                    text = "Download",
+                                    leadingIcon = Icons.Filled.Download,
+                                    kind = NoopButtonKind.Primary,
                                     onClick = {
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(avail.url)))
                                     },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Palette.accent, contentColor = Palette.surfaceBase,
-                                    ),
-                                ) { Text("Download", style = NoopType.captionNumber) }
+                                )
                             }
                             if (avail.notes.isNotEmpty()) {
                                 Text(
@@ -1976,6 +2114,18 @@ fun SettingsScreen(vm: AppViewModel) {
             ) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
                     HowNoopWorksScreen(onClose = { showHowNoopWorks = false })
+                }
+            }
+        }
+
+        // "WHOOP 4.0 vs 5.0/MG" explainer sheet (FI-2 / #490), opened from the Strap section. Same idiom.
+        if (showModelComparison) {
+            Dialog(
+                onDismissRequest = { showModelComparison = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
+                    WhoopModelComparisonScreen(onClose = { showModelComparison = false })
                 }
             }
         }

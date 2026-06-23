@@ -53,4 +53,38 @@ public enum ScoreConfidence: String, Equatable, Sendable, Codable {
         guard hasSession else { return .calibrating }
         return hasStagedSleep ? .solid : .building
     }
+
+    // MARK: - H9 stage low-confidence (restorative-share floor on a high-efficiency night)
+
+    /// Restorative (deep+REM) share of asleep time below which staging is treated as LOW-CONFIDENCE on an
+    /// otherwise high-efficiency night. A genuine well-structured adult night sits ~40–50% deep+REM; a near-
+    /// zero restorative share on a night that ALSO scored high efficiency (lots of "asleep") is far more
+    /// likely a staging miss (the EEG-free classifier's weakest link is light/deep/REM separation) than a
+    /// real night with no deep or REM — so we flag the LOW CONFIDENCE rather than fake stages or tank Rest.
+    /// ~10% is well below the healthy band yet above true edge cases. (#H9)
+    public static let restorativeLowConfidenceShare: Double = 0.10
+
+    /// Efficiency above which the restorative-share floor applies. A low-efficiency (fragmented) night
+    /// legitimately carries less deep/REM, so the floor would false-positive there; we only flag the
+    /// suspicious case — high efficiency (lots of measured sleep) but implausibly little restorative.
+    public static let highEfficiencyThreshold: Double = 0.85
+
+    /// Rest confidence WITH the H9 stage-quality check. Starts from `rest(hasSession:hasStagedSleep:)`, then
+    /// DOWNGRADES a `.solid` tier to `.building` (low-confidence) when the night is high-efficiency yet its
+    /// restorative (deep+REM) share is below `restorativeLowConfidenceShare` — a likely staging miss, surfaced
+    /// honestly without inventing stages or distorting the Rest score. `asleepSeconds`/`restorativeSeconds`
+    /// are the night's totals; efficiency is asleep/in-bed in [0,1]. `.calibrating`/`.building` from the base
+    /// call are returned unchanged (you can't downgrade below building, and no-stage nights are already
+    /// flagged). Engine output only; the UI surfaces the tier later. (#H9)
+    public static func rest(hasSession: Bool, hasStagedSleep: Bool,
+                            asleepSeconds: Double, restorativeSeconds: Double,
+                            efficiency: Double) -> ScoreConfidence {
+        let base = rest(hasSession: hasSession, hasStagedSleep: hasStagedSleep)
+        guard base == .solid, asleepSeconds > 0 else { return base }
+        let restorativeShare = restorativeSeconds / asleepSeconds
+        if efficiency >= highEfficiencyThreshold && restorativeShare < restorativeLowConfidenceShare {
+            return .building   // high-efficiency night with near-zero deep+REM → low-confidence staging
+        }
+        return base
+    }
 }

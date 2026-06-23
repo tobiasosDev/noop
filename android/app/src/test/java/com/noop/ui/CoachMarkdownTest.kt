@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,5 +50,54 @@ class CoachMarkdownTest {
         val a = parseInline("**HRV** up, **RHR** down", Color.Unspecified)
         assertEquals("HRV up, RHR down", a.text)
         assertEquals(2, a.spanStyles.size)
+    }
+
+    // --- GFM pipe tables (Android twin of the iOS/macOS MarkdownUI table; #132 roadmap) ---
+
+    @Test fun parsesSimplePipeTable() {
+        val lines = listOf(
+            "| Metric | Value |",
+            "| --- | --- |",
+            "| HRV | 72 |",
+            "| RHR | 48 |",
+        )
+        val (table, next) = parseTable(lines, 0)!!
+        assertEquals(listOf("Metric", "Value"), table.header)
+        assertEquals(listOf(listOf("HRV", "72"), listOf("RHR", "48")), table.rows)
+        assertEquals(4, next)
+    }
+
+    @Test fun notATableWithoutDelimiterRow() {
+        // A prose line that merely contains a pipe must NOT be eaten as a table.
+        val lines = listOf("see the strap | charger combo", "next line")
+        assertNull(parseTable(lines, 0))
+    }
+
+    @Test fun tableStopsAtBlankLineAndKeepsRawCellMarkdown() {
+        val lines = listOf(
+            "| A | B |",
+            "|---|---|",
+            "| **bold** | x |",
+            "",
+            "after",
+        )
+        val (table, next) = parseTable(lines, 0)!!
+        assertEquals(listOf("A", "B"), table.header)
+        // Raw cell text is kept; the renderer applies parseInline so **bold** still bolds.
+        assertEquals(listOf(listOf("**bold**", "x")), table.rows)
+        assertEquals(3, next)
+    }
+
+    @Test fun toleratesMissingOuterPipes() {
+        // GFM allows tables without leading/trailing pipes.
+        val lines = listOf(
+            "Metric | Value",
+            "--- | ---",
+            "HRV | 72",
+        )
+        val (table, next) = parseTable(lines, 0)!!
+        assertEquals(listOf("Metric", "Value"), table.header)
+        assertEquals(listOf(listOf("HRV", "72")), table.rows)
+        assertEquals(3, next)
     }
 }

@@ -95,4 +95,32 @@ class BatteryAlertPolicyTest {
         val refired = BatteryAlertPolicy.evaluate(pct = 100, charging = null, lowAlerted = false, fullAlerted = dropped.newFullAlerted)
         assertTrue(refired.fireFull)
     }
+
+    /** 6. (#514) Dropping below 100 while the full alert stands signals clearFull exactly once, so
+     *  the notifier can pull the stale "fully charged" note. It does not touch the low alert. */
+    @Test
+    fun dropBelowFullClearsStaleFullNote() {
+        // Standing full alert drops to 99% → clearFull, re-arms, nothing fires.
+        val drop = BatteryAlertPolicy.evaluate(pct = 99, charging = null, lowAlerted = false, fullAlerted = true)
+        assertTrue(drop.clearFull)
+        assertFalse(drop.fireFull)
+        assertFalse(drop.fireLow)
+        assertFalse(drop.newFullAlerted)
+
+        // Next reading below 100 with the flag already re-armed does not keep asking to clear.
+        val next = BatteryAlertPolicy.evaluate(pct = 90, charging = null, lowAlerted = drop.newLowAlerted, fullAlerted = drop.newFullAlerted)
+        assertFalse(next.clearFull)
+    }
+
+    /** 7. (#514) Holding at 100 (full standing) must NOT clear, and a fresh fire at 100 from a clean
+     *  state must NOT clear — clearFull is the below-100 transition only. */
+    @Test
+    fun holdingAtFullDoesNotClear() {
+        val hold = BatteryAlertPolicy.evaluate(pct = 100, charging = null, lowAlerted = false, fullAlerted = true)
+        assertFalse(hold.clearFull)
+
+        val fresh = BatteryAlertPolicy.evaluate(pct = 100, charging = null, lowAlerted = false, fullAlerted = false)
+        assertTrue(fresh.fireFull)
+        assertFalse(fresh.clearFull)
+    }
 }

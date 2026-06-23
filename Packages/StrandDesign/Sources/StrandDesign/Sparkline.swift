@@ -3,8 +3,8 @@ import SwiftUI
 // MARK: - Sparkline (§9.4 Today / Live HR tile)
 //
 // A tiny inline line for live HR (or any short numeric series). Gradient-stroked,
-// with an optional glowing leading dot at the latest sample and a faint area
-// wash. Designed to sit in a card/tile or the menu-bar popover.
+// with an optional crisp leading dot at the latest sample and a faint area
+// wash (WHOOP-flat: no bloom). Designed to sit in a card/tile or the menu-bar popover.
 
 public struct Sparkline: View {
 
@@ -86,11 +86,12 @@ public struct Sparkline: View {
                         )
                 }
                 if showsHead, let head = pts.last {
+                    // Design Reset (WHOOP): a crisp solid leading dot, no blurred bloom halo.
+                    // The line colour reads as the head ring; a small core sits inside it.
                     let c = StrandPalette.sample(stops: gradient.stops, at: 1.0)
-                    Circle().fill(c).frame(width: lineWidth * 3.2, height: lineWidth * 3.2)
-                        .blur(radius: lineWidth * 1.2).opacity(0.8).additiveBloom()
+                    Circle().fill(c).frame(width: lineWidth * 2.2, height: lineWidth * 2.2)
                         .position(head)
-                    Circle().fill(StrandPalette.tipCore).frame(width: lineWidth * 1.6, height: lineWidth * 1.6)
+                    Circle().fill(StrandPalette.tipCore).frame(width: lineWidth * 1.0, height: lineWidth * 1.0)
                         .position(head)
                 }
 

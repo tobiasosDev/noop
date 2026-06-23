@@ -336,7 +336,11 @@ public struct AppleDailySampleAccumulator {
         // HeartRate max (running).
         var hrMax: Double?
         // Sums + presence flags.
-        var steps = 0.0;  var hasSteps = false
+        // #589: per-SOURCE step sums. Apple Health keeps overlapping step samples from EACH device
+        // (an iPhone AND an Apple Watch both count the same walk); summing across sources double-counts
+        // (~2x). We sum WITHIN a source but take the MAX source per day at finish() — the de-overlap
+        // Apple's own Health app shows instead of a raw sum.
+        var stepsBySource: [String: Double] = [:]
         var active = 0.0; var hasActive = false
         var basal = 0.0;  var hasBasal = false
         // Latest-by-end values.
@@ -388,7 +392,8 @@ public struct AppleDailySampleAccumulator {
                 else { byDay[day]!.hrMax = v }
             }
         case AppleHealthAggregator.stepCount:
-            if let v = s.value { byDay[day]!.steps += v; byDay[day]!.hasSteps = true }
+            // Sum WITHIN a source, never across sources (iPhone + Watch overlap → double-count). (#589)
+            if let v = s.value { byDay[day]!.stepsBySource[s.sourceName ?? "", default: 0] += v }
         case AppleHealthAggregator.activeEnergy:
             if let v = s.value { byDay[day]!.active += v; byDay[day]!.hasActive = true }
         case AppleHealthAggregator.basalEnergy:
@@ -462,7 +467,7 @@ public struct AppleDailySampleAccumulator {
                 avgHr: mean(a.hrSum, a.hrN),
                 maxHr: a.hrMax,
                 walkingHr: mean(a.walkingSum, a.walkingN),
-                steps: a.hasSteps ? a.steps : nil,
+                steps: a.stepsBySource.isEmpty ? nil : a.stepsBySource.values.max(),   // #589 max source, not cross-source sum
                 activeKcal: a.hasActive ? a.active : nil,
                 basalKcal: a.hasBasal ? a.basal : nil,
                 vo2max: a.vo2,

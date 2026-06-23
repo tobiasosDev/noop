@@ -190,12 +190,23 @@ object AnalyticsEngine {
         // computes this once per run from the trailing sleep history and threads it down; pure-function
         // callers/tests leave it null and stay on the cold-start band. Mirrors Swift. (#547)
         habitualMidsleepSec: Long? = null,
+        // The strap's OWN persisted v18 BAND sleep_state per timestamp (Interpreter's `(sb shr 4) and 3`:
+        // 0 wake/1 still/2 asleep/3 up). Consumed ONLY to confirm a borderline H7 morning re-onset — a
+        // daytime block the strap itself scored "asleep" is kept even on a borderline HR dip (#531). Default
+        // empty keeps pure-function callers/tests free of it; IntelligenceEngine threads the night window's
+        // persisted band state. Mirrors Swift. (#531 / H8 consume)
+        bandSleepState: List<Pair<Long, Int>> = emptyList(),
+        // Opt-in experimental sleep staging (V2). When true, detected nights are staged by [SleepStagerV2]
+        // instead of V1. Default false keeps V1 the byte-identical default for pure-function callers/tests;
+        // IntelligenceEngine threads PuffinExperiment.from(context).experimentalSleepV2. Mirrors Swift. (V7 / #690)
+        useSleepStagerV2: Boolean = false,
     ): DayResult {
 
         // ── Sleep detection + staging ─────────────────────────────────────────
         val allSessions = SleepStager.detectSleep(
             hr = hr, rr = rr, resp = resp, gravity = gravity, tzOffsetSeconds = tzOffsetSeconds,
-            wristOff = wristOff,
+            wristOff = wristOff, bandSleepState = bandSleepState,
+            useSleepStagerV2 = useSleepStagerV2,
         )
         // Sessions attributed to `day` = those whose end falls on `day` (LOCAL day, #277). `day` is
         // the caller's local-day key; attribute by the same offset so the bucket and the key agree.
@@ -212,17 +223,22 @@ object AnalyticsEngine {
         // analytics rollup and the Sleep tab resolve to the identical block.
         // Pick by the LEARNED-TIMING score, threading the user's learned habitual midsleep so a
         // late/shift sleeper's real night out-scores a daytime nap (null = cold-start overnight band).
-        // No selector-side gap-bridge here: the SleepStager already bridges sparse-gravity gaps (up to
-        // ~90 min) when it forms `matched`, and a bridged pick would map to only ONE fragment's bounds —
-        // the AASM aggregate below reads the chosen session's stages, so re-merging across fragments is
-        // out of scope and would risk dropping the second fragment's sleep. Select over `matched` as-is.
-        // Mirrors Swift. (#547)
-        val mainNight: DetectedSleep? = SleepStageTotals.mainNightIndex(
+        // BIPHASIC GAP-BRIDGE (#561): a main sleep briefly interrupted by a short wake (a fragment the
+        // detector left split because the wake gap was longer than its sparse-gravity bridge, or a true
+        // biphasic night) is scored as ONE night via [SleepStageTotals.mainNightGroupIndices]: it bridges
+        // adjacent blocks whose gap is < `gapBridgeMaxMin`, scores the bridged span, and returns ALL the
+        // fragments in the winning group. The AASM aggregate below then SUMS the group's stages — in-bed is
+        // the SUM of each fragment's own in-bed span (the inter-fragment wake gap is NOT part of any fragment,
+        // so it is excluded and we do NOT invent WASO for it). A day with no bridgeable gap collapses to the
+        // single block the bare [mainNightIndex] would pick. Intelligence / the Ledger / the Sleep tab all
+        // read this SAME group, so #525 does not regress. Mirrors Swift. (#525 / #561)
+        val mainGroupIdx = SleepStageTotals.mainNightGroupIndices(
             matched.map { SleepStageTotals.NightBlock(it.start, it.end) },
             tzOffsetSeconds, habitualMidsleepSec,
-        )?.let { matched[it] }
+        ) ?: emptyList()
+        val mainGroup: List<DetectedSleep> = mainGroupIdx.map { matched[it] }
 
-        // ── Daily sleep aggregates (AASM) over the MAIN night only (#525) ──────
+        // ── Daily sleep aggregates (AASM) SUMMED over the main-night GROUP (#525 / #561) ──
         var deepS = 0.0
         var remS = 0.0
         var lightS = 0.0
@@ -230,16 +246,16 @@ object AnalyticsEngine {
         var inBedS = 0.0
         var effWeighted = 0.0
         var disturbances = 0
-        if (mainNight != null) {
-            val m = SleepStager.hypnogramMetrics(mainNight)
-            val inBed = (mainNight.end - mainNight.start).toDouble()
-            inBedS = inBed
-            effWeighted = mainNight.efficiency * inBed
-            deepS = m.deepMin * 60.0
-            remS = m.remMin * 60.0
-            lightS = m.lightMin * 60.0
-            tstS = m.tstS
-            disturbances = m.disturbances
+        for (s in mainGroup) {
+            val m = SleepStager.hypnogramMetrics(s)
+            val inBed = (s.end - s.start).toDouble()
+            inBedS += inBed                       // SUM each fragment's in-bed (excludes the wake gap)
+            effWeighted += s.efficiency * inBed   // in-bed-weighted efficiency across the group
+            deepS += m.deepMin * 60.0
+            remS += m.remMin * 60.0
+            lightS += m.lightMin * 60.0
+            tstS += m.tstS
+            disturbances += m.disturbances
         }
         val efficiency = if (inBedS > 0) effWeighted / inBedS else 0.0
 
@@ -443,7 +459,26 @@ object AnalyticsEngine {
         // ── Per-score confidence tiers (mirror Swift ScoreConfidence.derive decisions) ──
         val chargeConfidence = ScoreConfidence.forCharge(recovery, baselines.hrv)
         val effortConfidence = ScoreConfidence.forEffort(strain, hr.size)
-        val restConfidence = ScoreConfidence.forRest(matched.isNotEmpty(), (deepS + remS) > 0)
+        // Rest confidence with H9: downgrade a high-efficiency night whose deep+REM share is implausibly low
+        // to low-confidence (likely staging miss) — honest, no faked stages. tstS/efficiency are the
+        // main-group totals computed above; restorative = deepS + remS. Mirrors Swift.
+        val restConfidence = ScoreConfidence.forRest(
+            hasSession = matched.isNotEmpty(),
+            hasStagedSleep = (deepS + remS) > 0,
+            asleepSeconds = tstS,
+            restorativeSeconds = deepS + remS,
+            efficiency = efficiency,
+        )
+
+        // ── Per-session per-epoch motion (H8) ─────────────────────────────────
+        // The strap's per-epoch movement on the SAME 30 s grid as each session's stages, for the caller to
+        // persist beside `stagesJSON`. A session that can't grid (too little gravity) is omitted, so the
+        // caller persists NULL there rather than a fabricated zero series. Mirrors Swift.
+        val sessionMotionByStart = HashMap<Long, List<Double>>()
+        for (s in matched) {
+            val motion = SleepStager.sessionEpochMotion(s.start, s.end, gravity)
+            if (motion.isNotEmpty()) sessionMotionByStart[s.start] = motion
+        }
 
         return DayResult(
             daily = daily,
@@ -456,6 +491,7 @@ object AnalyticsEngine {
             chargeConfidence = chargeConfidence,
             effortConfidence = effortConfidence,
             restConfidence = restConfidence,
+            sessionMotionByStart = sessionMotionByStart,
         )
     }
 

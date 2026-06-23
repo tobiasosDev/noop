@@ -91,6 +91,80 @@ enum WorkoutSource: Equatable {
             && spans.contains { row.startTs < $0.end && $0.start < row.endTs }
     }
 
+    // MARK: - Cross-source dedup (#687)
+    //
+    // The SAME activity can land twice: once live, Bluetooth-tracked under the strap (rich — real HR
+    // trace, strain, zones, route), and once imported from Health Connect / Apple Health for the same
+    // window (thin — usually just duration + calories). They sit under different deviceIds/sources, so
+    // the workout list shows both as separate sessions. Collapse a pair that is clearly the same bout
+    // (overlapping time window + same sport) to a single richer entry.
+    //
+    // Pure + deterministic so both platforms and the unit test share one rule. Run AFTER the dismissed
+    // filter, BEFORE the final sort, on the combined multi-source list.
+
+    /// Normalised sport key for cross-source matching. Folds the WHOOP camelCase token and a
+    /// human-readable import label to the same key ("TraditionalStrengthTraining" and
+    /// "Traditional Strength Training" → "traditionalstrengthtraining"), case- and space-insensitive,
+    /// so the same activity matches across sources. "detected"/"Activity" both fold to "activity".
+    static func sportKey(_ sport: String) -> String {
+        displaySport(sport).lowercased().filter { !$0.isWhitespace }
+    }
+
+    /// How many "rich" captured signals a row carries — the tiebreak for which duplicate to keep.
+    /// A live-tracked strap session scores high (HR trace, peak, strain, zones, distance); a thin
+    /// import scores low. Energy is the most commonly-present import field so it is weighted lowest.
+    static func richness(_ row: WorkoutRow) -> Int {
+        var n = 0
+        if row.avgHr != nil { n += 1 }
+        if row.maxHr != nil { n += 1 }
+        if row.strain != nil { n += 1 }
+        if let z = row.zonesJSON, !z.isEmpty { n += 1 }
+        if let d = row.distanceM, d > 0 { n += 1 }
+        if let k = row.energyKcal, k > 0 { n += 1 }
+        return n
+    }
+
+    /// True when two rows are the SAME activity from different sources: same normalised sport AND their
+    /// time windows overlap by more than half of the shorter session. The >50%-of-shorter test (not bare
+    /// touching) keeps two genuinely back-to-back same-sport sessions distinct while still catching the
+    /// small start/end drift between a live capture and its import.
+    static func sameActivity(_ a: WorkoutRow, _ b: WorkoutRow) -> Bool {
+        guard sportKey(a.sport) == sportKey(b.sport) else { return false }
+        let overlap = min(a.endTs, b.endTs) - max(a.startTs, b.startTs)
+        guard overlap > 0 else { return false }
+        let shorter = max(1, min(a.endTs - a.startTs, b.endTs - b.startTs))
+        return Double(overlap) > 0.5 * Double(shorter)
+    }
+
+    /// Of two same-activity rows, the one to KEEP. Prefer the richer (more captured signals); on a tie
+    /// prefer the strap-native source (live/manual/detected/whoop carry the real trace) over a thin
+    /// import (Apple Health / Health Connect); final tie → the longer session, then `a` (stable).
+    static func preferred(_ a: WorkoutRow, _ b: WorkoutRow) -> WorkoutRow {
+        let ra = richness(a), rb = richness(b)
+        if ra != rb { return ra > rb ? a : b }
+        let ia = classify(a.source) == .apple, ib = classify(b.source) == .apple
+        if ia != ib { return ia ? b : a }   // keep the non-import on a richness tie
+        let da = a.endTs - a.startTs, db = b.endTs - b.startTs
+        if da != db { return da > db ? a : b }
+        return a
+    }
+
+    /// Collapse cross-source duplicates of the same activity, keeping the richer row of each pair.
+    /// Order-stable: walks the input once, and a row that duplicates one already kept is dropped (with
+    /// the kept row swapped for the richer of the two). Single-source lists pass through unchanged.
+    static func dedupCrossSource(_ rows: [WorkoutRow]) -> [WorkoutRow] {
+        var kept: [WorkoutRow] = []
+        kept.reserveCapacity(rows.count)
+        outer: for row in rows {
+            for i in kept.indices where sameActivity(kept[i], row) {
+                kept[i] = preferred(kept[i], row)
+                continue outer
+            }
+            kept.append(row)
+        }
+        return kept
+    }
+
     // MARK: - Building / preserving rows
 
     /// Carry the captured fields the add/edit sheet does NOT expose (maxHr, strain, distanceM,

@@ -150,15 +150,10 @@ fun OnboardingScreen(viewModel: AppViewModel, onFinished: () -> Unit) {
         modifier = Modifier.fillMaxSize(),
         color = Palette.surfaceBase,
     ) {
-        // A scenic hero behind every step — this is the user's first impression of NOOP, so each
-        // step sits over a softly domain-tinted starfield (the same backdrop the Today rings float
-        // over). The world rotates with the step so the flow feels alive without any logic change.
+        // Design Reset: the flow sits on a flat opaque surfaceBase substrate — no scenic starfield
+        // hero behind the steps (mirrors the iOS onboarding's clean surfaceBase background). Each
+        // step's read-outs live on flat opaque NoopCards over this canvas, not floating on a scene.
         Box(modifier = Modifier.fillMaxSize()) {
-            ScenicHeroBackground(
-                modifier = Modifier.matchParentSize(),
-                domain = page.domain,
-                starCount = 44,
-            )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -234,16 +229,6 @@ private enum class OnboardingPage(val cta: String) {
     Notifications("Continue"),
     Appearance("Continue"),
     Done("Enter NOOP");
-
-    /** The Bevel colour world the step's scenic hero is tinted toward — a gentle rotation so the
-     *  flow feels alive. Charge is the brand anchor; connection steps lean Effort, rest-y steps Rest. */
-    val domain: DomainTheme
-        get() = when (this) {
-            Welcome, WhatItDoes, Wear, Bonded, Done -> DomainTheme.Charge
-            Bluetooth, Connect -> DomainTheme.Effort
-            Expectations, Profile, Notifications, Appearance -> DomainTheme.Rest
-            Import -> DomainTheme.Stress
-        }
 }
 
 // MARK: - Shell
@@ -373,7 +358,8 @@ private fun WelcomeStep() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            // The NOOP mark on a brushed-titanium hero tile (README screen-1 "centered titanium icon").
+            // The NOOP mark centred on a flat brushed-titanium hero tile (the metallic titanium ramp, a
+            // reset token — no gold). Clean and flat: a hairline rim, no bloom.
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(150.dp)) {
                 Box(
                     modifier = Modifier
@@ -890,7 +876,7 @@ private fun NotificationsStep() {
 // A late step that tells new users NOOP's look is theirs to set — the same System / Light / Dark
 // choice that lives in Settings → Appearance, with a live preview. Writing the choice flips the whole
 // app immediately (AppearancePrefs.mode is snapshot state; Palette re-resolves live), so the picker
-// IS the preview — and two mini swatches show both the warm-paper Light and signature navy Dark looks.
+// IS the preview — and two mini swatches show both the warm-paper Light and dark blue-grey looks.
 @Composable
 private fun AppearanceStep() {
     val context = LocalContext.current
@@ -905,8 +891,8 @@ private fun AppearanceStep() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            // Two mini look-swatches so the choice is concrete: warm-paper Light and signature navy
-            // Dark. The one matching the live theme carries a gold accent rim; System shows whichever
+            // Two mini look-swatches so the choice is concrete: warm-paper Light and dark blue-grey.
+            // The one matching the live theme carries an accent (blue) rim; System shows whichever
             // the phone is currently on.
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -954,8 +940,8 @@ private fun AppearanceStep() {
                         Text(
                             when (mode) {
                                 AppearanceMode.SYSTEM -> "Following your phone's light/dark setting."
-                                AppearanceMode.LIGHT -> "Gold on warm paper."
-                                AppearanceMode.DARK -> "The signature navy."
+                                AppearanceMode.LIGHT -> "Deep blue accent on warm paper."
+                                AppearanceMode.DARK -> "Deep blue accent on a dark blue-grey canvas."
                             },
                             style = NoopType.footnote,
                             color = Palette.textTertiary,
@@ -1000,12 +986,14 @@ private fun ThemeSwatch(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // A mini recovery bead in the theme's gold, on the theme's raised card.
+                // A mini score bead in the live accent (reset blue — gold is killed), on the theme's
+                // raised card. Uses the live Palette.accent, not tokens.gold (whose LIGHT value is still
+                // the retired gold), so the bead reads as the reset accent on both swatches.
                 Box(
                     modifier = Modifier
                         .size(26.dp)
                         .clip(CircleShape)
-                        .background(tokens.gold),
+                        .background(Palette.accent),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Box(

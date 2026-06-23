@@ -345,6 +345,48 @@ class WhoopRepository(private val dao: WhoopDao) {
      *  the DAO query; keyed by the IMMUTABLE detected [detectedStartTs]. Returns rows changed. */
     suspend fun updateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int =
         dao.updateSleepStages(deviceId, detectedStartTs, stagesJSON)
+
+    // MARK: - Per-epoch sleep analytics (v18: motionJSON / sleepStateJSON). Banked beside stagesJSON on
+    // the sleepSession row; written/read through targeted methods so the @Upsert recompute/import path
+    // (which never names these columns) preserves them. Port of iOS WhoopStore.persist/sessionMotion +
+    // persist/sessionSleepState. HONESTY: an absent signal is stored as NULL and read back as null, never
+    // a fabricated zero series; an EMPTY input array clears the column.
+
+    /** Persist the SleepStager's per-epoch motion magnitudes for one session (H8), keyed by the immutable
+     *  detected [sessionStart]. Empty clears to NULL. Returns rows changed (0 when no such session). */
+    suspend fun persistSessionMotion(deviceId: String, sessionStart: Long, motionEpochs: List<Double>): Int =
+        dao.updateSessionMotion(deviceId, sessionStart, if (motionEpochs.isEmpty()) null else encodeDoubleArray(motionEpochs))
+
+    /** The persisted per-epoch motion magnitudes for one session, or null when unset / unparseable. */
+    suspend fun sessionMotion(deviceId: String, sessionStart: Long): List<Double>? =
+        dao.sessionMotionJson(deviceId, sessionStart)?.let { decodeDoubleArray(it) }
+
+    /** Per-epoch MOTION series for each of [starts] (detected session start keys), keyed by start (#407).
+     *  Motion is written ONLY under the computed ("-noop") source by the engine, so we read there; an
+     *  imported-only night (no computed twin) has no motion (absent stays absent — an honest empty state,
+     *  never a fabricated zero array). Does NOT resolve the night: the caller has already chosen the
+     *  main-night GROUP and passes those blocks' starts. A start with no stored series is omitted. Mirrors
+     *  iOS Repository.sessionMotions. */
+    suspend fun sessionMotions(strapDeviceId: String, starts: List<Long>): Map<Long, List<Double>> {
+        if (starts.isEmpty()) return emptyMap()
+        val computedId = computedDeviceId(strapDeviceId)
+        val out = HashMap<Long, List<Double>>()
+        for (start in starts) {
+            val m = dao.sessionMotionJson(computedId, start)?.let { decodeDoubleArray(it) }
+            if (!m.isNullOrEmpty()) out[start] = m
+        }
+        return out
+    }
+
+    /** Persist the decoded v18 band sleep_state per epoch for one session (H2), keyed by [sessionStart].
+     *  Empty clears to NULL. Returns rows changed. */
+    suspend fun persistSessionSleepState(deviceId: String, sessionStart: Long, states: List<Int>): Int =
+        dao.updateSessionSleepState(deviceId, sessionStart, if (states.isEmpty()) null else encodeIntArray(states))
+
+    /** The persisted decoded v18 band sleep_state per epoch for one session, or null when unset. */
+    suspend fun sessionSleepState(deviceId: String, sessionStart: Long): List<Int>? =
+        dao.sessionSleepStateJson(deviceId, sessionStart)?.let { decodeIntArray(it) }
+
     suspend fun upsertMetricSeries(rows: List<MetricSeriesRow>) = dao.upsertMetricSeries(rows)
     suspend fun upsertJournal(rows: List<JournalEntry>) = dao.upsertJournal(rows)
     suspend fun upsertWorkouts(rows: List<WorkoutRow>) = dao.upsertWorkouts(rows)
@@ -617,15 +659,28 @@ class WhoopRepository(private val dao: WhoopDao) {
      * fill the days the import doesn't cover. Port of macOS Repository.mergeDaily.
      */
     suspend fun daysMerged(deviceId: String): List<DailyMetric> =
-        mergeDaily(imported = dao.days(deviceId), computed = dao.days(computedDeviceId(deviceId)))
+        mergeDaily(
+            imported = dao.days(deviceId),
+            computed = dao.days(computedDeviceId(deviceId)),
+            // H5 (#509): days the user hand-edited the sleep of (the edit lives under the computed source);
+            // on those days the computed sleep fields win over a re-imported night.
+            userEditedDays = userEditedDays(dao.editedSleepSessions(computedDeviceId(deviceId))),
+        )
 
     /**
      * Reactive merged daily metrics (oldest first): imported [deviceId] rows win per day,
      * computed "<deviceId>-noop" rows gap-fill. Emits whenever either source changes.
+     *
+     * H5 (#509): also keys off the computed source's user-edited sessions so a hand-edited night's sleep
+     * figures keep precedence over a re-imported night (and the chart re-emits when an edit lands).
      */
     fun daysMergedFlow(deviceId: String): Flow<List<DailyMetric>> =
-        dao.daysFlow(deviceId).combine(dao.daysFlow(computedDeviceId(deviceId))) { imported, computed ->
-            mergeDaily(imported = imported, computed = computed)
+        combine(
+            dao.daysFlow(deviceId),
+            dao.daysFlow(computedDeviceId(deviceId)),
+            dao.editedSleepSessionsFlow(computedDeviceId(deviceId)),
+        ) { imported, computed, edited ->
+            mergeDaily(imported = imported, computed = computed, userEditedDays = userEditedDays(edited))
         }
 
     /**
@@ -716,6 +771,13 @@ class WhoopRepository(private val dao: WhoopDao) {
      * Read one candidate's rows for the window: its metricSeries, plus the matching DailyMetric column
      * for any day the metricSeries doesn't carry (a Bluetooth-only WHOOP 5 user has values in the daily
      * columns but not the long-format series). Ascending by day.
+     *
+     * The DailyMetric read uses a +1-day upper buffer ([bufferDayAfter]). A night is keyed on its LOCAL
+     * WAKE day, so the row backing the SELECTED day's Rest can sort on the day AFTER the caller's `to`
+     * (a just-after-midnight wake, or a UTC+ user whose wake-day rolls a calendar day ahead of the
+     * requested bound). Without the buffer that banked row was excluded and Today fell back to the latest
+     * historical Rest (#614). The buffer only WIDENS the daily read; `byDay`'s metricSeries-first
+     * precedence is unchanged, so an imported series point still wins its day.
      */
     private suspend fun resolvedRows(
         candidate: MetricSourceCandidate,
@@ -724,13 +786,20 @@ class WhoopRepository(private val dao: WhoopDao) {
     ): List<Pair<String, Double>> {
         val byDay = LinkedHashMap<String, Double>()
         for (row in dao.metricSeries(candidate.source, candidate.key, from, to)) byDay[row.day] = row.value
-        for (row in dao.dailyMetricsRange(candidate.source, from, to)) {
+        for (row in dao.dailyMetricsRange(candidate.source, from, bufferDayAfter(to))) {
             if (!byDay.containsKey(row.day)) {
                 dailyColumn(candidate.key, row)?.let { byDay[row.day] = it }
             }
         }
         return byDay.entries.sortedBy { it.key }.map { it.key to it.value }
     }
+
+    /** The "yyyy-MM-dd" day one calendar day AFTER [day], or [day] verbatim when it isn't a parseable
+     *  ISO date (e.g. the wide-open "9999-99-99" sentinel Today passes — already past every real day, so
+     *  no buffer is needed). The +1-day read buffer in [resolvedRows] so a wake-day-keyed night that sorts
+     *  just past the requested upper bound still resolves the selected day (#614). */
+    private fun bufferDayAfter(day: String): String =
+        runCatching { java.time.LocalDate.parse(day).plusDays(1).toString() }.getOrDefault(day)
 
     /**
      * A compact snapshot of how much history each source holds, for the Data Sources "Freshness
@@ -799,6 +868,34 @@ class WhoopRepository(private val dao: WhoopDao) {
 
         /** Build a repository backed by the process-wide singleton database. */
         fun from(context: Context): WhoopRepository = WhoopRepository(WhoopDatabase.get(context))
+
+        // MARK: - Compact per-epoch JSON (v18 motionJSON / sleepStateJSON), byte-equivalent with Swift's
+        // JSONEncoder/JSONDecoder on [Double] / [Int]: a bare `[..]` array, whole doubles emitted WITHOUT a
+        // trailing `.0` (Swift encodes 3.0 as `3`, 1.5 as `1.5`). Hand-built rather than org.json so the
+        // string round-trips identically across platforms; decode tolerates either form.
+
+        /** A single double in Swift JSONEncoder's form: an integral value as a bare integer (`3`, `0`),
+         *  otherwise its shortest decimal (`1.5`, `12.25`). */
+        internal fun encodeDouble(x: Double): String =
+            if (x.isFinite() && x == kotlin.math.floor(x) && !x.isInfinite()) x.toLong().toString() else x.toString()
+
+        internal fun encodeDoubleArray(xs: List<Double>): String =
+            xs.joinToString(separator = ",", prefix = "[", postfix = "]") { encodeDouble(it) }
+
+        internal fun encodeIntArray(xs: List<Int>): String =
+            xs.joinToString(separator = ",", prefix = "[", postfix = "]") { it.toString() }
+
+        /** Parse a bare JSON number array to doubles, or null when unparseable (absent stays absent). */
+        internal fun decodeDoubleArray(json: String): List<Double>? = runCatching {
+            val arr = org.json.JSONArray(json)
+            List(arr.length()) { arr.getDouble(it) }
+        }.getOrNull()
+
+        /** Parse a bare JSON number array to ints, or null when unparseable. */
+        internal fun decodeIntArray(json: String): List<Int>? = runCatching {
+            val arr = org.json.JSONArray(json)
+            List(arr.length()) { arr.getInt(it) }
+        }.getOrNull()
 
         /**
          * Candidate (source, key) pairs to try for [key], in precedence order, given the user's
@@ -869,6 +966,16 @@ class WhoopRepository(private val dao: WhoopDao) {
          * (strap-only WHOOP 5 users). Also handles the Apple-compatible sleep aliases (asleep_min /
          * deep_min / rem_min / core_min) the resolver may request. Keys with no daily column return
          * null. Mirrors macOS Repository.dailyColumn.
+         *
+         * `sleep_performance` (the Rest composite, 0–100) is NOT a stored column: IntelligenceEngine
+         * persists it as a metricSeries point. But a Bluetooth-only WHOOP 5 user — and, crucially, the
+         * SELECTED (just-synced) day before the heavy daily pass has projected the series — has the
+         * night's totals banked on the DailyMetric row while the metricSeries point is still missing.
+         * Without this case the resolver returned no Rest for that day and Today borrowed the latest
+         * historical value (#614). Derive it on the fly from the same banked totals via the single
+         * source of truth [com.noop.analytics.RestScorer.restFromDaily] (the SAME composite the series
+         * carries), so the day resolves to its own Rest. Consistency is left to the scorer's neutral
+         * default here (the daily row carries no regularity term).
          */
         internal fun dailyColumn(key: String, d: DailyMetric): Double? = when (key) {
             "recovery" -> d.recovery
@@ -883,6 +990,7 @@ class WhoopRepository(private val dao: WhoopDao) {
             "sleep_deep_min", "deep_min" -> d.deepMin
             "sleep_rem_min", "rem_min" -> d.remMin
             "sleep_light_min", "core_min" -> d.lightMin
+            "sleep_performance" -> com.noop.analytics.RestScorer.restFromDaily(d)
             "steps" -> d.steps?.toDouble()
             "active_kcal", "energy_kcal" -> d.activeKcalEst
             else -> null
@@ -892,10 +1000,16 @@ class WhoopRepository(private val dao: WhoopDao) {
          * Imported daily rows win per day; computed rows fill the days the import doesn't
          * cover. Returns oldest→newest by day string (lexicographic = chronological for
          * YYYY-MM-DD). Port of macOS Repository.mergeDaily.
+         *
+         * H5 (#509): a day in [userEditedDays] is one the user hand-edited the sleep of. For those days
+         * the COMPUTED row's SLEEP fields (the edit) take precedence over the import — otherwise a
+         * re-imported WHOOP/Apple night would silently mask the correction. Non-sleep fields still follow
+         * the imports-win merge, and every NON-edited day is unchanged (the default empty set).
          */
         internal fun mergeDaily(
             imported: List<DailyMetric>,
             computed: List<DailyMetric>,
+            userEditedDays: Set<String> = emptySet(),
         ): List<DailyMetric> {
             val byDay = LinkedHashMap<String, DailyMetric>()
             for (d in computed) byDay[d.day] = d // computed first…
@@ -911,7 +1025,7 @@ class WhoopRepository(private val dao: WhoopDao) {
                 // though, writes a "my-whoop" row with recovery/strain/sleep-stages NULL — without this
                 // it would BLANK a strap-computed day (and a stale one already written stays blanked).
                 // Coalescing every nullable field both prevents that and HEALS days already shadowed. (#112)
-                byDay[d.day] = if (c == null) d else d.copy(
+                val merged = if (c == null) d else d.copy(
                     totalSleepMin = d.totalSleepMin ?: c.totalSleepMin,
                     efficiency = d.efficiency ?: c.efficiency,
                     deepMin = d.deepMin ?: c.deepMin,
@@ -929,8 +1043,36 @@ class WhoopRepository(private val dao: WhoopDao) {
                     steps = d.steps ?: c.steps,
                     activeKcalEst = d.activeKcalEst ?: c.activeKcalEst,
                 )
+                // H5: on an edited day, the computed (edit-derived) SLEEP fields win over the import.
+                byDay[d.day] = if (c != null && d.day in userEditedDays) {
+                    merged.copy(
+                        totalSleepMin = c.totalSleepMin,
+                        efficiency = c.efficiency,
+                        deepMin = c.deepMin,
+                        remMin = c.remMin,
+                        lightMin = c.lightMin,
+                        disturbances = c.disturbances,
+                    )
+                } else {
+                    merged
+                }
             }
             return byDay.values.sortedBy { it.day }
+        }
+
+        /**
+         * The set of LOCAL wake-days that carry a user-edited sleep session — keyed exactly as
+         * `DailyMetric.day` (the engine's offset-local-day keyer, matching [mergeSleep]'s endDay). Drives
+         * the H5 edit-merge precedence in [mergeDaily]. Port of macOS Repository.userEditedDays.
+         */
+        internal fun userEditedDays(sessions: List<SleepSession>): Set<String> {
+            val days = HashSet<String>()
+            for (s in sessions) {
+                if (!s.userEdited) continue
+                val offsetSec = (java.util.TimeZone.getDefault().getOffset(s.endTs * 1000) / 1000).toLong()
+                days.add(com.noop.analytics.AnalyticsEngine.dayString(s.endTs, offsetSec))
+            }
+            return days
         }
 
         /**

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,10 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -40,16 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -231,51 +223,29 @@ private fun SyncStatusSection(live: LiveState, onSyncNow: () -> Unit) {
                     )
                 }
 
-                // "Sync now" — disabled unless connected+bonded and not already syncing; while syncing it
-                // shows an indeterminate spinner (total pending records are unknowable from the protocol).
-                OutlinedButton(
-                    onClick = onSyncNow,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics {
-                            contentDescription = if (canSync) {
-                                "Sync now. Pulls your strap's stored history immediately, without waiting " +
-                                    "for the next automatic sync."
-                            } else if (live.backfilling) {
-                                "Sync now. A sync is already in progress."
-                            } else {
-                                "Sync now. Connect your strap first."
-                            }
-                        },
+                // "Sync now" — routed through the unified NoopButton (Secondary, full-width) so the label
+                // sits centred at the standard control height like every other primary control, matching
+                // HealthView.swift's `NoopButton(..., kind: .secondary, fullWidth: true)`. Disabled unless
+                // connected+bonded and not already syncing; the gated BLE entry point is a safe no-op
+                // otherwise. (Total pending records are unknowable from the protocol, so no progress %.)
+                NoopButton(
+                    text = if (live.backfilling) "Syncing…" else "Sync now",
+                    leadingIcon = Icons.Filled.Sync,
+                    kind = NoopButtonKind.Secondary,
+                    fullWidth = true,
                     enabled = canSync,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                ) {
-                    if (live.backfilling) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .padding(end = 4.dp),
-                            strokeWidth = 2.dp,
-                            color = Palette.accent,
-                        )
-                    } else {
-                        Icon(
-                            Icons.Filled.Sync,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .padding(end = 4.dp),
-                        )
-                    }
-                    Text(
-                        if (live.backfilling) "Syncing…" else "Sync now",
-                        style = NoopType.captionNumber,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                    )
-                }
+                    modifier = Modifier.semantics {
+                        contentDescription = if (canSync) {
+                            "Sync now. Pulls your strap's stored history immediately, without waiting " +
+                                "for the next automatic sync."
+                        } else if (live.backfilling) {
+                            "Sync now. A sync is already in progress."
+                        } else {
+                            "Sync now. Connect your strap first."
+                        }
+                    },
+                    onClick = onSyncNow,
+                )
 
                 Text(
                     syncHelperText(live),
@@ -450,29 +420,37 @@ private fun HealthContributorsSection(day: DailyMetric?) {
         }
         NoopCard {
             Column(verticalArrangement = Arrangement.spacedBy(Metrics.space16)) {
+                // Recovery-world tints, matched to HealthView.swift's RecoveryContributorsSection (NO gold):
+                // HRV = teal (metricCyan), Resting HR = WHOOP green (chargeColor, the recovery contributor
+                // hue), Sleep + Respiratory share the blue sleep world (sleepLight). Each bar reveals with
+                // a staggered fade+rise, mirroring iOS `.staggeredAppear(index:)`.
                 ContributorBar(
                     label = "HRV",
                     readout = hrv?.let { "${it.roundToInt()} ms" } ?: "—",
                     fraction = hrv?.let { (it - 20.0) / 100.0 },
-                    color = Palette.gold,
+                    color = Palette.metricCyan,
+                    modifier = Modifier.staggeredAppear(0),
                 )
                 ContributorBar(
                     label = "Resting HR",
                     readout = rhr?.let { "${it.roundToInt()} bpm" } ?: "—",
                     fraction = rhr?.let { 1.0 - ((it - 40.0) / 40.0) },
-                    color = Palette.goldDeep,
+                    color = Palette.chargeColor,
+                    modifier = Modifier.staggeredAppear(1),
                 )
                 ContributorBar(
                     label = "Sleep",
                     readout = sleepMin?.let { sleepHoursText(it) } ?: "—",
                     fraction = sleepMin?.let { (it / 60.0) / 8.0 },
                     color = Palette.sleepLight,
+                    modifier = Modifier.staggeredAppear(2),
                 )
                 ContributorBar(
                     label = "Respiratory",
                     readout = resp?.let { String.format(Locale.US, "%.1f rpm", it) } ?: "—",
                     fraction = resp?.let { 1.0 - ((it - 12.0) / 8.0) },
-                    color = Palette.sleepDeep,
+                    color = Palette.sleepLight,
+                    modifier = Modifier.staggeredAppear(3),
                 )
                 Text(
                     "Baselines learned on-device over 14 days. Bars read each signal against a " +
@@ -491,32 +469,30 @@ private fun sleepHoursText(totalMin: Double): String {
     return "${t / 60}h ${t % 60}m"
 }
 
-/** One labelled contributor bar in the shared stage/zone-bar style: a label + right-aligned read-out
- *  over an inset track with a round-capped metric-hue fill. A null fraction renders an empty track. */
+/** One labelled contributor bar: a label + right-aligned read-out over the NOOP signature segmented
+ *  [PipBar] (metric-hue pips that cascade up to the strength on appear/change), mirroring
+ *  HealthView.swift's `ContributorBar` / `PipBar(value:tint:)`. A null fraction renders an empty
+ *  (calibrating) bar — no fabricated fill. */
 @Composable
-private fun ContributorBar(label: String, readout: String, fraction: Double?, color: Color) {
-    val fillFrac = fraction?.coerceIn(0.0, 1.0)?.toFloat() ?: 0f
-    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space6)) {
+private fun ContributorBar(
+    label: String,
+    readout: String,
+    fraction: Double?,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    // PipBar takes a 0…100 value; map the presentation fraction up onto that span (null → empty bar).
+    val strength = fraction?.coerceIn(0.0, 1.0)?.let { (it * 100.0).toFloat() } ?: 0f
+    Column(
+        modifier = modifier.semantics { contentDescription = "$label $readout" },
+        verticalArrangement = Arrangement.spacedBy(Metrics.space6),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Overline(label, modifier = Modifier.weight(1f))
             Text(readout, style = NoopType.captionNumber, color = Palette.textPrimary)
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(Metrics.progressHeight)
-                .clip(RoundedCornerShape(Metrics.cornerPill))
-                .background(Palette.surfaceInset)
-                .semantics { contentDescription = "$label $readout" }
-                .drawBehind { if (fillFrac > 0f) drawContributorFill(color, fillFrac) },
-        )
+        PipBar(value = strength, tint = color)
     }
-}
-
-private fun DrawScope.drawContributorFill(color: Color, frac: Float) {
-    val w = (size.width * frac).coerceAtLeast(size.height)
-    val r = size.height / 2f
-    drawRoundRect(color = color, size = Size(w, size.height), cornerRadius = CornerRadius(r, r))
 }
 
 // MARK: - Fitness Age
@@ -650,12 +626,24 @@ private fun VitalityHero(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Overline("Vitality")
-                    Text("${vitality.roundToInt()}", style = NoopType.display(56f), color = Palette.chargeColor)
+                    // WHITE (textPrimary) headline that ticks up — matches HealthView.swift's reset: the
+                    // synthesis number is neutral, not the charge/recovery hue.
+                    CountUpText(
+                        value = vitality,
+                        format = { it.roundToInt().toString() },
+                        style = NoopType.display(56f),
+                        color = Palette.textPrimary,
+                    )
                     Text("out of 100", style = NoopType.footnote, color = Palette.textTertiary)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Overline("Body Age")
-                    Text("${bodyAge.roundToInt()}", style = NoopType.number(34f), color = Palette.textPrimary)
+                    CountUpText(
+                        value = bodyAge,
+                        format = { it.roundToInt().toString() },
+                        style = NoopType.number(34f),
+                        color = Palette.textPrimary,
+                    )
                     Text(
                         if (delta == 0) "about your age"
                         else "${kotlin.math.abs(delta)} ${yearWord(delta)} ${if (younger) "younger" else "older"}",
@@ -704,16 +692,20 @@ private fun FitnessAgeHero(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Overline("Fitness Age")
-                    Text(
-                        text = "$shown",
+                    // The hero age is WHITE (textPrimary) and ticks up on appear / weekly refresh — the key
+                    // iOS reset: the headline number is the neutral synthesis colour, NOT the recovery/charge
+                    // hue. Mirrors HealthView.swift's `CountUpText(..., color: textPrimary)`.
+                    CountUpText(
+                        value = shown.toDouble(),
+                        format = { it.roundToInt().toString() },
                         style = NoopType.display(56f),
-                        color = Palette.chargeColor,
+                        color = Palette.textPrimary,
                     )
                     Text(
                         text = deltaWord,
                         style = NoopType.subhead,
                         color = if (deltaYears == 0) Palette.textSecondary
-                        else if (younger) Palette.chargeColor else Palette.statusWarning,
+                        else if (younger) Palette.statusPositive else Palette.statusWarning,
                     )
                 }
                 if (vo2max != null) {
@@ -986,10 +978,15 @@ private fun HeartRateSection(live: LiveState, hrMax: Int, bpm: Int?) {
             trailing = if (derived) "from R-R" else null,
         )
 
-        // The live HR hero floats over a Charge-world scenic backdrop (the Health screen's colour
-        // world) with the card tinted rose — heart-rate's metric accent. Mirrors HealthView.swift.
-        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(Metrics.cardRadius))) {
-            ScenicHeroBackground(modifier = Modifier.matchParentSize(), domain = DomainTheme.Charge)
+        // The live HR hero is Apple-flat — a plain card tinted rose (heart-rate's metric accent) over a
+        // SUBTLE time-of-day backdrop, NOT a scenic starfield/bloom. Mirrors HealthView.swift's reset:
+        // "No scenic starfield / bloom: fill contrast carries the edge (Apple-flat)."
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Metrics.cardRadius))
+                .timeOfDayBackground(),
+        ) {
             NoopCard(padding = Metrics.space18, tint = Palette.metricRose) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // Card header: title + subtitle on the left, live bpm read-out right.
@@ -1042,11 +1039,22 @@ private fun HeartRateSection(live: LiveState, hrMax: Int, bpm: Int?) {
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Text(
-                                text = displayHr?.toString() ?: "—",
-                                style = NoopType.display(72f),
-                                color = if (hasLiveHr) zoneColor else Palette.textTertiary,
-                            )
+                            // The big fallback numeral ticks up to the live value (mirrors HealthView.swift's
+                            // CountUpText); a crisp em-dash when there's no HR yet.
+                            if (displayHr != null) {
+                                CountUpText(
+                                    value = displayHr.toDouble(),
+                                    format = { it.roundToInt().toString() },
+                                    style = NoopType.display(72f),
+                                    color = zoneColor,
+                                )
+                            } else {
+                                Text(
+                                    text = "—",
+                                    style = NoopType.display(72f),
+                                    color = Palette.textTertiary,
+                                )
+                            }
                             Text("bpm", style = NoopType.subhead, color = Palette.textTertiary)
                         }
                     }

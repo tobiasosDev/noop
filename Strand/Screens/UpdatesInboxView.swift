@@ -21,7 +21,7 @@ struct UpdatesInboxView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .background { ScenicHeroBackground(domain: .charge, starCount: 24, fadesToBase: true) }
+                .background(StrandPalette.surfaceRaised)
             Divider().overlay(StrandPalette.hairline)
             content
             if !updateStore.items.isEmpty {
@@ -214,7 +214,7 @@ private struct UpdateRow: View {
                     }
                     Spacer(minLength: 0)
                     if !item.read {
-                        Circle().fill(StrandPalette.gold)
+                        Circle().fill(StrandPalette.statusCritical)
                             .frame(width: 8, height: 8)
                             .padding(.top, 5)
                             .accessibilityHidden(true)

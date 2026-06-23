@@ -77,6 +77,73 @@ final class WorkoutSourceTests: XCTestCase {
         XCTAssertTrue(WorkoutSource.isDismissed(r, spans: spans))
     }
 
+    // MARK: - cross-source dedup (#687)
+
+    private func richRow(start: Int, end: Int, sport: String, source: String) -> WorkoutRow {
+        // A live strap session: HR trace, peak, strain, zones, distance, energy all captured.
+        WorkoutRow(startTs: start, endTs: end, sport: sport, source: source,
+                   durationS: Double(end - start), energyKcal: 600, avgHr: 150, maxHr: 178,
+                   strain: 14.0, distanceM: 10_000, zonesJSON: #"{"z1":10}"#, notes: nil)
+    }
+    private func thinImport(start: Int, end: Int, sport: String, source: String) -> WorkoutRow {
+        // A thin Health Connect / Apple import: only duration + calories.
+        WorkoutRow(startTs: start, endTs: end, sport: sport, source: source,
+                   durationS: Double(end - start), energyKcal: 590, avgHr: nil, maxHr: nil,
+                   strain: nil, distanceM: nil, zonesJSON: nil, notes: nil)
+    }
+
+    func testSportKeyFoldsCamelCaseAndSpacing() {
+        XCTAssertEqual(WorkoutSource.sportKey("TraditionalStrengthTraining"),
+                       WorkoutSource.sportKey("Traditional Strength Training"))
+        XCTAssertEqual(WorkoutSource.sportKey("Running"), WorkoutSource.sportKey("running"))
+        XCTAssertNotEqual(WorkoutSource.sportKey("Running"), WorkoutSource.sportKey("Cycling"))
+    }
+
+    func testSameActivityRequiresSportAndMajorityOverlap() {
+        let live = richRow(start: 1000, end: 4600, sport: "Running", source: "whoop")        // 60 min
+        let importDrift = thinImport(start: 1040, end: 4570, sport: "Running", source: "health-connect")
+        XCTAssertTrue(WorkoutSource.sameActivity(live, importDrift))      // same sport, near-full overlap
+        // Different sport in the same window is NOT the same activity.
+        let otherSport = thinImport(start: 1040, end: 4570, sport: "Cycling", source: "health-connect")
+        XCTAssertFalse(WorkoutSource.sameActivity(live, otherSport))
+        // Back-to-back same-sport sessions that only touch at the edge stay distinct (<50% overlap).
+        let nextRun = richRow(start: 4500, end: 8100, sport: "Running", source: "whoop")
+        XCTAssertFalse(WorkoutSource.sameActivity(live, nextRun))
+    }
+
+    func testDedupCollapsesLiveAndImportKeepingRicher() {
+        let live = richRow(start: 1000, end: 4600, sport: "Running", source: "whoop")
+        let hc = thinImport(start: 1030, end: 4580, sport: "Running", source: "health-connect")
+        // Order shouldn't matter — the richer (live) row always survives.
+        let a = WorkoutSource.dedupCrossSource([live, hc])
+        let b = WorkoutSource.dedupCrossSource([hc, live])
+        XCTAssertEqual(a.count, 1)
+        XCTAssertEqual(b.count, 1)
+        XCTAssertEqual(a.first?.source, "whoop")
+        XCTAssertEqual(b.first?.source, "whoop")
+        XCTAssertEqual(a.first?.strain, 14.0)   // kept the row with the captured trace
+    }
+
+    func testDedupKeepsNonImportOnRichnessTie() {
+        // Two equally-thin rows: a strap "manual" live row and a Health Connect import. Keep the strap one.
+        let manual = thinImport(start: 1000, end: 4600, sport: "Walking", source: "manual")
+        let hc = thinImport(start: 1010, end: 4590, sport: "Walking", source: "health-connect")
+        let out = WorkoutSource.dedupCrossSource([hc, manual])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out.first?.source, "manual")
+    }
+
+    func testDedupLeavesDistinctSessionsAndIsStable() {
+        let run = richRow(start: 1000, end: 4600, sport: "Running", source: "whoop")
+        let lift = richRow(start: 5000, end: 8600, sport: "Strength Training", source: "whoop")
+        let hcRun = thinImport(start: 1020, end: 4580, sport: "Running", source: "health-connect")
+        let out = WorkoutSource.dedupCrossSource([run, lift, hcRun])
+        // The run pair collapses to one; the lift is untouched. Two sessions, original order preserved.
+        XCTAssertEqual(out.count, 2)
+        XCTAssertEqual(out[0].sport, "Running")
+        XCTAssertEqual(out[1].sport, "Strength Training")
+    }
+
     // MARK: - buildManualRow validation
 
     func testBuildManualRowHappyPath() {

@@ -9,17 +9,20 @@ struct SupportView: View {
     var body: some View {
         ScreenScaffold(title: "Support",
                        subtitle: "\(ProjectInfo.appName) is free and always will be. If it's useful to you, you can chip in to help with development and testing costs. Totally optional.") {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                     SectionHeader("Support the build", overline: "Optional")
                     donateCard
                 }
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                .staggeredAppear(index: 0)
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                     SectionHeader("Help & Contact", overline: "Get in touch")
                     contactCard
                     builtOnCard
                 }
+                .staggeredAppear(index: 1)
                 disclaimerCard
+                    .staggeredAppear(index: 2)
             }
         }
     }
@@ -120,11 +123,11 @@ struct SupportView: View {
                         .font(StrandFont.footnote).foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(NoopMetrics.space3).frame(maxWidth: .infinity, alignment: .leading)
                 .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 // Pick a coin → scan the QR or copy the address.
-                HStack(spacing: 8) {
+                HStack(spacing: NoopMetrics.space2) {
                     ForEach(ProjectInfo.donations) { coin in
                         let on = selected == coin.symbol
                         Button { withAnimation(.easeOut(duration: 0.15)) { selected = coin.symbol } } label: {
@@ -156,7 +159,7 @@ struct SupportView: View {
                                 Label(copied == coin.symbol ? "Copied!" : "Copy address",
                                       systemImage: copied == coin.symbol ? "checkmark" : "doc.on.doc")
                             }
-                            .buttonStyle(.bordered).tint(StrandPalette.accent)
+                            .buttonStyle(NoopButtonStyle(.secondary))
                             .accessibilityLabel("Copy \(coin.name) address")
                         }
                         Spacer(minLength: 0)

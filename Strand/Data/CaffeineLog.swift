@@ -65,6 +65,48 @@ public enum CaffeineDecay {
                                      halfLifeHours: Double = defaultHalfLifeHours) -> Bool {
         fractionRemaining(hoursElapsed: hoursElapsed, halfLifeHours: halfLifeHours) > threshold
     }
+
+    // MARK: - Cutoff window (PR#566, mvanhorn) — the latest caffeine time before bed.
+    //
+    // Reframes `hoursUntilFraction` as a clock-friendly "stop drinking after" cutoff: given a bedtime and
+    // an acceptable residual fraction at bedtime, the cutoff is `bedtime − hoursUntilFraction(target)`. A
+    // dose at the cutoff decays to exactly `targetResidualFraction` by bedtime; anything later still has
+    // more than that on board. Same decay model as the "still active" hint — only the framing changes.
+
+    /// Default acceptable residual at bedtime: a quarter of the dose (two half-lives), matching the
+    /// `isStillActive` threshold so "still active" and "past cutoff" agree.
+    public static let defaultBedtimeResidual = 0.25
+
+    /// Hours BEFORE bedtime the cutoff falls — the lead time over which a dose decays to
+    /// `targetResidualFraction`. A pure number (no clock); the UI subtracts it from bedtime.
+    public static func cutoffLeadHours(targetResidualFraction: Double = defaultBedtimeResidual,
+                                       halfLifeHours: Double = defaultHalfLifeHours) -> Double {
+        hoursUntilFraction(targetResidualFraction, halfLifeHours: halfLifeHours)
+    }
+
+    /// The caffeine cutoff as minutes-since-midnight, given a `bedtimeMinutes` (also since midnight),
+    /// normalised into [0, 1440) so an early bedtime + long lead doesn't read as a negative time. Pure.
+    public static func cutoffMinutesSinceMidnight(bedtimeMinutes: Int,
+                                                  targetResidualFraction: Double = defaultBedtimeResidual,
+                                                  halfLifeHours: Double = defaultHalfLifeHours) -> Int {
+        let leadMin = Int(cutoffLeadHours(targetResidualFraction: targetResidualFraction,
+                                          halfLifeHours: halfLifeHours) * 60)
+        let raw = bedtimeMinutes - leadMin
+        return ((raw % 1440) + 1440) % 1440
+    }
+
+    /// True when an intake at `intakeMinutes` (minutes since midnight) is later than the cutoff for
+    /// `bedtimeMinutes` — i.e. it'll still have more than `targetResidualFraction` on board at bedtime.
+    public static func isPastCutoff(intakeMinutes: Int,
+                                    bedtimeMinutes: Int,
+                                    targetResidualFraction: Double = defaultBedtimeResidual,
+                                    halfLifeHours: Double = defaultHalfLifeHours) -> Bool {
+        let leadMin = Int(cutoffLeadHours(targetResidualFraction: targetResidualFraction,
+                                          halfLifeHours: halfLifeHours) * 60)
+        // Compare on the raw (un-normalised) axis so a cutoff in the previous evening makes every
+        // positive same-day intake "past cutoff".
+        return intakeMinutes > (bedtimeMinutes - leadMin)
+    }
 }
 
 /// One logged caffeine intake — a timestamp and an OPTIONAL amount in mg. Codable for UserDefaults JSON.

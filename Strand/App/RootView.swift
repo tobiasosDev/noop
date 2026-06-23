@@ -122,10 +122,17 @@ struct RootView: View {
                         .tag(item)
                 }
                 .listStyle(.sidebar)
+                // Hide the macOS system sidebar VIBRANCY material so the list rows sit on the same
+                // flat surfaceBase as the brand header above — without this the translucent list read
+                // as a lighter panel below an opaque black header strip (the "black upper" seam).
+                .scrollContentBackground(.hidden)
 
                 Divider().overlay(StrandPalette.hairline)
                 SidebarStatus().padding(.horizontal, 14).padding(.vertical, 12)
             }
+            // One continuous flat WHOOP-grey surface behind the brand header, the list rows, and the
+            // status pill — no black-vs-vibrancy seam (Design Reset, Aaron 2026-06-23).
+            .background(StrandPalette.surfaceBase)
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
             detail

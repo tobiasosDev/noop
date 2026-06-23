@@ -199,19 +199,11 @@ struct CoachView: View {
 
                 HStack {
                     if coach.provider == .custom {
-                        Button(action: connectCustom) {
-                            Text("Connect").frame(minWidth: 90)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
-                        .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        NoopButton("Connect", systemImage: "link", kind: .primary, action: connectCustom)
+                            .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     } else {
-                        Button(action: saveKey) {
-                            Text("Save key").frame(minWidth: 90)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
-                        .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        NoopButton("Save key", systemImage: "key.fill", kind: .primary, action: saveKey)
+                            .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     Spacer()
                 }
@@ -270,8 +262,7 @@ struct CoachView: View {
                         .accessibilityLabel("Custom model id")
 
                     Button("Use", action: applyCustomModel)
-                        .buttonStyle(.bordered)
-                        .tint(StrandPalette.accent)
+                        .buttonStyle(NoopButtonStyle(.secondary))
                         .disabled(customModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityLabel("Use custom model")
                 }
@@ -471,20 +462,26 @@ struct CoachView: View {
                 .onSubmit { send(draft) }
                 .accessibilityLabel("Question")
 
+            // Docked icon-only send affordance: a crisp accent-filled square sized to the
+            // composer row (not the full 48pt control height), so it routes through the same
+            // token fill/label colours as the button system without overpowering the field.
             Button {
                 send(draft)
             } label: {
-                if coach.sending {
-                    ProgressView().controlSize(.small)
-                        .frame(width: 44, height: 36)
-                } else {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 36)
+                Group {
+                    if coach.sending {
+                        ProgressView().controlSize(.small).tint(StrandPalette.goldDeepText)
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
                 }
+                .frame(width: 44, height: 38)
+                .foregroundStyle(StrandPalette.goldDeepText)
+                .background(StrandPalette.accent,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(StrandPalette.accent)
+            .buttonStyle(.plain)
             .disabled(coach.sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel("Send")
         }

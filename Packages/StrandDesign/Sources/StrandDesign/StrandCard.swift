@@ -42,12 +42,10 @@ public struct FrostedCardSurface: View {
         // Base fill: tinted cards deepen into the 150° navy bevel (#15243C → #0B1424,
         // = surfaceOverlay → cardFillBottom); neutral cards sit on the flat raised
         // surface. The 150° axis ≈ top-trailing → bottom-leading.
-        let baseFill: AnyShapeStyle = tint == nil
-            ? AnyShapeStyle(StrandPalette.surfaceRaised)
-            : AnyShapeStyle(LinearGradient(
-                colors: [StrandPalette.surfaceOverlay, StrandPalette.cardFillBottom],
-                startPoint: .topTrailing, endPoint: .bottomLeading
-            ))
+        // Design Reset: a flat raised fill reads cleaner than the navy bevel gradient. Tinted and
+        // neutral cards now share the same flat surface; tint identity is carried by the softened
+        // hue wash + the tinted hairline below, not a gradient, so cards stay familiar but flatten.
+        let baseFill = AnyShapeStyle(StrandPalette.surfaceRaised)
         shape
             .fill(baseFill)
             .overlay(
@@ -55,27 +53,17 @@ public struct FrostedCardSurface: View {
                 shape.fill(
                     LinearGradient(
                         colors: [
-                            (tint ?? .clear).opacity(0.10 * washStrength),
-                            (tint ?? .clear).opacity(0.03 * washStrength),
+                            (tint ?? .clear).opacity(0.05 * washStrength),
+                            (tint ?? .clear).opacity(0.015 * washStrength),
                             .clear
                         ],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                 )
             )
-            .overlay(
-                // Single 1px hairline; tinted cards bias the lower edge toward the hue.
-                shape.strokeBorder(
-                    tint == nil
-                        ? AnyShapeStyle(StrandPalette.hairline)
-                        : AnyShapeStyle(LinearGradient(
-                            colors: [StrandPalette.hairline, (tint ?? .clear).opacity(0.22)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        )),
-                    lineWidth: 1
-                )
-            )
-            // Elevation idiom: DARK is flat — the hairline + hue carry the edge, no shadow. LIGHT raises
+            // Apple x WHOOP: NO card border on dark — the #16181D fill on the near-black canvas carries
+            // the edge by contrast alone (Apple-flat). Light mode keeps a soft shadow for paper separation.
+            // Elevation idiom: DARK is flat — fill contrast carries the edge, no shadow. LIGHT raises
             // white cards off the warm-paper canvas with a soft resting drop shadow (the hairline alone
             // is too faint to separate white-on-paper). Hover deepens this further in StrandCardHover.
             .shadow(

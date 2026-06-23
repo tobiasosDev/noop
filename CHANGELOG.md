@@ -17,6 +17,125 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 7.0.1 — fixes: sleep toggle, steps, manual workouts, HRV, scrolling, and the version display (all platforms)
+
+A fast follow-up to 7.0.0.
+
+- **The experimental sleep staging (V2) toggle now actually works.** It was only re-staging nights you had edited; flip it on and every detected night is re-staged from now on (#690).
+- **Step-estimate calibration unsticks.** WHOOP 4.0 step calibration sat on "need more days" forever because it read your phone steps from the wrong place; it now accumulates properly (#693).
+- **Manual workouts record on WHOOP 5/MG.** Starting a workout from the Workouts tab now holds the live heart-rate stream open, so it captures HR and saves instead of logging nothing (#681).
+- **No more nonsense HRV headline.** An imported HRV measured a different way (e.g. an Oura ring's SDNN vs your strap's RMSSD) no longer renders a wild "210% over baseline" line (#696).
+- **Scrolling no longer drifts sideways.** Vertical scrolling on Trends, Sleep, Data Sources and Stress could bounce left and right; that horizontal bounce is now locked off (#697).
+- **The version shown is correct.** The About screen reads the real app version (it was stuck on an old number), and the update check no longer tells you to download a version you already have.
+- **Plus fixes found while tightening our own tests:** Garmin "vívoactive" straps are recognised, a single bad GPS distance no longer drops a whole route, an iOS Shortcut import with Windows-style line endings no longer skips records, and an unstaged night is no longer flagged low-confidence.
+
+---
+
+## 7.0.0 "Everything" — full redesign + hydration + auto workout detection + smarter sleep (all platforms)
+
+The biggest NOOP release yet.
+
+- **A complete redesign.** Every screen rebuilt around a clean Apple-Fitness-meets-WHOOP look: flat colour rings for Charge/Effort/Rest, a living day-cycle scene behind Today, SF Pro + rounded numbers, borderless cards, pip bars in place of gauges, a green brand mark (gold dropped), a customisable Today, and a softly-glowing header while recording. Same on iPhone, Mac and Android, light or dark.
+- **Hydration tracking (new, opt-in).** A local water log with a daily goal that adapts to your sex and the day's Effort. Tap Sip/Cup/Bottle. Settings → Features. (#685)
+- **Automatic workout detection (new, opt-in).** Spots a probable workout from sustained elevated heart rate after a sync and offers a non-destructive "save it?" card; it never auto-creates a session. Settings → Features. (#683)
+- **Experimental sleep staging V2 (opt-in).** A new cardiorespiratory recipe that recovers Deep and REM better, especially on nights the default stager flattened to "light." Settings → Experimental (Android: Diagnostics). Thanks @sunny-noop (#600).
+- **Sleep marks.** Log your own bedtime/wake boundaries from the Sleep screen or a strap double-tap; logging only, never moves the detected night. (#461)
+- **Sleep + recovery tune-ups** reimplemented and verified from @ryanbr's PRs: steadier resting-HR floor (#686), motion-weighted step calibration (#682), a 0%-REM-night diagnostic (#688), and side-by-side resting-HR logging (#691).
+- **Fixes:** the "fully charged" battery alert now clears itself (#514), Rest derives from the selected day (#614), Hevy imports respect your device timezone (#649), a WHOOP-4 bond-loop reconnect guide (#617), a "remove all Apple Health data" button (#616), the iOS Today top bar no longer hides under the status bar (#611), the Android HR chart updates live as samples land (#605), cross-source workout dedup (#687), backfill diagnostics for stalled history (#601), and a round of Mac chrome polish.
+
+---
+
+## 6.2.2 — Deep Timeline day navigation, faster manual workouts, storage clean-up (all platforms)
+
+- **Deep Timeline can reach your other days.** It was today-only; now it steps back through previous days and opens on your most recent day with data instead of a blank today. Thanks @ruedigermunz (#597).
+- **Manual workouts fill in immediately + absolute start time.** Average/peak HR, strain and calories now appear straight away from the strap's HR for the window (not on the next background pass), and Android gains the exact start date/time picker the iPhone/Mac already had. Thanks @virajshoor, @pilleuspulcher-blip (#598).
+- **Storage clean-up (iPhone).** A failed/retried Apple Health import could strand a multi-GB unzipped copy the Storage screen never scanned; NOOP now reclaims those leftovers automatically on launch and via Clean up now. Thanks @exzanimo (#590).
+- **Russian localization** across the Apple app. Thanks @Te1man (#594).
+- **Coach tables on Android** render as a real grid instead of raw `| ... |` text. Thanks @Divad27 (#593).
+
+---
+
+## 6.2.1 — Fix: imported phone steps were being double-counted (all platforms)
+
+- **Your imported steps add up properly now.** If you wear an Apple Watch as well as carrying your iPhone, Apple Health stores both their step counts for the same walk. NOOP was adding them together, so a busy day could read close to double the real number, which also threw off the steps calibration. It now does what the Health app does: it counts each source on its own and keeps the higher one, so a 7,000-step day reads 7,000, not 14,000. Re-import your Apple Health export after updating to clean up past days. Thanks @bringiton321 (#589).
+
+---
+
+## 6.2.0 — See Everything: the Deep Timeline, a sleep movement graph, and a big board-clear (all platforms)
+
+A large update built straight from the open board: one big new feature plus a wave of fixes and community PRs, cross-referenced so related reports were solved together.
+
+**See Everything: the Deep Timeline.** Open a metric and pinch or scroll to zoom from a whole day right down to per-second detail. Your strap records far more than the old 5-minute chart buckets ever showed, and now you can actually see it: heart rate, HRV, SpO2, skin temperature, respiration and movement, every reading at full resolution, all on your device. It reads the raw samples adaptively (coarse at day scale, raw seconds when you zoom in) so it stays smooth. Reachable from the Explore tab. Closes #575, serves #574 and #582.
+
+**Sleep**
+- A **movement / restlessness graph** now draws under your hypnogram so you can see how much you stirred (#407, thanks @mad201802).
+- **Tighter sleep dates (#547):** a WHOOP with a wandering internal clock could re-send records stamped with wrong dates and scramble which night was which. NOOP now checks every record against the strap's own data range and drops the impossible ones, while keeping legitimately old history.
+
+**WHOOP 5.0 & sync**
+- A connected 5.0 streaming live HR but offloading no history now honestly says **history sync is experimental on the 5.0** instead of "not connected", and **stops the battery-draining reconnect loop** while it waits (#580).
+- The Mac now explains that **R22 deep data needs an iPhone or Android** — a Mac structurally can't form the encrypted bond a 5/MG needs (#587).
+
+**Storage, steps, notifications**
+- Fixed an iPhone bug where importing an Apple Health export could **balloon the app's storage** by leaving a duplicate copy behind, and added a **Storage** diagnostics + cleanup screen (#590, thanks @exzanimo).
+- **Steps** now tells you exactly how many more overlapping days it needs to calibrate, and shows your imported phone steps directly (#589, thanks @bringiton321).
+- **Inactivity nudges and your smart alarm** can now also reach you as a phone notification (#577, thanks @hkuehl), and the iOS wrist-alerts master toggle is exposed (#572, thanks @artur01-code).
+- **Spot HRV** refuses to give a number when too much of the capture was noise (#585, thanks @ryanbr).
+- A new **share card** overlays your Charge, Effort and Rest on a photo (#559).
+
+**Android polish**
+- No more **black band under the camera notch** (#578, thanks @cooki371 and @Divad27), **profile photos** import the right way up (thanks @ryanbr), **Fitbit imports** are faster (thanks @ryanbr), and the strap scan **backs off to save battery** during reconnects (thanks @ryanbr).
+
+Reimplemented community PRs are credited above. With thanks to everyone who filed an issue, a log, or a PR.
+
+---
+
+## 6.1.1 — Fix: a night with a brief wake-up showed as separate naps (all platforms)
+
+A focused follow-up to the 6.1.0 sleep rebuild. If you stirred briefly overnight, the **Sleep tab** could split that one continuous night into a "main" sleep plus one or two phantom naps, even though your recovery and your Today total were already correct (only the tab disagreed). The Sleep tab now resolves your main night the same way the rest of the app does: it stitches a briefly-interrupted or biphasic night's fragments back into one continuous sleep, and only genuinely separate blocks (like an afternoon nap) are shown as naps. The hero now reflects the whole night, so every screen agrees.
+
+Thanks to **pilleuspulcher** for the strap log that pinned it down. Reported in #555.
+
+---
+
+## 6.1.0 — Smarter sleep, naps, more devices, and a big board-clear (all platforms)
+
+A large update built from the open issues, discussions and community PRs, cross-referenced so related reports were fixed together rather than one at a time.
+
+**Sleep**
+- **Interrupted nights are counted in full.** A night broken by a short wake is now bridged and summed instead of being scored as just one fragment. (#561, thanks ryanbr)
+- **No more 12-hour "sleep".** An implausibly long single block from a bad-clock or off-wrist strap is capped, so it can't masquerade as one night. (#547/#531/#509 family)
+- **Phantom morning naps suppressed.** A still stretch right after you wake is no longer mistaken for a second sleep unless there's a clear, sustained re-onset. (#531)
+- **Honest stage confidence.** When the deep/REM split can't be trusted on a quiet night, the stage breakdown says so rather than implying precision. (#469)
+- **Your edits win.** A night you've hand-edited now takes precedence over an imported value, so edits aren't masked by an Apple/WHOOP import. (#509)
+- **On-device nap detection.** Opt in and NOOP spots a likely nap from your motion and offers it for a one-tap add; nothing is auto-logged and your sleep scores are untouched. (PR#569, thanks @cbarrado)
+- **WHOOP 4.0 sleep on the v19 offload layout.** Straps that previously banked nothing on this firmware now hand over the motion the stager needs. (#344, thanks airtonzanon)
+
+**Devices, glanceable surfaces & features**
+- New 2×2 Android home-screen widget showing Charge, Effort and Rest together. (#516)
+- Opt-in morning-recap and post-workout notifications, off by default, no AI. (#517)
+- Caffeine cutoff window with a gentle late-intake nudge. (#526, PR#566, thanks @mvanhorn)
+- Per-weekday smart-alarm wake times. (#548, PR#554, thanks @MumiZed)
+- Broadcast your heart rate out from a WHOOP 4.0, not just a 5.0. (D#490)
+- Android Devices → Remove now releases the Bluetooth link so the band can re-pair. (#520)
+- Clearer WHOOP 4.0 steps calibration and honest empty-state copy for steps/SpO₂/skin-temp instead of bare dashes. (#316 and the 4.0 "no data" cluster)
+
+**Fixes, polish & tooling**
+- Fixed the iPhone Today score-ring + info-button overlap. (#495, PR#549, thanks @MumiZed)
+- Skip the idle 15-minute re-score when nothing new synced, for battery. (PR#565, thanks @ryanbr)
+- Last-synced time survives a process restart instead of reverting to "Never". (PR#556, thanks @tavelli)
+- Charging bolt on the Live battery header; charging flag no longer gated to a 45-second window. (PR#568, thanks @cbarrado)
+- WHOOP 5/MG v26 record decode corrected (byte 21 is a burst index, not a channel). (PR#553, thanks sunny-noop)
+- Linux raw-capture import into Android, and a Linux spot-HRV tool. (PR#542/PR#541, thanks sunny-noop)
+- **Distribution:** the AltStore source and Homebrew cask are current again and now update automatically with every release (they had silently stuck at 5.3.0). (#560/#562)
+- German localization completed (444/444).
+
+**Install / update**
+- **macOS:** the universal app zip on the Releases page (or `brew upgrade --cask noop`).
+- **iOS:** sideload the IPA (AltStore / SideStore).
+- **Android:** the APK on the Releases page.
+
+---
+
 ## 6.0.3 — Date-hygiene fix for straps with a bad clock (all platforms)
 
 A targeted robustness fix for a real bug pikapik487 caught with detailed logs.

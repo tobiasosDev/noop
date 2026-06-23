@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -27,11 +28,14 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -153,6 +157,8 @@ fun DataSourcesScreen(vm: AppViewModel) {
     // Whole-store backup: export to a user-created document; import from a picked one.
     var busy by remember { mutableStateOf(false) }
     var restartNeeded by remember { mutableStateOf(false) }
+    // ah-delete (#616): drives the "Remove Apple Health imported data" confirm dialog.
+    var confirmDeleteApple by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
@@ -399,6 +405,18 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 tint = Palette.metricCyan,
                 modifier = Modifier.fillMaxWidth(),
             ) { appleImportLauncher.launch(arrayOf("*/*")) }
+            // ah-delete (#616): a destructive "Remove imported data" action wired to
+            // DeviceRegistry.deleteDeviceData("apple-health") (via vm.deletePairedDeviceData), mirroring
+            // the Swift card. Shown only once there's something to remove; a confirm dialog gates it.
+            if (hasApple) {
+                BackupButton(
+                    label = "Remove imported data",
+                    icon = Icons.Filled.DeleteOutline,
+                    enabled = !busy,
+                    tint = Palette.statusCritical,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { confirmDeleteApple = true }
+            }
         }
 
         // --- Health Connect (native Android health data) ---
@@ -671,7 +689,8 @@ fun DataSourcesScreen(vm: AppViewModel) {
             tint = DomainTheme.Effort.color,
             subtitle = "Re-share your live strap heart rate over Bluetooth as a standard heart-rate " +
                 "sensor, so a gym treadmill, bike, Zwift, Peloton or any fitness app nearby can read " +
-                "it. Local Bluetooth only. Nothing leaves your phone. Off by default.",
+                "it. Works on any WHOOP — 4.0 or 5.0/MG — because your phone does the broadcasting. " +
+                "Local Bluetooth only. Nothing leaves your phone. Off by default.",
         ) {
             if (hrBroadcast) {
                 val (label, tone) =
@@ -728,6 +747,32 @@ fun DataSourcesScreen(vm: AppViewModel) {
                     },
                 )
             }
+
+            // #573: leaving broadcast on keeps the radio advertising continuously, which drains the
+            // battery faster — make that visible and persistent so it isn't left on by accident. Mirrors
+            // the Swift broadcast-HR warning (SettingsView).
+            if (hrBroadcast) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {},
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.SettingsInputAntenna,
+                        contentDescription = null,
+                        tint = Palette.statusWarning,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        "Broadcast HR is ON. Your strap is advertising its heart rate continuously, " +
+                            "which keeps its radio hot and drains the battery faster. Turn it off when " +
+                            "you're not using it with another device.",
+                        style = NoopType.caption,
+                        color = Palette.statusWarning,
+                    )
+                }
+            }
         }
 
         // --- Live WHOOP strap over BLE ---
@@ -780,6 +825,50 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 )
             }
         }
+    }
+
+    // ah-delete (#616): strongly-worded confirm before purging the "apple-health" source. On confirm,
+    // deletes every Apple-Health-sourced row (deviceId-keyed tables) in one transaction via the registry,
+    // re-counts so the card flips back to "Nothing imported", and toasts the result.
+    if (confirmDeleteApple) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteApple = false },
+            containerColor = Palette.surfaceOverlay,
+            title = {
+                Text("Remove Apple Health imported data?", style = NoopType.title2, color = Palette.textPrimary)
+            },
+            text = {
+                Text(
+                    "This permanently deletes everything imported from Apple Health — heart rate, HRV, " +
+                        "sleep, steps, workouts and more. Your live strap data is untouched. This can't be undone.",
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteApple = false
+                    busy = true
+                    scope.launch {
+                        runCatching {
+                            withContext(Dispatchers.IO) { vm.deletePairedDeviceData("apple-health") }
+                        }
+                        vm.ble.externalLog("Import apple-health: imported data removed")
+                        refreshCounts()
+                        vm.loadWorkouts()
+                        busy = false
+                        Toast.makeText(context, "Removed Apple Health imported data.", Toast.LENGTH_LONG).show()
+                    }
+                }) {
+                    Text("Remove", style = NoopType.body, color = Palette.statusCritical)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteApple = false }) {
+                    Text("Cancel", style = NoopType.body, color = Palette.textSecondary)
+                }
+            },
+        )
     }
 }
 

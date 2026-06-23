@@ -67,6 +67,24 @@ public enum RecoveryScorer {
     /// Rolling-mean HR window (seconds) for the resting-HR estimate.
     public static let restingHRWindowS: Int = 5 * 60
 
+    /// Minimum HR samples a 5-min bin must hold before its mean is eligible to WIN the resting
+    /// floor (#686). A thinly-populated bin — at the limit a single lone beat — lets one artifact
+    /// (a dropout, a decode glitch) become the bin "mean" and win the night's minimum, dragging
+    /// resting HR implausibly low. Requiring a handful of samples means the floor is a genuine
+    /// sustained dip, not a one-sample fluke. Worn nights stream ~1 Hz HR so a real 5-min bin holds
+    /// hundreds of samples and clears this trivially; only sparse/edge bins (a partial trailing bin,
+    /// a gap-straddling bin) fall below it. Does NOT change the floor DEFINITION — still the min of
+    /// 5-min bin means — it only stops an under-sampled artifact bin from being that min.
+    public static let restingHRMinBinSamples: Int = 5
+
+    /// Physiological resting-HR floor (bpm) below which a bin mean is rejected as a dropout artifact
+    /// (#686), never the resting floor. An adult's true sleeping resting HR essentially never sits
+    /// below this; a 5-min mean that does is a run of dropout/decode-zero beats, not a real cardiac
+    /// dip. 25 bpm clears even deeply-bradycardic trained athletes (resting HRs in the low 30s) with
+    /// margin while rejecting the implausible artifact range. A bin below this is excluded from floor
+    /// candidacy; if it were allowed to win, resting HR would read a fabricated sub-physiological value.
+    public static let restingHRMinPlausibleBpm: Double = 25.0
+
     // MARK: - Resting HR
 
     /// Lowest sustained HR during the in-bed window (bpm, rounded), or nil.
@@ -74,21 +92,39 @@ public enum RecoveryScorer {
     /// "Sustained" = the minimum of 5-minute non-overlapping bin means of the HR
     /// samples whose ts ∈ [start, end]. Rejects single-beat dips while capturing
     /// the night's true floor. Returns nil when there are no HR samples in window.
+    ///
+    /// Artifact hardening (#686): a bin may only WIN the floor when it is BOTH well-populated
+    /// (≥ `restingHRMinBinSamples`, so one lone artifact beat can't be a bin "mean") AND
+    /// physiologically plausible (mean ≥ `restingHRMinPlausibleBpm`, rejecting dropout-driven
+    /// sub-physiological dips). The floor DEFINITION is unchanged — still the minimum of the
+    /// 5-min bin means — only artifact bins are barred from being that minimum. If no bin
+    /// qualifies (a wholly sparse/degenerate window), fall back to the lowest of ALL bin means,
+    /// else the all-sample mean, preserving the never-nil-on-data behaviour.
     public static func restingHR(_ hr: [HRSample], start: Int, end: Int) -> Int? {
         let seg = hr.filter { $0.ts >= start && $0.ts <= end }
         guard !seg.isEmpty else { return nil }
 
-        var means: [Double] = []
+        var means: [Double] = []          // every bin mean (legacy floor, the fallback)
+        var qualified: [Double] = []       // bins eligible to WIN the floor (#686)
         var t = start
         while t < end {
             let win = seg.filter { $0.ts >= t && $0.ts < t + restingHRWindowS }
             if !win.isEmpty {
-                means.append(Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count))
+                let mean = Double(win.reduce(0) { $0 + $1.bpm }) / Double(win.count)
+                means.append(mean)
+                // A bin wins the floor only if it is well-populated AND physiologically plausible —
+                // a thin (single-artifact) or sub-physiological (dropout) bin can't be the minimum.
+                if win.count >= restingHRMinBinSamples && mean >= restingHRMinPlausibleBpm {
+                    qualified.append(mean)
+                }
             }
             t += restingHRWindowS
         }
         let floor: Double
-        if let m = means.min() {
+        if let m = qualified.min() {
+            floor = m
+        } else if let m = means.min() {
+            // No bin cleared the artifact bar (sparse window): fall back to the legacy floor.
             floor = m
         } else {
             floor = Double(seg.reduce(0) { $0 + $1.bpm }) / Double(seg.count)

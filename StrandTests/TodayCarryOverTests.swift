@@ -77,6 +77,31 @@ final class TodayCarryOverTests: XCTestCase {
             isToday: true, todayScored: false, isCalibrating: false))
     }
 
+    // MARK: future-day guard (#547)
+
+    func testNeverCarriesAFutureDatedRow() {
+        // A bad-clock strap (or a pre-heal DB) can leave a future-dated scored row. The carry-over must
+        // NEVER surface it as "Last night · 12 Jul" — it must pick the freshest genuine PRIOR day instead.
+        let days = [day("2026-06-17", recovery: 60), day("2026-06-18", recovery: 72),
+                    day("2026-06-19", recovery: nil),    // today, not scored yet
+                    day("2026-07-12", recovery: 80)]     // STRAY FUTURE row (the "12 Jul" bug)
+        let carried = TodayView.lastScoredRecoveryDay(
+            days: days, selectedDayKey: "2026-06-19",
+            isToday: true, todayScored: false, isCalibrating: false)
+        XCTAssertEqual(carried?.day, "2026-06-18", "a future-dated row must never be carried as last night")
+        XCTAssertEqual(carried?.recovery, 72)
+    }
+
+    func testNothingCarried_whenOnlyFutureRowsExistBesidesToday() {
+        // If the ONLY scored rows are future-dated, the carry-over honestly returns nil (tiles stay "—")
+        // rather than reaching forward in time.
+        let days = [day("2026-06-19", recovery: nil),    // today, unscored
+                    day("2026-07-12", recovery: 80)]     // future-only
+        XCTAssertNil(TodayView.lastScoredRecoveryDay(
+            days: days, selectedDayKey: "2026-06-19",
+            isToday: true, todayScored: false, isCalibrating: false))
+    }
+
     func testCarriedRow_keepsItsOwnMissingMetricsAsNil_neverFabricated() {
         // The carried row is a real DailyMetric: a metric it genuinely lacks (e.g. a BLE-only night with
         // no SpO₂) stays nil on the carried row, so the SpO₂ tile still resolves to "—" rather than a made

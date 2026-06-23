@@ -37,6 +37,7 @@ public struct DayNavBar: View {
 
     public var body: some View {
         HStack(spacing: 12) {
+            Spacer(minLength: 0)
             Button { onSelect(selectedOffset + 1) } label: {
                 Image(systemName: "chevron.left")
                     .font(StrandFont.headline)
@@ -63,12 +64,13 @@ public struct DayNavBar: View {
                             .lineLimit(1)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 10)
-                // Clean, material surface — no gold wash behind the date (that read as a murky
-                // dark-yellow block); the gold pop lives only on the date text itself.
-                .background(StrandPalette.surfaceInset, in: blockShape)
+                .padding(.vertical, 9)
+                .padding(.horizontal, 20)
+                // Reads as one of the flat WHOOP-grey cards, not a black bar. On macOS the full-width
+                // pill sits over the bright Today day-scene, where the darker inset well read as black;
+                // surfaceRaised (the card fill) lifts it to card level so it matches the dashboard
+                // cards. No gold wash behind the date — the gold pop lives only on the date text.
+                .background(blockFill, in: blockShape)
                 .overlay(blockShape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
             }
             .buttonStyle(.plain)
@@ -87,6 +89,7 @@ public struct DayNavBar: View {
             .buttonStyle(.plain)
             .disabled(!canGoNewer)
             .accessibilityLabel("Next day")
+            Spacer(minLength: 0)
         }
     }
 
@@ -112,6 +115,19 @@ public struct DayNavBar: View {
     }
 
     private var blockShape: RoundedRectangle { RoundedRectangle(cornerRadius: 14, style: .continuous) }
+
+    /// Fill for the centre day block. On macOS the bar spans the bright Today day-scene, so it uses the
+    /// raised WHOOP-grey card fill to read as a card rather than a black bar; iOS (which uses the compact
+    /// top-bar day-nav, not this control) keeps the inset well fill unchanged.
+    private var blockFill: Color {
+        #if os(macOS)
+        // Compact translucent pill (not a full-width bar) — the scene shows through so it reads as a
+        // floating control over the day-scene, never a solid black bar; white label stays legible at 0.72.
+        StrandPalette.surfaceBase.opacity(0.72)
+        #else
+        StrandPalette.surfaceInset
+        #endif
+    }
 
     private static let dayFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "EEE d MMM"; f.locale = Locale(identifier: "en_US_POSIX"); return f

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -21,11 +22,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import java.io.File
 
 // MARK: - Profile picture (optional, on-device avatar)
@@ -115,7 +120,8 @@ object ProfileAvatarStore {
     /**
      * Decode [uri] into a Bitmap whose longest edge is at most [MAX_DIMEN]. Uses a two-pass decode: a
      * bounds-only pass to pick an `inSampleSize`, then the real decode, then an exact down-fit so a
-     * non-power-of-two source still lands at the cap. Returns null if the stream can't be read/decoded.
+     * non-power-of-two source still lands at the cap, then an EXIF-orientation correction so a photo
+     * taken sideways lands upright. Returns null if the stream can't be read/decoded.
      */
     private fun decodeDownscaled(ctx: Context, uri: Uri): Bitmap? {
         val resolver = ctx.contentResolver
@@ -127,6 +133,15 @@ object ProfileAvatarStore {
         val srcH = bounds.outHeight
         if (srcW <= 0 || srcH <= 0) return null
 
+        // EXIF orientation — read BEFORE the bitmap decode (BitmapFactory drops EXIF). The pixels come
+        // off the sensor un-rotated; the orientation tag says how to spin them upright. We read it from a
+        // fresh stream now and apply the rotation AFTER the down-fit below. iOS already lands upright.
+        val orientation = runCatching {
+            resolver.openInputStream(uri)?.use {
+                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            }
+        }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+
         // Pass 2: sub-sampled decode (power-of-two) to get under ~2× the cap cheaply.
         var sample = 1
         while (srcW / (sample * 2) >= MAX_DIMEN && srcH / (sample * 2) >= MAX_DIMEN) {
@@ -137,14 +152,50 @@ object ProfileAvatarStore {
             BitmapFactory.decodeStream(it, null, decodeOpts)
         } ?: return null
 
-        // Exact down-fit: scale the longest edge to MAX_DIMEN (never upscale a small source).
+        // Exact down-fit: scale the longest edge to MAX_DIMEN (never upscale a small source), folding
+        // the EXIF rotate/flip into the SAME matrix so it's one createBitmap. A small source that skips
+        // scaling (factor 1) still gets oriented if the EXIF tag is non-trivial.
         val longest = maxOf(decoded.width, decoded.height)
-        if (longest <= MAX_DIMEN) return decoded
-        val factor = MAX_DIMEN.toFloat() / longest.toFloat()
-        val matrix = Matrix().apply { postScale(factor, factor) }
-        val scaled = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-        if (scaled !== decoded) decoded.recycle()
-        return scaled
+        val factor = if (longest > MAX_DIMEN) MAX_DIMEN.toFloat() / longest.toFloat() else 1f
+        val matrix = Matrix().apply {
+            if (factor != 1f) postScale(factor, factor)
+            applyExifOrientation(this, orientation)
+        }
+        if (matrix.isIdentity) return decoded
+        val out = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        if (out !== decoded) decoded.recycle()
+        return out
+    }
+
+    /** One post-concatenated step of an EXIF correction: either a clockwise rotate or an axis scale. */
+    internal sealed interface ExifOp {
+        data class Rotate(val degrees: Float) : ExifOp
+        data class Scale(val sx: Float, val sy: Float) : ExifOp
+    }
+
+    /**
+     * The ordered list of post-concatenations that brings an EXIF [orientation] upright (empty = no-op).
+     * Pure + Android-free (only int tag constants, which are compile-time literals) so the tag→ops table
+     * is unit-testable without a real [Matrix], which is stubbed in JVM unit tests. The op sequences are
+     * the literal operations [applyExifOrientation] used to call inline, so behaviour is unchanged.
+     */
+    internal fun exifOps(orientation: Int): List<ExifOp> = when (orientation) {
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> listOf(ExifOp.Scale(-1f, 1f))
+        ExifInterface.ORIENTATION_ROTATE_180 -> listOf(ExifOp.Rotate(180f))
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> listOf(ExifOp.Scale(1f, -1f))
+        ExifInterface.ORIENTATION_TRANSPOSE -> listOf(ExifOp.Rotate(90f), ExifOp.Scale(-1f, 1f))
+        ExifInterface.ORIENTATION_ROTATE_90 -> listOf(ExifOp.Rotate(90f))
+        ExifInterface.ORIENTATION_TRANSVERSE -> listOf(ExifOp.Rotate(270f), ExifOp.Scale(-1f, 1f))
+        ExifInterface.ORIENTATION_ROTATE_270 -> listOf(ExifOp.Rotate(270f))
+        else -> emptyList() // ORIENTATION_NORMAL / UNDEFINED — no transform
+    }
+
+    /** Post-concatenate the EXIF correction for [orientation] onto [matrix] (after any down-scale). */
+    private fun applyExifOrientation(matrix: Matrix, orientation: Int) {
+        for (op in exifOps(orientation)) when (op) {
+            is ExifOp.Rotate -> matrix.postRotate(op.degrees)
+            is ExifOp.Scale -> matrix.postScale(op.sx, op.sy)
+        }
     }
 }
 
@@ -154,8 +205,8 @@ object ProfileAvatarStore {
 // A single [size] drives both the small header avatar (~28dp) and the large Settings avatar.
 
 /**
- * Renders the on-device profile photo, circle-cropped, or the [Icons.Outlined.AccountCircle] fallback
- * when none is set. Reads [ProfileAvatarStore.bitmap] (snapshot state), so it updates live the instant
+ * Renders the on-device profile photo, circle-cropped, or the NOOP loop-mark ([LoopMark]) fallback when
+ * none is set. Reads [ProfileAvatarStore.bitmap] (snapshot state), so it updates live the instant
  * the photo is set/cleared. Token-only: a hairline rim ties it to the rest of the chrome. Decorative by
  * default — pass a [contentDescription] (e.g. on the tappable header avatar) when it needs a spoken label.
  *
@@ -185,14 +236,39 @@ fun ProfileAvatar(
                 modifier = Modifier.size(size).clip(CircleShape),
             )
         } else {
-            // No photo: the account-circle glyph fills the box (it has its own rounded silhouette, so
-            // the hairline rim above just frames it consistently with the photographed state).
-            Icon(
-                imageVector = Icons.Outlined.AccountCircle,
-                contentDescription = contentDescription,
-                tint = Palette.textSecondary,
-                modifier = Modifier.size(size),
-            )
+            // No photo: the NOOP loop mark (open green ring + white core) — the brand glyph, matching the
+            // iOS default avatar. The user's chosen photo path is untouched; this is only the fallback.
+            LoopMark(modifier = Modifier.fillMaxSize())
         }
+    }
+}
+
+/**
+ * The NOOP loop mark drawn as a fallback avatar: an OPEN ~80% recovery ring (round caps, starting at 12
+ * o'clock, clockwise) in the recovery green with a solid WHITE centre core dot. Matches the iOS BrandMark
+ * shape but in the Apple-Fitness green + white core. CLEAN/flat — no glow, no halo. Decorative.
+ */
+@Composable
+private fun LoopMark(modifier: Modifier = Modifier) {
+    val ring = Palette.statusPositive   // recovery / "on" green, a design token (no hardcoded hex)
+    val core = if (Palette.isLight) Palette.textPrimary else Color.White
+    Canvas(modifier = modifier) {
+        val stroke = size.minDimension * 0.13f
+        val radius = (size.minDimension - stroke) / 2f
+        val topLeft = Offset(center.x - radius, center.y - radius)
+        val arcSize = Size(radius * 2f, radius * 2f)
+        val capStroke = Stroke(width = stroke, cap = StrokeCap.Round)
+        // Open recovery-ring arc: ~80% (288°), −90° start (12 o'clock), clockwise.
+        drawArc(
+            color = ring,
+            startAngle = -90f,
+            sweepAngle = 288f,
+            useCenter = false,
+            topLeft = topLeft,
+            size = arcSize,
+            style = capStroke,
+        )
+        // Solid white "core" dot at the centre.
+        drawCircle(color = core, radius = stroke * 0.7f, center = center)
     }
 }

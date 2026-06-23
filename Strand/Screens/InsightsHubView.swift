@@ -43,7 +43,7 @@ struct InsightsHubView: View {
             if !model.loaded {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                     moversSection
                     doseSection
                     methodNote
@@ -79,6 +79,7 @@ struct InsightsHubView: View {
             } else {
                 ForEach(model.ranked.indices, id: \.self) { i in
                     moverCard(model.ranked[i])
+                        .staggeredAppear(index: i)
                 }
             }
         }
@@ -178,8 +179,9 @@ struct InsightsHubView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                ForEach(model.doseCards) { card in
+                ForEach(Array(model.doseCards.enumerated()), id: \.element.id) { index, card in
                     DoseResponseCardView(card: card)
+                        .staggeredAppear(index: index)
                 }
             }
         }
@@ -378,7 +380,7 @@ private struct DoseResponseCardView: View {
     // MARK: Bits
 
     private func honestyBanner(_ text: String, tone: StrandTone) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: NoopMetrics.space2) {
             Image(systemName: "info.circle.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(tone == .neutral ? StrandPalette.textTertiary : StrandPalette.statusPositive)
@@ -387,7 +389,7 @@ private struct DoseResponseCardView: View {
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
+        .padding(NoopMetrics.space3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 8))
     }

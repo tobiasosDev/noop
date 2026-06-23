@@ -429,6 +429,17 @@ enum WhoopTime {
         return nil
     }
 
+    /// Parse only an ISO-8601 timestamp that carries an **embedded UTC offset** (e.g. `…Z`,
+    /// `…+01:00`), returning the absolute `Date`. Returns nil for zoneless strings, so callers can
+    /// distinguish a timestamp whose offset is authoritative from a zoneless wall-clock one that must
+    /// be interpreted in a chosen timezone (used by the Hevy lifting importer, #649).
+    static func parseISOWithOffset(_ raw: String?) -> Date? {
+        guard let s = raw?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
+        if let d = isoFormatter.date(from: s) { return d }
+        if let d = isoFormatterFractional.date(from: s) { return d }
+        return nil
+    }
+
     private static let plainFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")

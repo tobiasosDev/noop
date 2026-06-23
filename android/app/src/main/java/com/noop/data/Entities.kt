@@ -239,6 +239,17 @@ data class SleepSession(
     // unchanged and old rows read userEdited=false / startTsAdjusted=null.
     val userEdited: Boolean = false,
     val startTsAdjusted: Long? = null,
+    // v18 (Swift WhoopStore v18 parity, MIGRATION_11_12). Per-epoch analytics the stager/interpreter
+    // compute then discard, banked beside [stagesJSON] on the same row:
+    //   - [motionJSON]: a compact JSON array of per-epoch motion magnitudes (the SleepStager's per-epoch
+    //     restlessness signal), one entry per stage epoch on the SAME 30 s grid as stagesJSON (H8).
+    //   - [sleepStateJSON]: a compact JSON array of the decoded v18 band sleep_state per epoch — the
+    //     Interpreter's `(sb shr 4) and 3` (H2 persist half).
+    // Both nullable TEXT (no SQL DEFAULT — a Kotlin construction default never reaches the schema), so old
+    // rows read back null. HONESTY: an absent signal stays null, never a fabricated zero series. Written/read
+    // through the targeted DAO methods (not the @Upsert path, which never names them and so preserves them).
+    val motionJSON: String? = null,
+    val sleepStateJSON: String? = null,
 ) {
     /** The bed (onset) time to DISPLAY / sort / re-stage by: the user's hand-set onset when edited,
      *  else the immutable detected [startTs]. Mirrors Swift `CachedSleepSession.effectiveStartTs`. */

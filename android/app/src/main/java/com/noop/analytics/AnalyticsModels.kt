@@ -272,4 +272,12 @@ data class DayResult(
     val effortConfidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
     /** Per-score certainty tier for Rest (sleep_performance composite). Mirrors Swift. */
     val restConfidence: ScoreConfidence = ScoreConfidence.CALIBRATING,
+    /**
+     * Per-session per-epoch MOTION magnitudes (H8), keyed by each matched session's detected start
+     * ([DetectedSleep.start]), on the same 30 s epoch grid as that session's `stagesJSON`. The caller
+     * persists these via `WhoopRepository.persistSessionMotion` after upserting the sleep-session rows. A
+     * session with too little gravity to grid is OMITTED (no key), so the caller never persists a fabricated
+     * zero series. Mirrors Swift `DayResult.sessionMotionByStart`. (H8)
+     */
+    val sessionMotionByStart: Map<Long, List<Double>> = emptyMap(),
 )

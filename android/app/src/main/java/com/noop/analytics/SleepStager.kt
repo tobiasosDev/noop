@@ -112,6 +112,51 @@ object SleepStager {
      */
     const val daytimeRestingHRMult: Double = 0.95
 
+    // ── H4 physiological in-bed span cap (#547 / #531 / #509 / tail) ───────────
+    //
+    // Maximum plausible in-bed span (seconds) for a SINGLE assembled main-sleep run. No real single night
+    // runs longer than this: a 12 h+ "sleep" is a bad-clock artefact (a stale/duplicated timestamp range,
+    // or a strap that banked one frozen still stretch under a wrong clock) reading as one enormous still
+    // block — which then reports a 12 h sleep and poisons Rest / the debt ledger / the headline. 16 h is
+    // well above any genuine night yet below the clock-artefact range. A run whose span exceeds this is
+    // DROPPED (not silently truncated to 16 h, which would fabricate a wake time): an over-long block is
+    // not trustworthy enough to assert a span for at all. Mirrors Swift `maxMainSleepSpanS`.
+    const val maxMainSleepSpanS: Long = 16L * 60L * 60L
+
+    // ── H7 morning-stillness nap suppression (#531) ───────────────────────────
+    //
+    // After a real overnight wake the wrist is often still (sitting with coffee, back in bed scrolling, a
+    // sofa) for a stretch that the gravity spine reads as a fresh "nap" — #531's 9 am phantom nap right after
+    // the night ended. It is NOT a night-tail continuation (handled by nightContinuationGapMin and exempted),
+    // and it can clear the ordinary daytime guard (long + the post-wake HR is still low), so it slipped
+    // through. H7 holds a daytime block that BEGINS within morningStillnessWindowMin of the just-detected
+    // overnight wake to a STRONGER bar: it must show a genuine SUSTAINED re-onset — a real second sleep dips
+    // clearly below the day median, not merely near it. Mirrors Swift.
+
+    /** A daytime block whose onset falls within this many minutes AFTER an overnight chain's wake is treated
+     *  as suspected morning residual stillness and held to the stronger re-onset bar below. ~3 h covers the
+     *  post-wake window where residual stillness masquerades as a nap; a genuine afternoon nap (hours later)
+     *  is past it and faces only the ordinary daytime guard. Mirrors Swift `morningStillnessWindowMin`. (#531) */
+    const val morningStillnessWindowMin: Int = 180
+
+    /** The stronger resting-HR bar (× day baseline) a suspected-morning-stillness block must clear to be kept
+     *  as a real re-onset. Stricter than the ordinary daytime [daytimeRestingHRMult] (0.95): residual waking
+     *  stillness keeps a near-waking HR, so only a block that dips clearly (a true second sleep) survives.
+     *  Mirrors Swift `morningReonsetRestingHRMult`. (#531) */
+    const val morningReonsetRestingHRMult: Double = 0.90
+
+    /** The persisted v18 BAND sleep_state value that means "asleep" (Interpreter's `(sb>>4)&3`: 0 wake /
+     *  1 still / 2 asleep / 3 up). The strap's OWN scored band state — an independent anchor we CONSUME to
+     *  confirm a borderline morning re-onset (H7). Mirrors Swift `bandStateAsleep`. (#531 / H8 consume) */
+    const val bandStateAsleep: Int = 2
+
+    /** Fraction of a suspected-morning-stillness block's epochs whose persisted band sleep_state must read
+     *  "asleep" ([bandStateAsleep]) for the strap's OWN signal to CONFIRM a genuine re-onset and KEEP the
+     *  block even when its HR dip is borderline. A real second sleep the strap itself scored asleep is a
+     *  strong, honest anchor; a residual-stillness false nap reads "still"/"up", not "asleep". ≥0.6 keeps
+     *  this conservative. Mirrors Swift `morningReonsetBandAsleepFrac`. (H8 consume) */
+    const val morningReonsetBandAsleepFrac: Double = 0.6
+
     /** Seconds in a calendar day (for local-hour-of-day arithmetic). */
     const val secondsPerDay: Long = 86_400L
 
@@ -560,6 +605,55 @@ object SleepStager {
     }
 
     /**
+     * H7 morning-stillness nap suppression (#531). Returns true = KEEP, false = REJECT, for a daytime block
+     * [p] that begins shortly after a real overnight wake. [morningWakeEnd] is the end of the just-detected
+     * OVERNIGHT chain (null when the prior chain was not overnight, or there was none) — when [p].start is
+     * within [morningStillnessWindowMin] of it, the block is suspected morning residual stillness and must
+     * clear the ORDINARY daytime guard AND show a SUSTAINED re-onset: its resting HR must dip below the
+     * stronger [morningReonsetRestingHRMult] × baseline bar (a true second sleep, not near-waking stillness).
+     * Outside the morning window this is a no-op (returns the plain daytime-guard result), so a genuine
+     * afternoon nap is unaffected. Mirrors Swift `passesMorningStillnessGuard`. (#531)
+     */
+    internal fun passesMorningStillnessGuard(
+        p: Period,
+        restingHR: Int?,
+        baseline: Double?,
+        morningWakeEnd: Long?,
+        bandSleepState: List<Pair<Long, Int>> = emptyList(),
+    ): Boolean {
+        // Only a daytime block beginning within the post-wake window of an overnight chain is suspected.
+        if (morningWakeEnd == null || p.start < morningWakeEnd ||
+            (p.start - morningWakeEnd) > (morningStillnessWindowMin * 60).toLong()
+        ) {
+            return passesDaytimeGuard(p, restingHR, baseline)
+        }
+        // Suspected morning stillness needs at least the ordinary daytime guard (long enough + a real dip).
+        if (!passesDaytimeGuard(p, restingHR, baseline)) return false
+        // CONSUME the strap's OWN banked band sleep_state (#531 / H8): if the strap itself scored this block
+        // predominantly "asleep", that is a strong independent re-onset anchor — KEEP it even on a borderline
+        // HR dip. This only ever RESCUES a block the strap says was real sleep; it never fabricates one.
+        if (bandStateConfirmsAsleep(p, bandSleepState)) return true
+        // Otherwise require the clearly-deeper cardiac dip of a true second sleep.
+        if (baseline == null || restingHR == null) return false
+        return restingHR.toDouble() <= baseline * morningReonsetRestingHRMult
+    }
+
+    /**
+     * CONSUME-side helper (#531 / H8): true when the strap's OWN persisted v18 band sleep_state over the
+     * block [p.start, p.end] reads predominantly "asleep" ([bandStateAsleep]), at/above
+     * [morningReonsetBandAsleepFrac] of the in-block samples — an independent confirmation of a real
+     * re-onset. Empty/absent band state → false (no anchor → fall back to the HR bar); we never invent an
+     * "asleep" reading the strap did not bank. Pure + deterministic. Mirrors Swift `bandStateConfirmsAsleep`.
+     * (#531 / H8 consume)
+     */
+    internal fun bandStateConfirmsAsleep(p: Period, bandSleepState: List<Pair<Long, Int>>): Boolean {
+        val inBlock = bandSleepState.filter { it.first in p.start..p.end }
+        if (inBlock.isEmpty()) return false
+        val asleep = inBlock.count { it.second == bandStateAsleep }
+        return asleep.toDouble() / inBlock.size.toDouble() >= morningReonsetBandAsleepFrac
+    }
+
+    /**
      * Off-wrist HR-gap spans (#500). The contiguous HR-coverage gaps of at least [offWristHRGapMin]
      * minutes WITHIN [p.start, p.end], as concrete [start, end) sub-intervals — a strong wrist-OFF
      * proxy. Worn, the strap streams ~1 Hz HR (or PPG-derived HR on a 5/MG), so a real night yields no
@@ -654,6 +748,18 @@ object SleepStager {
         gravity: List<GravitySample>,
         tzOffsetSeconds: Long = 0L,
         wristOff: List<Pair<Long, Long>> = emptyList(),
+        // The strap's OWN persisted v18 BAND sleep_state per timestamp (Interpreter's `(sb shr 4) and 3`:
+        // 0 wake / 1 still / 2 asleep / 3 up), consumed ONLY to confirm a borderline H7 morning re-onset
+        // (#531): a daytime block the strap itself scored predominantly "asleep" is kept even on a borderline
+        // HR dip. Default empty keeps pure-function callers/tests free of it; IntelligenceEngine passes the
+        // night window's persisted band state. It can only RESCUE a real-sleep block, never fabricate. Mirrors Swift.
+        bandSleepState: List<Pair<Long, Int>> = emptyList(),
+        // V7 / #690: when true, each accepted night is staged by the experimental cardiorespiratory recipe
+        // [SleepStagerV2.stageSession] instead of V1's [stageSession]. DETECTION is unchanged (same accepted
+        // windows); only the per-epoch hypnogram differs. Default false keeps V1 the byte-identical default
+        // (frozen-golden tests stay green). The live call site threads the experimentalSleepV2 flag so the
+        // Settings toggle now affects normal detected nights, not just the self-heal restage path. Mirrors Swift.
+        useSleepStagerV2: Boolean = false,
     ): List<DetectedSleep> {
         val grav = gravity.sortedBy { it.ts }
         if (grav.size < 2) return emptyList()
@@ -692,6 +798,12 @@ object SleepStager {
         for (p in runs) {
             if (p.stage != "sleep") continue
             if ((p.end - p.start) <= minSleepS) continue
+            // H4 physiological in-bed span cap (#547/#531/#509 tail): a single assembled main-sleep run
+            // longer than ~16 h is a bad-clock artefact (a frozen still stretch banked under a stale/wrong
+            // clock), not a real night. Drop it rather than report (or truncate to) a 12 h+ "sleep" — an
+            // over-long block can't be trusted to assert a span at all, and truncating would fabricate a
+            // wake time. Checked before staging so the artefact never reaches the aggregate. Mirrors Swift.
+            if ((p.end - p.start) > maxMainSleepSpanS) continue
             if (!confirmSleepWithHR(p, hrS, baseline)) continue
             // Off-wrist backstop (#500), FRACTIONAL rule (design credited to j0b-dev's #504 analysis):
             // a wrist-OFF stretch is still gravity with no HR, so it slips past both the gravity spine
@@ -710,9 +822,22 @@ object SleepStager {
             val resting = sessionRestingHR(start = p.start, end = p.end, hr = hrS)
             val continuesChain = chainPrevEnd?.let { p.start - it <= continuationGapS } ?: false
             val isNightTail = continuesChain && chainFromOvernight   // the night's tail, not a nap
-            if (isDaytimeCenter(p, tzOffsetSeconds) && !passesDaytimeGuard(p, resting, baseline) && !isNightTail) continue
-            val stages = stageSession(start = p.start, end = p.end, grav = grav,
-                hr = hrS, rr = rrS, resp = respS)
+            // H7 (#531): when the prior accepted chain BEGAN overnight, its wake (chainPrevEnd) anchors the
+            // morning-stillness window. A daytime block beginning within it that is NOT a night-tail must
+            // clear the STRONGER re-onset bar — killing the 9 am phantom nap of residual post-wake stillness
+            // while keeping a genuine second sleep. Outside the window the guard is the ordinary daytime bar.
+            val morningWakeEnd = if (chainFromOvernight) chainPrevEnd else null
+            if (isDaytimeCenter(p, tzOffsetSeconds) &&
+                !passesMorningStillnessGuard(p, resting, baseline, morningWakeEnd, bandSleepState) &&
+                !isNightTail
+            ) continue
+            val stages = if (useSleepStagerV2) {
+                SleepStagerV2.stageSession(start = p.start, end = p.end, grav = grav,
+                    hr = hrS, rr = rrS, resp = respS)
+            } else {
+                stageSession(start = p.start, end = p.end, grav = grav,
+                    hr = hrS, rr = rrS, resp = respS)
+            }
             val eff = efficiency(start = p.start, end = p.end, stages = stages)
             val avgHrv = sessionAvgHRV(start = p.start, end = p.end, rr = rrS)
             sessions.add(
@@ -826,6 +951,30 @@ object SleepStager {
         }
         if (segments.isNotEmpty()) segments[segments.size - 1].end = end
         return segments
+    }
+
+    // ── Per-epoch motion (H8 — persisted beside stagesJSON) ───────────────────
+
+    /**
+     * The per-epoch MOTION magnitudes for a session window, on the SAME 30 s epoch grid as [stageSession]'s
+     * `stagesJSON` (one entry per epoch, in order). Each value is the epoch's summed |Δgravity| (the raw
+     * pre-rescale Cole–Kripke activity count) — the strap's own motion signal, banked so later passes and
+     * the UI can read per-epoch movement without re-reading the raw gravity stream. Returns `[]` when the
+     * window has too little gravity to grid (mirrors [stageSession]'s degenerate fallback), so the caller
+     * persists NULL (no fabricated zero series). Pure + deterministic; shares [buildEpochGrid] with staging
+     * so the grids align epoch-for-epoch. Mirrors Swift `sessionEpochMotion`. (H8)
+     */
+    fun sessionEpochMotion(start: Long, end: Long, grav: List<GravitySample>): List<Double> {
+        val gSeg = rowsBetween(grav, start, end) { it.ts }
+        if (gSeg.size < 2) return emptyList()
+        val gDeltas = gravityDeltas(gSeg)
+        val gTimes = gSeg.map { it.ts }
+        val grid = buildEpochGrid(
+            start = start.toDouble(), end = end.toDouble(),
+            gravTimes = gTimes, gravDeltas = gDeltas,
+            hr = emptyList(), rr = emptyList(), resp = emptyList(),
+        )
+        return grid.counts
     }
 
     // ── Epoch grid ────────────────────────────────────────────────────────────
@@ -1436,6 +1585,189 @@ object SleepStager {
             if (out[i] == "deep" && f.clock > deepFirstFraction && hasEarlyDeep) out[i] = "light"
         }
         return out
+    }
+
+    // ── REM-funnel diagnostic (#688) ──────────────────────────────────────────
+
+    // 0% REM over a whole night is physiologically implausible (healthy adults cycle ~20–25% REM),
+    // so a 0%-REM hypnogram — common on WHOOP 4.0 nights staged WITHOUT a respiration channel —
+    // points at the STAGER, not the sleeper. The REM path in [classifyOne] is gated by three
+    // predicates (still body + activated cardiac + irregular respiration), with a no-resp fallback
+    // (still + high HR + high HR-variability), and any surviving early-REM is then stripped by the
+    // no-REM-after-onset re-imposition. This pure, READ-ONLY diagnostic re-runs that exact funnel and
+    // counts where REM was lost — WITHOUT changing a single label or score. It is a triage surface,
+    // logged by the caller, never a scoring change. Mirrors Swift `remFunnelDiagnostic`. (#688)
+
+    /**
+     * Why REM funneled toward zero for one staged session window. Counts are over the SLEEP-PERIOD
+     * epochs (onset…finalWake) the classifier actually ranges; pure + deterministic; shares the exact
+     * classifier seam with [stageSession]. Mirrors Swift `SleepStager.REMFunnelDiagnostic`. (#688)
+     */
+    data class REMFunnelDiagnostic(
+        /** Sleep-period epochs considered (onset…finalWake inclusive). */
+        val sleepEpochs: Int,
+        /** Epochs the classifier labelled "rem" BEFORE smoothing / re-imposition. */
+        val remAtClassify: Int,
+        /** "rem" epochs surviving the no-REM-after-onset re-imposition (the final hypnogram's REM). */
+        val remAfterReimpose: Int,
+        /** Classified-REM epochs stripped specifically by the 15-min onset guard. */
+        val remStrippedByOnsetGuard: Int,
+        /**
+         * Whether ANY epoch carried a finite respiration-variability feature (the resp channel was
+         * usable). False ⇒ the whole night ran the no-resp REM fallback — the dominant 4.0 cause.
+         */
+        val respChannelPresent: Boolean,
+        /** Body not still enough (moveFrac above the still bar). */
+        val blockedNotStill: Int,
+        /** Neither HR-high nor HR-variability-high. */
+        val blockedNoCardiacActivation: Int,
+        /** Resp present but NOT irregular (regular breathing). */
+        val blockedRespRegular: Int,
+        /** Resp absent and the stricter no-resp REM bar unmet. */
+        val blockedNoRespFallbackBar: Int,
+        /** Won a non-REM stage outright (wake/deep/light) before any REM gate — not a REM rejection. */
+        val wonOtherStage: Int,
+    ) {
+        /** True when the final hypnogram carries no REM at all — the case this diagnostic triages. */
+        val isZeroREM: Boolean get() = remAfterReimpose == 0
+
+        /** One human-readable line for the caller to LOG. No I/O here — the engine stays pure. */
+        val summary: String
+            get() = "REM-funnel: $sleepEpochs sleep-epochs, classify=$remAtClassify rem, " +
+                "final=$remAfterReimpose rem (onset-guard stripped $remStrippedByOnsetGuard); " +
+                "resp=${if (respChannelPresent) "present" else "ABSENT"}; " +
+                "blocked[notStill=$blockedNotStill, noCardiac=$blockedNoCardiacActivation, " +
+                "respRegular=$blockedRespRegular, noRespBar=$blockedNoRespFallbackBar], " +
+                "otherStage=$wonOtherStage"
+    }
+
+    /**
+     * Per-epoch reason REM was rejected, evaluated in classifier precedence order. `REM_ELIGIBLE`
+     * means the epoch WOULD be labelled REM. Internal — drives [remFunnelDiagnostic].
+     */
+    internal enum class REMRejectReason {
+        REM_ELIGIBLE, WON_OTHER_STAGE, NOT_STILL, NO_CARDIAC_ACTIVATION, RESP_REGULAR, NO_RESP_FALLBACK_BAR
+    }
+
+    /**
+     * Classify a single epoch's REM-eligibility AND, when not eligible, the FIRST reason it failed —
+     * using the exact predicates and precedence of [classifyOne] so the diagnostic can never diverge
+     * from the real classifier. Read-only. Mirrors Swift `remRejectReason`. (#688)
+     */
+    internal fun remRejectReason(
+        f: EpochFeatures, hrLo: Double?, hrHi: Double?,
+        rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+    ): REMRejectReason {
+        // Mirror classifyOne's derived predicates exactly.
+        val hasHR = f.hr.isFinite()
+        val hrLow = hasHR && hrLo != null && f.hr <= hrLo
+        val hrHigh = hasHR && hrHi != null && f.hr >= hrHi
+        val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
+        val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
+        val cardiacActivated = hrHigh || hrvarHigh
+        val rrvIrregular = f.rrv.isFinite() && rrvHi != null && f.rrv >= rrvHi
+        val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
+        val still = f.moveFrac <= stageStillMoveFrac
+        val moving = f.moveFrac >= stageWakeMoveFrac
+
+        // classifyOne precedence: WAKE, then DEEP, then REM (then REM fallback), else LIGHT.
+        // An epoch that wins WAKE or DEEP was never a REM candidate.
+        if (moving && (cardiacActivated || !hasHR)) return REMRejectReason.WON_OTHER_STAGE  // → wake
+        if (still && parasympOK && hrLow && rrvRegular) return REMRejectReason.WON_OTHER_STAGE // → deep
+        // From here the epoch did NOT win wake/deep; it is either REM or falls through to LIGHT.
+        if (still && cardiacActivated && rrvIrregular) return REMRejectReason.REM_ELIGIBLE
+        if (still && hrHigh && hrvarHigh && !f.rrv.isFinite()) return REMRejectReason.REM_ELIGIBLE
+        // Not REM → attribute to the FIRST unmet REM precondition (in REM-rule order).
+        if (!still) return REMRejectReason.NOT_STILL
+        if (!cardiacActivated) return REMRejectReason.NO_CARDIAC_ACTIVATION
+        if (f.rrv.isFinite()) return REMRejectReason.RESP_REGULAR  // resp present but not irregular
+        return REMRejectReason.NO_RESP_FALLBACK_BAR                 // resp absent and no-resp bar unmet
+    }
+
+    /**
+     * Read-only REM-funnel triage for ONE in-bed window [start, end] (#688). Re-runs the SAME
+     * Stage-0→3 staging seam [stageSession] uses (epoch grid → Cole–Kripke → features → classify →
+     * smooth → re-impose), but instead of emitting a hypnogram it COUNTS where REM was lost. Changes
+     * NOTHING: no label, no score, no session. Returns null only when the window has too little gravity
+     * to grid (mirroring [stageSession]'s degenerate fallback, which carries no REM to explain). The
+     * caller logs `.summary`; tests assert the counts. Pure + deterministic. Mirrors Swift. (#688)
+     */
+    fun remFunnelDiagnostic(
+        start: Long, end: Long, grav: List<GravitySample>,
+        hr: List<HrSample>, rr: List<RrInterval>, resp: List<RespSample>,
+    ): REMFunnelDiagnostic? {
+        val gSeg = rowsBetween(grav, start, end) { it.ts }
+        if (gSeg.size < 2) return null
+        val gDeltas = gravityDeltas(gSeg)
+        val gTimes = gSeg.map { it.ts }
+        val hrSeg = rowsBetween(hr, start, end) { it.ts }
+        val rrSeg = rowsBetween(rr, start, end) { it.ts }
+        val respSeg = rowsBetween(resp, start, end) { it.ts }
+
+        val grid = buildEpochGrid(
+            start = start.toDouble(), end = end.toDouble(),
+            gravTimes = gTimes, gravDeltas = gDeltas,
+            hr = hrSeg, rr = rrSeg, resp = respSeg,
+        )
+        if (grid.nEpochs == 0) return null
+
+        val rescaled = rescaleCounts(grid.counts)
+        val ckFlags = coleKripke(rescaled)
+        val (onsetIdx, finalWakeIdx) = onsetAndFinalWake(ckFlags)
+        val dogHR = dogHRVariability(grid.hr)
+        val feats = extractFeatures(grid = grid, ckFlags = ckFlags, dogHR = dogHR,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+
+        // The SAME session-relative reference percentiles classifyEpochs derives.
+        val sleepFeats = if (feats.any { it.ckSleep }) feats.filter { it.ckSleep } else feats
+        val hrLo = percentile(sleepFeats.map { it.hr }, stageHRLowPct)
+        val hrHi = percentile(sleepFeats.map { it.hr }, stageHRHighPct)
+        val rmssdHi = percentile(sleepFeats.map { it.rmssd }, stageHRVHighPct)
+        val hrvarHi = percentile(sleepFeats.map { it.hrVar }, stageHRVarHighPct)
+        val rrvHi = percentile(sleepFeats.map { it.rrv }, stageRRVHighPct)
+        val rrvLo = percentile(sleepFeats.map { it.rrv }, stageRRVLowPct)
+
+        // Classify + post-process exactly as stageSession does, so we explain the SAME hypnogram.
+        val labels = classifyEpochs(feats)
+        val smoothed = smoothLabels(labels)
+        val reimposed = reimposePhysiology(smoothed, features = feats,
+            onsetIdx = onsetIdx, finalWakeIdx = finalWakeIdx)
+
+        val noREMEpochs = (noREMAfterOnsetMin * 60.0 / epochS).roundToInt()
+        var sleepEpochs = 0; var remAtClassify = 0; var remAfterReimpose = 0; var remStrippedByOnsetGuard = 0
+        var blockedNotStill = 0; var blockedNoCardiacActivation = 0; var blockedRespRegular = 0
+        var blockedNoRespFallbackBar = 0; var wonOtherStage = 0
+        var respChannelPresent = false
+
+        for (i in onsetIdx..maxOf(onsetIdx, finalWakeIdx)) {
+            if (i >= feats.size) break
+            val f = feats[i]
+            sleepEpochs += 1
+            if (f.rrv.isFinite()) respChannelPresent = true
+            // Per-epoch REM reason at the raw classifier seam (pre-smoothing) — the funnel's mouth.
+            when (remRejectReason(f, hrLo = hrLo, hrHi = hrHi, rmssdHi = rmssdHi,
+                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo)) {
+                REMRejectReason.REM_ELIGIBLE -> remAtClassify += 1
+                REMRejectReason.WON_OTHER_STAGE -> wonOtherStage += 1
+                REMRejectReason.NOT_STILL -> blockedNotStill += 1
+                REMRejectReason.NO_CARDIAC_ACTIVATION -> blockedNoCardiacActivation += 1
+                REMRejectReason.RESP_REGULAR -> blockedRespRegular += 1
+                REMRejectReason.NO_RESP_FALLBACK_BAR -> blockedNoRespFallbackBar += 1
+            }
+            // Final-hypnogram REM (post smooth + re-impose) and the onset-guard strip.
+            if (reimposed[i] == "rem") remAfterReimpose += 1
+            // The re-imposition strips a SMOOTHED "rem" epoch inside the onset guard → light; count
+            // the strip off the smoothed labels reimpose actually sees (exact, not the raw seam).
+            if (smoothed[i] == "rem" && (i - onsetIdx) < noREMEpochs) remStrippedByOnsetGuard += 1
+        }
+
+        return REMFunnelDiagnostic(
+            sleepEpochs = sleepEpochs, remAtClassify = remAtClassify, remAfterReimpose = remAfterReimpose,
+            remStrippedByOnsetGuard = remStrippedByOnsetGuard, respChannelPresent = respChannelPresent,
+            blockedNotStill = blockedNotStill, blockedNoCardiacActivation = blockedNoCardiacActivation,
+            blockedRespRegular = blockedRespRegular, blockedNoRespFallbackBar = blockedNoRespFallbackBar,
+            wonOtherStage = wonOtherStage,
+        )
     }
 
     /**

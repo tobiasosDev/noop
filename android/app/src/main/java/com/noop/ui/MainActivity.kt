@@ -338,6 +338,32 @@ object NoopPrefs {
         of(context).edit().putStringSet(KEY_SMART_ALARM_WEEKDAYS, clean).apply()
     }
 
+    /** Per-weekday wake-time OVERRIDES (reimpl of @MumiZed's PR #554): a map of Calendar.DAY_OF_WEEK
+     *  (1=Sun…7=Sat) → minute-of-day. A day with no entry uses the default [smartAlarmMinutes]. Stored as
+     *  a "dow:minute" string set; only valid days (1…7) and minutes [0,1440) survive a load, so a corrupt
+     *  entry can never schedule a bogus time. Empty = no overrides (the pre-#554 behaviour). */
+    const val KEY_SMART_ALARM_OVERRIDES = "noop.smartAlarmDayOverrides"
+
+    fun smartAlarmDayOverrides(context: Context): Map<Int, Int> =
+        of(context).getStringSet(KEY_SMART_ALARM_OVERRIDES, emptySet())
+            ?.mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size != 2) return@mapNotNull null
+                val dow = parts[0].toIntOrNull() ?: return@mapNotNull null
+                val min = parts[1].toIntOrNull() ?: return@mapNotNull null
+                if (dow !in 1..7 || min !in 0 until 24 * 60) return@mapNotNull null
+                dow to min
+            }?.toMap() ?: emptyMap()
+
+    fun setSmartAlarmDayOverrides(context: Context, overrides: Map<Int, Int>) {
+        val clean = overrides
+            .filterKeys { it in 1..7 }
+            .filterValues { it in 0 until 24 * 60 }
+            .map { (dow, min) -> "$dow:$min" }
+            .toSet()
+        of(context).edit().putStringSet(KEY_SMART_ALARM_OVERRIDES, clean).apply()
+    }
+
     /** HR-zone haptic coaching: buzz the strap on entering the top zone (ease off) and — when the
      *  recovery buzz is on — on dropping back to Zone 1. Zone-based off the profile's HR-max; mirrors
      *  macOS. Coaching default off; recovery buzz default on (matches macOS's always-both behaviour).
@@ -383,6 +409,19 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_CYCLE_TRACKING, enabled).apply()
     }
 
+    /** Hydration tracking (MVP): an opt-in, on-device-only fluid log with a daily goal + quick-add
+     *  buttons. OPT-IN, default OFF (manual-first ethos) — the Today "Hydration" card and the detail
+     *  feature only appear once this is on. Nothing is synced; the day total lives in the local
+     *  metric-series store. */
+    const val KEY_HYDRATION_TRACKING = "noop.hydrationTracking"
+
+    fun hydrationTracking(context: Context): Boolean =
+        of(context).getBoolean(KEY_HYDRATION_TRACKING, false)
+
+    fun setHydrationTracking(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_HYDRATION_TRACKING, enabled).apply()
+    }
+
     /** Coach on-device signals (v5): when ON, the opt-in BYO-key Coach's grounding context may include a
      *  SUMMARY-ONLY line of on-device correlations + Lab Book markers (no raw egress). A SECOND opt-in on
      *  top of the existing "let the coach use my data" consent. Default OFF — keeps the anonymity posture. */
@@ -393,6 +432,19 @@ object NoopPrefs {
 
     fun setCoachSignals(context: Context, enabled: Boolean) {
         of(context).edit().putBoolean(KEY_COACH_SIGNALS, enabled).apply()
+    }
+
+    /** "Auto-detect workouts" (MVP, opt-in, on-device, NON-DESTRUCTIVE). When ON, NOOP scans the last
+     *  day or two of strap HR for a sustained-elevated bout and surfaces ONE dismissible Today card
+     *  suggesting you save it — it NEVER creates a workout on its own (the user taps Save). Default OFF;
+     *  when off no detection runs and no card shows. Mirrors macOS/iOS @AppStorage("autoDetectWorkouts"). */
+    const val KEY_AUTO_DETECT_WORKOUTS = "noop.autoDetectWorkouts"
+
+    fun autoDetectWorkouts(context: Context): Boolean =
+        of(context).getBoolean(KEY_AUTO_DETECT_WORKOUTS, false)
+
+    fun setAutoDetectWorkouts(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_AUTO_DETECT_WORKOUTS, enabled).apply()
     }
 
     /** Last local day (ISO yyyy-MM-dd) an illness notification was posted — the once-a-day gate,
@@ -437,6 +489,75 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_BATTERY_FULL_ALERTED, alerted).apply()
     }
 
+    /** Scheduled report notifications (#517) — opt-in, default OFF, no AI. Two independent toggles:
+     *  - [KEY_REPORT_MORNING]: a morning recap (Charge + Rest) posted once after a fresh night is
+     *    processed. It is NOT alarm-precise — it lands when the next sync + analytics pass completes,
+     *    so the copy is honest about timing.
+     *  - [KEY_REPORT_WORKOUT]: a post-workout summary (Effort + duration + avg HR) posted when a newly
+     *    synced workout is first seen. Same post-sync-timing caveat — a strap-only workout surfaces on
+     *    the next history offload, not the instant the session ends.
+     *  The dedupe state ([KEY_REPORT_MORNING_DAY] / [KEY_REPORT_LAST_WORKOUT_TS]) survives process death
+     *  so the app-open and background call sites can't double-post. Mirrors the BatteryAlert/Illness gate
+     *  idiom (a persisted "last fired" marker behind a pure policy object). */
+    const val KEY_REPORT_MORNING = "noop.report.morningRecap"
+    const val KEY_REPORT_WORKOUT = "noop.report.postWorkout"
+    const val KEY_REPORT_MORNING_DAY = "noop.report.lastMorningDay"
+    const val KEY_REPORT_LAST_WORKOUT_TS = "noop.report.lastWorkoutTs"
+
+    fun morningReportEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_REPORT_MORNING, false)
+
+    fun setMorningReportEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_REPORT_MORNING, enabled).apply()
+    }
+
+    fun postWorkoutReportEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_REPORT_WORKOUT, false)
+
+    fun setPostWorkoutReportEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_REPORT_WORKOUT, enabled).apply()
+    }
+
+    /** Last local day (ISO yyyy-MM-dd) the morning recap was posted — the once-a-day gate. */
+    fun reportMorningDay(context: Context): String? =
+        of(context).getString(KEY_REPORT_MORNING_DAY, null)
+
+    fun setReportMorningDay(context: Context, day: String) {
+        of(context).edit().putString(KEY_REPORT_MORNING_DAY, day).apply()
+    }
+
+    /** Start-ts (epoch seconds) of the most recent workout already summarised — only a STRICTLY newer
+     *  session fires again, so a re-sync of the same backlog never re-notifies. 0 = none yet. */
+    fun reportLastWorkoutTs(context: Context): Long =
+        of(context).getLong(KEY_REPORT_LAST_WORKOUT_TS, 0L)
+
+    fun setReportLastWorkoutTs(context: Context, ts: Long) {
+        of(context).edit().putLong(KEY_REPORT_LAST_WORKOUT_TS, ts).apply()
+    }
+
+    /** Caffeine late-intake nudge (PR#566, mvanhorn) — opt-in, default OFF. When on, the Caffeine card
+     *  shows a cutoff time (the latest you can have caffeine and still clear it below a target residual by
+     *  bedtime) and flags an intake logged after that cutoff. [KEY_CAFFEINE_BEDTIME_MIN] is the user's
+     *  bedtime as minutes-since-midnight (default 23:00) the cutoff is computed back from. On-device, no
+     *  notification — a quiet inline hint, matching the manual-first caffeine card. */
+    const val KEY_CAFFEINE_CUTOFF = "noop.caffeine.cutoffNudge"
+    const val KEY_CAFFEINE_BEDTIME_MIN = "noop.caffeine.bedtimeMinutes"
+
+    fun caffeineCutoffEnabled(context: Context): Boolean =
+        of(context).getBoolean(KEY_CAFFEINE_CUTOFF, false)
+
+    fun setCaffeineCutoffEnabled(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_CAFFEINE_CUTOFF, enabled).apply()
+    }
+
+    /** Bedtime as minutes since midnight the caffeine cutoff is reckoned back from (default 1380 = 23:00). */
+    fun caffeineBedtimeMinutes(context: Context): Int =
+        of(context).getInt(KEY_CAFFEINE_BEDTIME_MIN, 23 * 60)
+
+    fun setCaffeineBedtimeMinutes(context: Context, minutes: Int) {
+        of(context).edit().putInt(KEY_CAFFEINE_BEDTIME_MIN, minutes.coerceIn(0, 24 * 60 - 1)).apply()
+    }
+
     /** Whether the one-shot #313 full-history Effort rescore has run. Set true once it completes so the
      *  on-upgrade pass that regenerates deep-history strain on the 0–100 axis never re-runs. */
     const val KEY_EFFORT_RESCORE_DONE = "noop.effortRescore.v313.done"
@@ -458,6 +579,19 @@ object NoopPrefs {
 
     fun setTsHealDone(context: Context) {
         of(context).edit().putBoolean(KEY_TS_HEAL_DONE, true).apply()
+    }
+
+    /** #547 RE-POLLUTION re-arm: set true by the BLE layer when a sync's ingest gate dropped implausible
+     *  (bad-clock) records, so the next analyze tick re-runs the purge even after [KEY_TS_HEAL_DONE] is set —
+     *  a wandering-clock strap re-sends bad-dated records across syncs, and may have banked similar garbage
+     *  on an OLDER build whose gate was weaker. Cleared once the re-heal runs. */
+    const val KEY_TS_HEAL_PENDING = "noop.tsHeal.v547.pending"
+
+    fun tsHealPending(context: Context): Boolean =
+        of(context).getBoolean(KEY_TS_HEAL_PENDING, false)
+
+    fun setTsHealPending(context: Context, pending: Boolean) {
+        of(context).edit().putBoolean(KEY_TS_HEAL_PENDING, pending).apply()
     }
 
     /** The last strap we bonded to (address + model), persisted so NOOP can reconnect to it directly on
@@ -483,6 +617,17 @@ object NoopPrefs {
 
     fun clearLastDevice(context: Context) {
         of(context).edit().remove(KEY_LAST_DEVICE_ADDR).remove(KEY_LAST_DEVICE_MODEL).apply()
+    }
+
+    /** Wall-clock (unix seconds) of the last history offload that ran to HISTORY_COMPLETE. Persisted
+     *  (reimpl of @tavelli's PR #556) so the Live screen's "Last synced N ago" SURVIVES a BLE-client
+     *  recreation / process restart and stops reverting to "Never". 0 = never synced on this install. */
+    const val KEY_LAST_SYNC_AT = "noop.lastSyncAtSec"
+
+    fun lastSyncAt(context: Context): Long = of(context).getLong(KEY_LAST_SYNC_AT, 0L)
+
+    fun setLastSyncAt(context: Context, epochSec: Long) {
+        of(context).edit().putLong(KEY_LAST_SYNC_AT, epochSec).apply()
     }
 }
 

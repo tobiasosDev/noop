@@ -28,6 +28,7 @@ internal object BatteryAlertPolicy {
     data class Decision(
         val fireLow: Boolean,
         val fireFull: Boolean,
+        val clearFull: Boolean,
         val newLowAlerted: Boolean,
         val newFullAlerted: Boolean,
     )
@@ -37,10 +38,17 @@ internal object BatteryAlertPolicy {
      * @param charging     charging state (null = unknown)
      * @param lowAlerted   persisted: has the low alert already fired this discharge cycle?
      * @param fullAlerted  persisted: has the full alert already fired since the last drop below 100?
+     *
+     * `clearFull` (#514): the strap was showing a "fully charged" notification and has now dropped
+     * below 100% — the standing note is stale, so cancel it. It's exactly the full re-arm
+     * transition (fullAlerted && pct < FULL_THRESHOLD), surfaced so the notifier can pull the
+     * delivered full-charge notification by its id.
      */
     fun evaluate(pct: Int, charging: Boolean?, lowAlerted: Boolean, fullAlerted: Boolean): Decision {
         var low = lowAlerted
         var full = fullAlerted
+        // The stale 100%-full note must be cleared the moment we re-arm below the full line.
+        val clearFull = fullAlerted && pct < FULL_THRESHOLD
         // Re-arm (hysteresis) so jitter near a threshold can't re-fire.
         if (charging == true || pct >= LOW_REARM_ABOVE) low = false
         if (pct < FULL_THRESHOLD) full = false
@@ -49,7 +57,7 @@ internal object BatteryAlertPolicy {
         val fireFull = !full && pct >= FULL_THRESHOLD
         if (fireLow) low = true
         if (fireFull) full = true
-        return Decision(fireLow, fireFull, low, full)
+        return Decision(fireLow, fireFull, clearFull, low, full)
     }
 }
 
@@ -103,6 +111,12 @@ object BatteryAlertNotifier {
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .build()
                 NotificationManagerCompat.from(context).notify(NOTIF_ID_FULL, n)
+            }
+            // #514: the strap has dropped below 100% — pull the stale "fully charged" note so it
+            // can't linger after the cell discharges. cancel() covers a posted notification; a
+            // not-yet-shown one simply no-ops.
+            if (decision.clearFull) {
+                NotificationManagerCompat.from(context).cancel(NOTIF_ID_FULL)
             }
             // ALWAYS persist the updated flags — re-arming must stick even when nothing fired.
             NoopPrefs.setBatteryLowAlerted(context, decision.newLowAlerted)

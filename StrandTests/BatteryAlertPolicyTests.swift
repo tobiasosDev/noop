@@ -87,4 +87,30 @@ final class BatteryAlertPolicyTests: XCTestCase {
         let again = Policy.evaluate(pct: 100, charging: nil, lowAlerted: drop.newLowAlerted, fullAlerted: drop.newFullAlerted)
         XCTAssertTrue(again.fireFull)
     }
+
+    // 6. (#514) Dropping below 100 while the full alert is standing signals clearFull exactly once,
+    //    so the notifier can pull the stale "fully charged" note. It does NOT fire/clear the low alert.
+    func testDropBelowFullClearsStaleFullNote() {
+        // Standing full alert (fullAlerted == true) drops to 99% — clearFull, re-arms, nothing fires.
+        let drop = Policy.evaluate(pct: 99, charging: nil, lowAlerted: false, fullAlerted: true)
+        XCTAssertTrue(drop.clearFull)
+        XCTAssertFalse(drop.fireFull)
+        XCTAssertFalse(drop.fireLow)
+        XCTAssertFalse(drop.newFullAlerted)
+
+        // The next reading below 100 with the flag already re-armed does NOT keep asking to clear.
+        let next = Policy.evaluate(pct: 90, charging: nil, lowAlerted: drop.newLowAlerted, fullAlerted: drop.newFullAlerted)
+        XCTAssertFalse(next.clearFull)
+    }
+
+    // 7. (#514) Holding at 100 (full still standing) must NOT clear the note, and a fresh fire at
+    //    100 from a clean state must NOT clear either — clearFull is the below-100 transition only.
+    func testHoldingAtFullDoesNotClear() {
+        let hold = Policy.evaluate(pct: 100, charging: nil, lowAlerted: false, fullAlerted: true)
+        XCTAssertFalse(hold.clearFull)
+
+        let fresh = Policy.evaluate(pct: 100, charging: nil, lowAlerted: false, fullAlerted: false)
+        XCTAssertTrue(fresh.fireFull)
+        XCTAssertFalse(fresh.clearFull)
+    }
 }

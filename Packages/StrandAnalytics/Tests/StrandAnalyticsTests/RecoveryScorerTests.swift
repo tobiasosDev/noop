@@ -175,4 +175,51 @@ final class RecoveryScorerTests: XCTestCase {
     func testRestingHRNilWhenNoSamples() {
         XCTAssertNil(RecoveryScorer.restingHR([], start: 0, end: 1000))
     }
+
+    // MARK: - #686: artifact hardening of the resting-HR floor
+
+    func testRestingHRRejectsSingleSampleArtifactBin() {
+        // A dense, well-populated bin at 55 bpm, then a SECOND 5-min bin holding exactly ONE
+        // artifact beat at 30 bpm. The old min-of-bin-means took the lone-sample bin (30) as the
+        // floor; with #686 a single-sample bin can't WIN, so the floor is the real 55.
+        var hr: [HRSample] = []
+        let start = 1000
+        for i in 0..<300 { hr.append(HRSample(ts: start + i, bpm: 55)) }   // bin 0: 300 samples @55
+        hr.append(HRSample(ts: start + 300, bpm: 30))                       // bin 1: ONE sample @30
+        let r = RecoveryScorer.restingHR(hr, start: start, end: start + 600)
+        XCTAssertEqual(r, 55, "a single-sample artifact bin must not win the resting floor")
+    }
+
+    func testRestingHRRejectsSubPhysiologicalDropoutBin() {
+        // Two FULLY-populated bins: a real 52 bpm bin and a dropout bin whose 300 samples all read
+        // an implausible 10 bpm (decode-zero / dropout run). It clears the sample-count bar but is
+        // sub-physiological, so #686 bars it from the floor → resting reads the real 52.
+        var hr: [HRSample] = []
+        let start = 2000
+        for i in 0..<300 { hr.append(HRSample(ts: start + i, bpm: 52)) }         // real bin
+        for i in 0..<300 { hr.append(HRSample(ts: start + 300 + i, bpm: 10)) }   // dropout bin
+        let r = RecoveryScorer.restingHR(hr, start: start, end: start + 600)
+        XCTAssertEqual(r, 52, "a sub-physiological dropout bin must not win the resting floor")
+    }
+
+    func testRestingHRKeepsGenuineLowFloor() {
+        // A REAL sustained dip (a full 5-min bin at 45 bpm) is plausible AND well-populated, so it
+        // still wins — the hardening must not flatten genuine athletic resting HRs.
+        var hr: [HRSample] = []
+        let start = 3000
+        for i in 0..<300 { hr.append(HRSample(ts: start + i, bpm: 60)) }
+        for i in 0..<300 { hr.append(HRSample(ts: start + 300 + i, bpm: 45)) }
+        let r = RecoveryScorer.restingHR(hr, start: start, end: start + 600)
+        XCTAssertEqual(r, 45, "a genuine sustained low bin must still win the floor")
+    }
+
+    func testRestingHRFallsBackWhenNoBinQualifies() {
+        // A wholly sparse window: every bin holds a single sample (none clears the count bar).
+        // Rather than return nil on data present, fall back to the legacy lowest-bin-mean (here 48).
+        let start = 4000
+        let hr = [HRSample(ts: start + 10, bpm: 58),
+                  HRSample(ts: start + 320, bpm: 48)]   // two bins, one sample each
+        let r = RecoveryScorer.restingHR(hr, start: start, end: start + 600)
+        XCTAssertEqual(r, 48, "with no qualifying bin, fall back to the lowest bin mean (never nil on data)")
+    }
 }

@@ -214,17 +214,19 @@ enum RouteStore {
     /// start second (different sports) never collide.
     static func key(startTs: Int, sport: String) -> String { "\(startTs)|\(sport)" }
 
-    /// Encode a route map to JSON. Returns nil only if encoding fails (never expected for this shape).
+    /// Encode a route map to JSON. Drops any entry whose distance isn't a finite, non-negative number
+    /// FIRST — JSON has no representation for NaN/Inf, so a single corrupt distance would otherwise make
+    /// `JSONEncoder` throw and take the WHOLE map down with it (silently losing every valid route). We
+    /// sanitise per-entry so one bad row can never poison the blob. Returns nil only if encoding the
+    /// already-clean map fails (never expected for this shape).
     static func encodeMap(_ map: [String: WorkoutRoute]) -> Data? {
-        // Drop non-finite distances before encoding: JSONEncoder throws on NaN/±Inf, which
-        // would silently discard the entire map (including valid entries). Filtering here
-        // mirrors the read-side guard in decodeMap and keeps the on-disk blob always clean.
         let clean = map.filter { $0.value.distanceM.isFinite && $0.value.distanceM >= 0 }
         return try? JSONEncoder().encode(clean)
     }
 
     /// Decode a route map from JSON, dropping any entry whose distance isn't a finite, non-negative
-    /// number — never trust the persisted blob to be clean. nil/garbage yields an empty map.
+    /// number — never trust the persisted blob to be clean (belt-and-braces with `encodeMap`'s sanitise).
+    /// nil/garbage yields an empty map.
     static func decodeMap(_ data: Data?) -> [String: WorkoutRoute] {
         guard let data, !data.isEmpty,
               let raw = try? JSONDecoder().decode([String: WorkoutRoute].self, from: data) else { return [:] }

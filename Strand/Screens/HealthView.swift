@@ -105,19 +105,19 @@ private struct SyncStatusSection: View {
                           trailing: live.connected ? (live.bonded ? "Connected" : "Pairing…") : "Offline")
 
             NoopCard(tint: StrandPalette.chargeColor) {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                     statusRow
 
-                    Button {
-                        // Reach the BLE engine's gated entry point directly (same idiom as
-                        // SettingsView's `model.ble.enableWhoop5DeepData()`). BLEManager.syncNow() is the
-                        // honest gate — a no-op when no strap is connected or a sync is already running.
+                    // Route the manual offload kick through the unified NOOP button system so the
+                    // label sits centred at controlHeight like every other primary control. Reaches
+                    // the BLE engine's gated entry point directly (same idiom as SettingsView's
+                    // `model.ble.enableWhoop5DeepData()`); BLEManager.syncNow() is the honest gate —
+                    // a no-op when no strap is connected or a sync is already running.
+                    NoopButton(live.backfilling ? "Syncing…" : "Sync now",
+                               systemImage: "arrow.triangle.2.circlepath",
+                               kind: .secondary, fullWidth: true) {
                         model.ble.syncNow()
-                    } label: {
-                        Label(live.backfilling ? "Syncing…" : "Sync now",
-                              systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .buttonStyle(.noopSecondary)
                     .disabled(!canSync)
                     .accessibilityLabel("Sync now")
                     .accessibilityHint(canSync
@@ -251,8 +251,8 @@ private struct HeartRateSection: View {
         return VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Heart Rate", overline: "Live", trailing: hrIsDerived ? "from R-R" : nil)
 
-            // The live HR hero floats over a Charge-world scenic backdrop (the Health screen's
-            // colour world), with the card itself tinted rose — heart-rate's metric accent.
+            // The live HR hero is a flat WHOOP card tinted rose — heart-rate's metric accent.
+            // No scenic starfield / bloom: fill contrast carries the edge (Apple-flat).
             ChartCard(
                 title: "Heart Rate",
                 subtitle: hrIsDerived ? "Estimated from R-R interval"
@@ -269,10 +269,6 @@ private struct HeartRateSection: View {
                     ("Max HR", "\(profile.hrMax)"),
                     ("State", hasLiveHR ? "STREAMING" : "IDLE"),
                 ])
-            }
-            .background {
-                ScenicHeroBackground(domain: .charge)
-                    .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
             }
         }
         .onChangeCompat(of: displayHR) { newHR in
@@ -301,12 +297,20 @@ private struct HeartRateSection: View {
                 .accessibilityLabel("Live heart rate over time")
                 .accessibilityValue(hasLiveHR ? "\(displayHR ?? 0) beats per minute, zone \(zone)" : "no data")
             } else {
-                VStack(spacing: 8) {
-                    Text(displayHR.map(String.init) ?? "—")
-                        .font(StrandFont.display(72))
-                        .foregroundStyle(hasLiveHR ? StrandPalette.hrZoneColor(zone) : StrandPalette.textTertiary)
-                        .contentTransition(.numericText())
-                        .animation(StrandMotion.interactive, value: displayHR)
+                VStack(spacing: NoopMetrics.space2) {
+                    // The big fallback numeral ticks up to the live value (the hero number) — under
+                    // Reduce Motion it snaps. When there's no HR yet we show a crisp em-dash instead.
+                    if let hr = displayHR {
+                        CountUpText(value: Double(hr),
+                                    format: { "\(Int($0.rounded()))" },
+                                    font: StrandFont.display(72),
+                                    color: hasLiveHR ? StrandPalette.hrZoneColor(zone) : StrandPalette.textTertiary)
+                            .tracking(StrandFont.displayTracking(72))
+                    } else {
+                        Text("—")
+                            .font(StrandFont.display(72))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
                     Text("bpm").font(StrandFont.subhead).foregroundStyle(StrandPalette.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -447,11 +451,12 @@ private struct RecoveryContributorsSection: View {
                 }
             }
             NoopCard(tint: StrandPalette.chargeColor) {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(Array(contributors.enumerated()), id: \.offset) { _, c in
+                VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+                    ForEach(Array(contributors.enumerated()), id: \.offset) { idx, c in
                         ContributorBar(label: c.label, strength: ready ? c.strength : nil,
                                        word: ready ? c.word : "Calibrating",
                                        detail: c.detail, tint: c.tint)
+                            .staggeredAppear(index: idx)
                     }
                 }
             }
@@ -483,7 +488,7 @@ private struct RecoveryContributorsSection: View {
                 strength: lowerIsBetter(latest?.restingHr.map(Double.init), base: rhrBase),
                 word: word(lowerIsBetter(latest?.restingHr.map(Double.init), base: rhrBase)),
                 detail: latest?.restingHr.map { "\($0) bpm" } ?? "—",
-                tint: StrandPalette.gold),             // recovery contributor = gold
+                tint: StrandPalette.chargeColor),       // recovery contributor = WHOOP green
             Contributor(
                 label: "Sleep",
                 strength: higherIsBetter(latest?.totalSleepMin, base: sleepBase),
@@ -539,9 +544,10 @@ private struct RecoveryContributorsSection: View {
     }
 }
 
-/// One README "zone / stage bar": a label + qualitative word on top, a rounded track
-/// (`surfaceInset`, ~9pt tall, radius 5) with a metric-hue fill scaled to 0…100 strength, and a
-/// right-aligned raw reading. Animates the fill in on appear. Used for the recovery contributors.
+/// One README "zone / stage bar": a label + qualitative word on top, the NOOP signature segmented
+/// `PipBar` (metric-hue pips that cascade up to the 0…100 strength on appear/change), and a
+/// right-aligned raw reading. Used for the recovery contributors. A nil strength (calibrating)
+/// renders an empty bar — no fabricated fill.
 private struct ContributorBar: View {
     let label: LocalizedStringKey
     /// 0…100 strength; nil renders an empty (calibrating) track.
@@ -550,13 +556,8 @@ private struct ContributorBar: View {
     let detail: String
     let tint: Color
 
-    @State private var drawn: Double = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var fraction: Double { min(1, max(0, (strength ?? 0) / 100)) }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label).strandOverline()
                 Text("· \(word)")
@@ -567,27 +568,12 @@ private struct ContributorBar: View {
                     .font(StrandFont.captionNumber)
                     .foregroundStyle(StrandPalette.textSecondary)
             }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(StrandPalette.surfaceInset)
-                    Capsule(style: .continuous)
-                        .fill(tint)
-                        .frame(width: geo.size.width * CGFloat(drawn))
-                }
-            }
-            .frame(height: 9)
+            // The signature count-up segmented bar. Flat, crisp, no glow; handles the cascade-in
+            // and Reduce Motion internally. Calibrating (nil) reads as an empty 0 bar.
+            PipBar(value: strength ?? 0, tint: tint)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(detail), \(word)")
-        .onAppear {
-            if reduceMotion { drawn = fraction }
-            else { withAnimation(.easeOut(duration: 0.9)) { drawn = fraction } }
-        }
-        .onChangeCompat(of: strength) { _ in
-            if reduceMotion { drawn = fraction }
-            else { withAnimation(.easeOut(duration: 0.6)) { drawn = fraction } }
-        }
     }
 }
 
@@ -703,16 +689,18 @@ private struct FitnessAgeSection: View {
         let delta = Double(profile.age) - age        // +ve = fitness age younger than chronological
         let years = Int(abs(delta).rounded())
         let younger = delta >= 0
-        return VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: NoopMetrics.space4) {
             // Tap the hero body to open the full "fitness_age" trend.
             Button { fitnessSheet = .trend } label: {
-                HStack(alignment: .center, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center, spacing: NoopMetrics.space5) {
+                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
                         Text("Fitness Age").strandOverline()
-                        Text("\(shown)")
-                            .font(StrandFont.display(64))
-                            .foregroundStyle(StrandPalette.gold)
-                            .contentTransition(.numericText())
+                        // The hero age ticks up on appear / weekly refresh (snaps under Reduce Motion).
+                        CountUpText(value: Double(shown),
+                                    format: { "\(Int($0.rounded()))" },
+                                    font: StrandFont.display(64),
+                                    color: StrandPalette.textPrimary)
+                            .tracking(StrandFont.displayTracking(64))
                         Text(years == 0
                              ? "About the same as your age"
                              : "\(years) year\(years == 1 ? "" : "s") \(younger ? "younger" : "older") than your age")
@@ -752,7 +740,7 @@ private struct FitnessAgeSection: View {
             Button {
                 withAnimation(StrandMotion.interactive) { showReadiness.toggle() }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: NoopMetrics.space2) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(StrandPalette.accent)
                         .accessibilityHidden(true)
@@ -770,16 +758,13 @@ private struct FitnessAgeSection: View {
             .buttonStyle(.plain)
             .accessibilityLabel("How accurate is this? \(showReadiness ? "Hide" : "Show") the data behind your Fitness Age")
         }
-        .padding(20)
+        .padding(NoopMetrics.space5)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Apple-flat WHOOP card: a plain frosted surface tinted to the Charge (green) world —
+        // no scenic starfield / bloom, no gold border. Fill contrast carries the edge.
         .background {
-            ScenicHeroBackground(domain: .charge)
-                .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+            FrostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: NoopMetrics.cardRadius)
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                .strokeBorder(StrandPalette.gold.opacity(0.18), lineWidth: 1)
-        )
         .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
     }
 
@@ -812,8 +797,8 @@ private struct ReadinessChecklistCard: View {
 
     var body: some View {
         NoopCard(tint: StrandPalette.chargeColor) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+                HStack(spacing: NoopMetrics.rowSpacing) {
                     confidencePill
                     Spacer(minLength: 0)
                 }
@@ -845,7 +830,7 @@ private struct ReadinessChecklistCard: View {
     @ViewBuilder
     private func group(title: LocalizedStringKey, items: [FitnessReadinessItem]) -> some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
                 Text(title).strandOverline()
                 ForEach(items, id: \.key) { item in
                     readinessRow(item)
@@ -977,21 +962,25 @@ private struct VitalitySection: View {
         let sorted = contributions.sorted { $0.lnHazard < $1.lnHazard }
         let best = sorted.first
         let worst = sorted.last
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 18) {
-                VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+            HStack(alignment: .center, spacing: NoopMetrics.space5) {
+                VStack(alignment: .leading, spacing: NoopMetrics.space1) {
                     Text("Vitality").strandOverline()
-                    Text("\(Int(v.rounded()))")
-                        .font(StrandFont.display(56))
-                        .foregroundStyle(StrandPalette.gold)
-                        .contentTransition(.numericText())
+                    // The weekly Vitality score ticks up to its value (snaps under Reduce Motion).
+                    CountUpText(value: v,
+                                format: { "\(Int($0.rounded()))" },
+                                font: StrandFont.display(56),
+                                color: StrandPalette.textPrimary)
+                        .tracking(StrandFont.displayTracking(56))
                     Text("out of 100").font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                 }
                 Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: NoopMetrics.space1) {
                     Text("Body Age").strandOverline()
-                    Text("\(Int(ba.rounded()))")
-                        .font(StrandFont.number(34)).foregroundStyle(StrandPalette.textPrimary)
+                    CountUpText(value: ba,
+                                format: { "\(Int($0.rounded()))" },
+                                font: StrandFont.number(34),
+                                color: StrandPalette.textPrimary)
                     Text(yrs == 0 ? "about your age"
                          : "\(yrs) yr\(yrs == 1 ? "" : "s") \(younger ? "younger" : "older")")
                         .font(StrandFont.footnote)
@@ -1012,16 +1001,13 @@ private struct VitalitySection: View {
             Text("A wellness estimate from your habits — not a clinical biological age.")
                 .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
         }
-        .padding(20)
+        .padding(NoopMetrics.space5)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Apple-flat WHOOP card: a plain frosted surface tinted to the Charge (green) world —
+        // no scenic starfield / bloom, no gold border. Fill contrast carries the edge.
         .background {
-            ScenicHeroBackground(domain: .charge)
-                .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+            FrostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: NoopMetrics.cardRadius)
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                .strokeBorder(StrandPalette.gold.opacity(0.18), lineWidth: 1)
-        )
         .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
     }
 
@@ -1060,7 +1046,7 @@ private struct VitalsSection: View {
                 alignment: .leading,
                 spacing: NoopMetrics.gap
             ) {
-                ForEach(readings) { v in
+                ForEach(Array(readings.enumerated()), id: \.element.id) { idx, v in
                     // Each vital is a frosted, metric-tinted StatTile — matching Today's Key-Metrics
                     // grid. `accent` carries the metric's colour world (rose RHR, purple HRV, cyan
                     // SpO₂, amber skin temp), washing the card and tinting its spark trail to match.
@@ -1074,6 +1060,7 @@ private struct VitalsSection: View {
                     )
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(v.accessibilityText)
+                    .staggeredAppear(index: idx)
                 }
             }
             Text("Once NOOP has 14 nights of history, in-range compares each vital to your own baseline (approximate — not medical advice); until then, typical adult ranges apply.")

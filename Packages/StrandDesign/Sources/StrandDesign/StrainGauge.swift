@@ -2,10 +2,10 @@ import SwiftUI
 
 // MARK: - Strain Gauge (§9.1 strain ramp)
 //
-// Amber Effort gauge for the strain/effort scale (deep ember → bright amber, no
-// magenta / no green). Same open-gauge instrument language as the Recovery Ring,
-// but warm (output / heat) instead of the cool recovery scale. Filled to
-// strain/outOf of a 240° arc, with a soft bloom and a leading bead at the tip.
+// Blue Effort gauge for the strain/effort scale (WHOOP: the always-blue effort ramp,
+// no gold). Same open-gauge instrument language as the Recovery Ring, but cardiovascular
+// output instead of the value-based recovery scale. Filled to strain/outOf of a 240° arc,
+// flat and crisp (no bloom) with a clean leading bead at the tip.
 //
 // `outOf` is the maximum of the scale the passed `strain` is ON (default 21 for the
 // WHOOP Day-Strain axis). The Effort hero gauge passes the value already converted to

@@ -9,8 +9,12 @@ import androidx.glance.appwidget.updateAll
  * widget can render after a process restart (Glance recomposes from disk, not from app memory).
  */
 data class WidgetSnapshot(
-    /** Today's recovery 0–100, null until NOOP has scored enough nights (honest-blank). */
+    /** Today's recovery / Charge 0–100, null until NOOP has scored enough nights (honest-blank). */
     val recoveryPct: Int? = null,
+    /** Today's Rest 0–100 (the sleep_performance composite), null until last night is scored (#516). */
+    val restPct: Int? = null,
+    /** Today's Effort 0–100 (the day's strain on the 0–100 scale), null until there's a HR window (#516). */
+    val effortPct: Int? = null,
     /** Live heart rate, null when not streaming. */
     val heartRate: Int? = null,
     /** Strap battery 0–100, null until the strap reports it. */
@@ -54,6 +58,8 @@ object WidgetSnapshotStore {
     fun save(context: Context, snap: WidgetSnapshot) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
             .putInt("recovery", snap.recoveryPct ?: -1)
+            .putInt("rest", snap.restPct ?: -1)
+            .putInt("effort", snap.effortPct ?: -1)
             .putInt("hr", snap.heartRate ?: -1)
             .putInt("battery", snap.batteryPct ?: -1)
             .putBoolean("connected", snap.connected)
@@ -65,6 +71,8 @@ object WidgetSnapshotStore {
         val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         return WidgetSnapshot(
             recoveryPct = p.getInt("recovery", -1).takeIf { it >= 0 },
+            restPct = p.getInt("rest", -1).takeIf { it >= 0 },
+            effortPct = p.getInt("effort", -1).takeIf { it >= 0 },
             heartRate = p.getInt("hr", -1).takeIf { it > 0 },
             batteryPct = p.getInt("battery", -1).takeIf { it >= 0 },
             connected = p.getBoolean("connected", false),
@@ -87,7 +95,10 @@ internal object PushGate {
     private var lastPushAtMs = 0L
 
     private fun keyOf(snap: WidgetSnapshot): String =
-        "${snap.recoveryPct}|${snap.batteryPct?.div(5)}|${snap.connected}|${snap.heartRate != null}"
+        // Rest + Effort join the change-key (#516) so a freshly-scored 2x2 score lands immediately, the
+        // same way recovery does — not waiting out the HR refresh window.
+        "${snap.recoveryPct}|${snap.restPct}|${snap.effortPct}|" +
+            "${snap.batteryPct?.div(5)}|${snap.connected}|${snap.heartRate != null}"
 
     fun admit(snap: WidgetSnapshot): Boolean =
         keyOf(snap) != lastKey || snap.updatedAtMs - lastPushAtMs >= HR_REFRESH_MS

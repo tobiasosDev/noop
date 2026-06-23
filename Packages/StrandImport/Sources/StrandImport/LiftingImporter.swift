@@ -117,9 +117,12 @@ public enum LiftingImporter {
     }
 
     /// Parse raw bytes, auto-detecting Hevy CSV vs Liftosaur JSON.
-    public static func parse(data: Data) -> LiftingImportResult {
+    ///
+    /// `zone` interprets Hevy's zoneless local wall-clock timestamps (#649); defaults to the device
+    /// timezone. Liftosaur stamps are absolute epoch ms and ignore it.
+    public static func parse(data: Data, zone: TimeZone = .current) -> LiftingImportResult {
         switch detectFormat(data: data) {
-        case .hevyCsv:        return parseHevy(data: data)
+        case .hevyCsv:        return parseHevy(data: data, zone: zone)
         case .liftosaurJson:  return parseLiftosaur(data: data)
         }
     }
@@ -127,16 +130,21 @@ public enum LiftingImporter {
     // MARK: - Hevy CSV
 
     /// Parse a Hevy CSV export (one row per set) into one session per workout.
-    public static func parseHevy(data: Data) -> LiftingImportResult {
-        parseHevy(table: CSVTable(data: data))
+    ///
+    /// Hevy writes zoneless **local wall-clock** timestamps (e.g. "12 Jun 2026, 18:30"), so a
+    /// session logged at 18:30 must land at 18:30 in `zone`, not 18:30 UTC (#649). The export carries
+    /// no offset, so the device timezone is the honest interpretation; it defaults to `.current` and
+    /// is injectable for deterministic tests.
+    public static func parseHevy(data: Data, zone: TimeZone = .current) -> LiftingImportResult {
+        parseHevy(table: CSVTable(data: data), zone: zone)
     }
 
-    /// Parse Hevy CSV text.
-    public static func parseHevy(text: String) -> LiftingImportResult {
-        parseHevy(table: CSVTable(text: text))
+    /// Parse Hevy CSV text. See `parseHevy(data:zone:)` for the timezone contract.
+    public static func parseHevy(text: String, zone: TimeZone = .current) -> LiftingImportResult {
+        parseHevy(table: CSVTable(text: text), zone: zone)
     }
 
-    private static func parseHevy(table: CSVTable) -> LiftingImportResult {
+    private static func parseHevy(table: CSVTable, zone: TimeZone) -> LiftingImportResult {
         // A Hevy row is grouped into a session by (title, start_time). The start_time string is a
         // stable grouping key on its own; title disambiguates the rare same-second back-to-back logs.
         var order: [String] = []
@@ -145,7 +153,7 @@ public enum LiftingImporter {
 
         for row in table.rows {
             let startRaw = row.cell("start_time", "start", "date")
-            guard let startRaw, let start = parseDate(startRaw) else { skipped += 1; continue }
+            guard let startRaw, let start = parseDate(startRaw, zone: zone) else { skipped += 1; continue }
 
             let title = row.cell("title", "workout_name", "name")
             let exercise = row.cell("exercise_title", "exercise_name", "exercise") ?? ""
@@ -160,7 +168,7 @@ public enum LiftingImporter {
 
             let key = "\(title ?? "")|\(startRaw)"
             if byKey[key] == nil {
-                byKey[key] = HevyAccumulator(start: start, title: title)
+                byKey[key] = HevyAccumulator(start: start, title: title, zone: zone)
                 order.append(key)
             }
             byKey[key]?.endRaw = row.cell("end_time", "end") ?? byKey[key]?.endRaw
@@ -174,6 +182,8 @@ public enum LiftingImporter {
     private final class HevyAccumulator {
         let start: Date
         let title: String?
+        /// Device timezone used to resolve the zoneless Hevy end-time, matching the start (#649).
+        let zone: TimeZone
         var endRaw: String?
         var volume = 0.0
         var sets = 0
@@ -181,9 +191,10 @@ public enum LiftingImporter {
         var top: Double?
         var exercises = Set<String>()
 
-        init(start: Date, title: String?) {
+        init(start: Date, title: String?, zone: TimeZone) {
             self.start = start
             self.title = title
+            self.zone = zone
         }
 
         /// Count a set into the volume load. Warm-up sets are excluded from the working-volume figure
@@ -202,7 +213,7 @@ public enum LiftingImporter {
 
         var session: LiftingSession? {
             guard sets > 0 else { return nil }
-            let end = endRaw.flatMap { LiftingImporter.parseDate($0) } ?? start
+            let end = endRaw.flatMap { LiftingImporter.parseDate($0, zone: zone) } ?? start
             return LiftingSession(
                 start: start,
                 end: end >= start ? end : start,
@@ -335,37 +346,47 @@ public enum LiftingImporter {
             return ms > 1_000_000_000_000 ? Date(timeIntervalSince1970: ms / 1000)
                                            : Date(timeIntervalSince1970: ms)
         }
-        if let s = any as? String { return parseDate(s) }
+        // Rare ISO-string fallback: an embedded offset wins; a zoneless string falls back to the
+        // device zone (Liftosaur's primary path is absolute epoch ms, so this is an edge case).
+        if let s = any as? String { return parseDate(s, zone: .current) }
         return nil
     }
 
     // MARK: - Shared helpers
 
-    /// Parse a Hevy date string. Hevy exports an English `d MMM yyyy, HH:mm` form
-    /// (e.g. "12 Jun 2026, 18:30") as well as ISO; both are handled, plus the shared WHOOP parser
-    /// for `yyyy-MM-dd HH:mm:ss` and ISO-8601-with-offset.
-    static func parseDate(_ raw: String) -> Date? {
+    /// Parse a Hevy date string in `zone`. Hevy exports an English `d MMM yyyy, HH:mm` form
+    /// (e.g. "12 Jun 2026, 18:30") as well as plain `yyyy-MM-dd HH:mm:ss`; both are **zoneless local
+    /// wall-clock** and so are resolved against `zone` (the device timezone), not UTC (#649) — a set
+    /// logged at 18:30 lands at 18:30 local, not 18:30 UTC. A timestamp that DOES carry an explicit
+    /// offset (ISO-8601 `…Z` / `…+01:00`) keeps its own offset and ignores `zone`.
+    static func parseDate(_ raw: String, zone: TimeZone) -> Date? {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
-        if let d = WhoopTime.parse(t, offsetMinutes: 0) { return d }
-        for fmt in hevyFormatters {
+        // ISO-8601 with an embedded offset: the offset is authoritative, so honour it directly and
+        // do NOT shift it by the device zone.
+        if let d = WhoopTime.parseISOWithOffset(t) { return d }
+        // Everything else is zoneless wall-clock → interpret it in the device timezone.
+        let fmt = hevyFormatter
+        fmt.timeZone = zone
+        for pattern in hevyPatterns {
+            fmt.dateFormat = pattern
             if let d = fmt.date(from: t) { return d }
         }
         return nil
     }
 
-    /// Hevy's localized-looking but English-only timestamp formats, parsed at UTC (the export carries
-    /// no zone, so UTC is the honest, stable choice rather than fabricating a local offset).
-    private static let hevyFormatters: [DateFormatter] = {
-        ["d MMM yyyy, HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss", "MM/dd/yyyy HH:mm:ss"].map { pattern in
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.calendar = Calendar(identifier: .gregorian)
-            f.timeZone = TimeZone(identifier: "UTC")
-            f.dateFormat = pattern
-            f.isLenient = false
-            return f
-        }
+    /// Hevy's zoneless, English-only timestamp formats. They carry no offset, so they are parsed in
+    /// the device timezone (see `parseDate(_:zone:)`) — the honest interpretation of a wall-clock log.
+    private static let hevyPatterns = ["d MMM yyyy, HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy/MM/dd HH:mm:ss", "MM/dd/yyyy HH:mm:ss"]
+
+    /// Single reusable formatter; `timeZone`/`dateFormat` are set per parse. Imports run single-threaded
+    /// (mirrors the WhoopTime pattern), so the shared mutable formatter is safe.
+    private static let hevyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.isLenient = false
+        return f
     }()
 
     /// Build sessions from accumulators (Hevy) or finish a list (Liftosaur): sort oldest-first and

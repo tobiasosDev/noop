@@ -197,10 +197,19 @@ struct RootTabView: View {
     }
 
     private func tab<V: View>(_ view: V, _ title: LocalizedStringKey, _ icon: String) -> some View {
-        view
-            .background(StrandPalette.surfaceBase.ignoresSafeArea())
-            .toolbar(.hidden, for: .tabBar)   // we draw our own FloatingTabBar
-            .tabItem { Label(title, systemImage: icon) }
+        // Each primary tab gets its OWN NavigationStack so the in-content NavigationLinks (e.g. the Today
+        // dashboard card rows) both navigate AND render opaque. An ORPHANED NavigationLink (no
+        // NavigationStack ancestor) renders its whole label in a disabled/translucent state — that was
+        // washing the Today cards over the hero scene and dimming their text to grey (Aaron 2026-06-23).
+        // The root view hides the system nav bar (each screen draws its own in-content header); pushed
+        // detail screens get their own nav bar + back button.
+        NavigationStack {
+            view
+                .background(StrandPalette.surfaceBase.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+        }
+        .toolbar(.hidden, for: .tabBar)   // we draw our own FloatingTabBar
+        .tabItem { Label(title, systemImage: icon) }
     }
 
     // The "More" tab is the app's catch-all index. It was a plain SwiftUI `List` with system large-title

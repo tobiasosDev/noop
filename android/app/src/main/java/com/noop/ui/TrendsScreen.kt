@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -88,11 +89,35 @@ fun TrendsScreen(vm: AppViewModel) {
         val hrv = remember(days, range) { resolveMetric(days, range) { it.avgHrv } }
         val rhr = remember(days, range) { resolveMetric(days, range) { it.restingHr?.toDouble() } }
         val strain = remember(days, range) { resolveMetric(days, range) { it.strain } }
+        // Rest = sleep efficiency over the window, on the same 0–100 score scale as Charge, so the trio
+        // reads as one pip language. Efficiency arrives as either a 0–1 fraction (engine) or a 0–100
+        // percentage (import) depending on source — normalise to 0–100 the way Sleep/Compare do.
+        val rest = remember(days, range) {
+            resolveMetric(days, range) { d -> d.efficiency?.let { if (it <= 1.0) it * 100.0 else it } }
+        }
+
+        // The main card list ripples in once on appear (Reduce-Motion safe), mirroring the iOS
+        // staggeredAppear sequence — each top-level section is one staggered child.
+
+        // --- Week-in-review digest (#208) — self-hides when this week has no data. ---
+        Column(modifier = Modifier.staggeredAppear(index = 0)) { WeeklyDigestCard(vm) }
+
+        // --- Week in review — the Charge / Effort / Rest trio in NOOP's pip language (PipBar +
+        // CountUpText), mirroring the iOS TrendsView.weekInReview card. White count-up numbers over
+        // segmented count-up bars; self-hides when none of the three carry a window mean. ---
+        WeekInReviewCard(
+            charge = recovery,
+            effort = strain,
+            rest = rest,
+            effortScale = effortScale,
+            modifier = Modifier.staggeredAppear(index = 1),
+        )
 
         // --- Range control ---
-        Column(verticalArrangement = Arrangement.spacedBy(Metrics.space8)) {
-            // Week-in-review digest (#208) — self-hides when this week has no data.
-            WeeklyDigestCard(vm)
+        Column(
+            modifier = Modifier.staggeredAppear(index = 2),
+            verticalArrangement = Arrangement.spacedBy(Metrics.space8),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -113,16 +138,17 @@ fun TrendsScreen(vm: AppViewModel) {
             )
         }
 
-        // --- Hero — charge over time. Charge (green) world: domain card wash, a glowing line with a
+        // --- Hero — charge over time. Charge (green) world: domain card wash, a crisp flat line with a
         // bright "now" end-cap, and a TrendChip for the window's move. ---
         val recAvg = recovery.values.averageOrNull()
         ChartCard(
+            modifier = Modifier.staggeredAppear(index = 3),
             title = "Charge",
             // The range bar above already prints the authoritative reading-count caption;
             // the hero only names its window so the count isn't doubled in one card height.
             subtitle = range.subtitle,
             trailing = recAvg?.let { "${it.roundToInt()}" },
-            color = Palette.accent,
+            color = Palette.chargeColor,
             tipColor = Palette.chargeBright,
             tint = Palette.chargeColor,
             values = recovery.values,
@@ -143,44 +169,135 @@ fun TrendsScreen(vm: AppViewModel) {
         )
 
         // --- Small multiples — HRV / Resting HR / Effort. HRV/RHR are Charge sub-signals → the green
-        // card world (each line keeps its metric hue); Effort sits in its amber world. ---
+        // card world (each line keeps its metric hue); Effort is the WHOOP blue strain world. ---
         // No trailing window label — the range bar's overline already states it.
-        SectionHeader("Daily signals", overline = "Trends")
-        MetricTrendCard(
-            title = "Heart rate variability", unit = "ms",
-            color = Palette.metricPurple,
-            tint = Palette.chargeColor,
-            higherIsBetter = true,
-            resolved = hrv,
-            fmt = { "${it.roundToInt()}" },
-        )
-        MetricTrendCard(
-            title = "Resting heart rate", unit = "bpm",
-            color = Palette.metricRose,
-            tint = Palette.chargeColor,
-            higherIsBetter = false,
-            resolved = rhr,
-            fmt = { "${it.roundToInt()}" },
-        )
-        MetricTrendCard(
-            // Plotted values stay on the stored 0–100 scale (line shape unchanged); only the displayed
-            // numbers + unit follow the Effort-scale toggle, converted inside `fmt`. (#268)
-            title = "Effort", unit = "/ ${UnitFormatter.effortScaleMax(effortScale)}",
-            color = Palette.strain066,
-            tint = Palette.effortColor,
-            tipColor = Palette.effortBright,
-            higherIsBetter = null,
-            resolved = strain,
-            fmt = { UnitFormatter.effortDisplay(it, effortScale) },
-        )
+        Column(
+            modifier = Modifier.staggeredAppear(index = 4),
+            verticalArrangement = Arrangement.spacedBy(Metrics.gap),
+        ) {
+            SectionHeader("Daily signals", overline = "Trends")
+            MetricTrendCard(
+                title = "Heart rate variability", unit = "ms",
+                color = Palette.metricPurple,
+                tint = Palette.chargeColor,
+                higherIsBetter = true,
+                resolved = hrv,
+                fmt = { "${it.roundToInt()}" },
+            )
+            MetricTrendCard(
+                title = "Resting heart rate", unit = "bpm",
+                color = Palette.metricRose,
+                tint = Palette.chargeColor,
+                higherIsBetter = false,
+                resolved = rhr,
+                fmt = { "${it.roundToInt()}" },
+            )
+            MetricTrendCard(
+                // Plotted values stay on the stored 0–100 scale (line shape unchanged); only the displayed
+                // numbers + unit follow the Effort-scale toggle, converted inside `fmt`. (#268)
+                title = "Effort", unit = "/ ${UnitFormatter.effortScaleMax(effortScale)}",
+                // WHOOP: Effort/Strain is always BLUE — a deep→bright blue line, not the amber ramp.
+                color = Palette.effortColor,
+                tint = Palette.effortColor,
+                tipColor = Palette.effortBright,
+                higherIsBetter = null,
+                resolved = strain,
+                fmt = { UnitFormatter.effortDisplay(it, effortScale) },
+            )
+        }
 
         // --- Recovery history strip (stands in for the macOS YearHeatStrip) ---
-        RecoveryHistoryCard(days = days, range = range)
+        Column(modifier = Modifier.staggeredAppear(index = 5)) {
+            RecoveryHistoryCard(days = days, range = range)
+        }
 
         // --- Export trends report (#436) — the shareable offline PDF exporter. Mirrors the iOS
-        // TrendsView.exportReportRow footer; the gold-washed card + range picker + Export CTA are
-        // the same composable Settings hosts, so both surfaces offer it. ---
-        TrendsReportExportSection(vm)
+        // TrendsView.exportReportRow footer; the same composable Settings hosts, so both surfaces
+        // offer it. Routed through NoopButton like every other CTA (no gold). ---
+        Column(modifier = Modifier.staggeredAppear(index = 6)) {
+            TrendsReportExportSection(vm)
+        }
+    }
+}
+
+// MARK: - Week in review — the Charge / Effort / Rest trio in pip language
+//
+// The three daily scores as NOOP pip rows over the resolved window: Charge (recovery, 0–100),
+// Effort (strain, shown on the WHOOP 0–21 / 0–100 scale per the unit toggle) and Rest (sleep
+// efficiency, 0–100). Each value ticks up via CountUpText; the segmented PipBar cascades on appear.
+// Self-hides when none of the three carry a window mean. Mirrors iOS TrendsView.weekInReview.
+
+@Composable
+private fun WeekInReviewCard(
+    charge: ResolvedMetric,
+    effort: ResolvedMetric,
+    rest: ResolvedMetric,
+    effortScale: EffortScale,
+    modifier: Modifier = Modifier,
+) {
+    val chargeAvg = charge.values.averageOrNull()
+    val effortAvg = effort.values.averageOrNull() // stored 0–100 internal Effort scale
+    val restAvg = rest.values.averageOrNull()
+    if (chargeAvg == null && effortAvg == null && restAvg == null) return
+
+    NoopCard(modifier = modifier, tint = Palette.chargeColor) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionHeader("Week in review", overline = "Charge · Effort · Rest")
+            if (chargeAvg != null) {
+                PipScoreRow(
+                    label = "Charge", value = chargeAvg, range = 0f..100f,
+                    tint = Palette.chargeColor, format = { "${it.roundToInt()}" },
+                )
+            }
+            if (effortAvg != null) {
+                // Effort is stored 0–100 but reads on the user's chosen scale: convert the displayed
+                // number AND the bar position so the pip fill and the count-up value agree. On WHOOP's
+                // 0–21 scale Effort reads to one decimal; on 0–100 it's a whole number.
+                val display = UnitFormatter.effortValue(effortAvg, effortScale)
+                val maxV = UnitFormatter.effortValue(100.0, effortScale)
+                val oneDecimal = effortScale == EffortScale.WHOOP
+                PipScoreRow(
+                    label = "Effort", value = display, range = 0f..maxV.toFloat(),
+                    tint = Palette.effortColor,
+                    format = { if (oneDecimal) String.format(Locale.US, "%.1f", it) else "${it.roundToInt()}" },
+                )
+            }
+            if (restAvg != null) {
+                PipScoreRow(
+                    label = "Rest", value = restAvg, range = 0f..100f,
+                    tint = Palette.restColor, format = { "${it.roundToInt()}" },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One pip row matching PipBarRow's layout, but with the value driven by [CountUpText] so the big
+ * number ticks up. UPPERCASE label + big white count-up value over the segmented count-up bar.
+ * Mirrors iOS TrendsView.pipScoreRow.
+ */
+@Composable
+private fun PipScoreRow(
+    label: String,
+    value: Double,
+    range: ClosedFloatingPointRange<Float>,
+    tint: Color,
+    format: (Double) -> String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space8)) {
+        Text(
+            text = label.uppercase(),
+            style = NoopType.overline,
+            color = Palette.textSecondary,
+        )
+        CountUpText(
+            value = value,
+            format = format,
+            style = NoopType.number(30f, weight = FontWeight.Bold),
+            color = Palette.textPrimary,
+        )
+        PipBar(value = value.toFloat(), range = range, tint = tint)
     }
 }
 

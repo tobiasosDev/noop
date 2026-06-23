@@ -29,6 +29,12 @@ object DemoSeeder {
 
     private const val WHOOP = "my-whoop"
     private const val APPLE = "apple-health"
+    // The NOOP-COMPUTED strap source ("<strap>-noop") the IntelligenceEngine persists its derived weekly
+    // scores under (fitness_age / vo2max_est / vitality / body_age). The Health screen reads these from this
+    // source verbatim (HealthScreen.COMPUTED_SOURCE), and the Today "Your cards" + Trends resolve them off
+    // it too — so the demo MUST seed them here, not under the imported "my-whoop" source, or those surfaces
+    // read empty ("No Data") while the rest of the demo is full. Mirrors the real engine's write target.
+    private const val WHOOP_NOOP = "$WHOOP-noop"
     private const val DAYS = 120
 
     /** Effort rescale factor: the old 0–21 strain scale → the new 0–100 Effort scale (100/21). */
@@ -247,18 +253,40 @@ object DemoSeeder {
             val date = startDay.plusDays(i.toLong())
             if (date.dayOfWeek.value != 6) continue // 6 = Saturday
             val day = date.toString()
-            series.add(MetricSeriesRow(WHOOP, day, "fitness_age",
+            // Seed under the NOOP-COMPUTED source (WHOOP_NOOP), exactly where the IntelligenceEngine writes
+            // these derived weekly scores in the real app — so the Health screen (reads COMPUTED_SOURCE), the
+            // Today "Your cards" Fitness age / Vitality cards and Trends all resolve them in the demo instead
+            // of showing "No Data". Trends ~42 → ~34 (younger) for Fitness age; vitality climbs ~55 → ~80.
+            series.add(MetricSeriesRow(WHOOP_NOOP, day, "fitness_age",
                 round1((fitnessAge + gauss(rng, 0.0, 0.3)).coerceIn(34.0, 44.0))))
-            series.add(MetricSeriesRow(WHOOP, day, "vo2max_est",
+            series.add(MetricSeriesRow(WHOOP_NOOP, day, "vo2max_est",
                 round1((vo2 + gauss(rng, 0.0, 0.4)).coerceIn(42.0, 52.0))))
-            series.add(MetricSeriesRow(WHOOP, day, "vitality",
+            series.add(MetricSeriesRow(WHOOP_NOOP, day, "vitality",
                 round1((vitality + gauss(rng, 0.0, 1.0)).coerceIn(40.0, 80.0))))
-            series.add(MetricSeriesRow(WHOOP, day, "body_age",
+            series.add(MetricSeriesRow(WHOOP_NOOP, day, "body_age",
                 round1((bodyAgeDemo + gauss(rng, 0.0, 0.3)).coerceIn(30.0, 45.0))))
             fitnessAge -= 0.75 // ~6 yr younger across the 8 seeded Saturdays
             vo2 += 0.75
             vitality += 2.0
             bodyAgeDemo -= 0.6
+        }
+
+        // --- daily "stress" series (0–3) under my-whoop, EXACTLY as a real WHOOP import derives it
+        // (WhoopImporter): z = 0.6·((rhr−rmean)/rsd) − 0.6·((hrv−hmean)/hsd), stress = clamp(1.5 + z, 0, 3).
+        // Without this the demo had no "stress" series at all, so the Today "Your cards" Stress card,
+        // the Stress screen's stored-series path and Trends all read empty. Seeding it makes the demo
+        // match an imported export and fixes Stress everywhere in one place.
+        run {
+            val rhrAll = daily.mapNotNull { it.restingHr?.toDouble() }
+            val hrvAll = daily.mapNotNull { it.avgHrv }
+            val (rMean, rSd) = meanStd(rhrAll)
+            val (hMean, hSd) = meanStd(hrvAll)
+            for (d in daily) {
+                val rhr = d.restingHr?.toDouble() ?: continue
+                val hrv = d.avgHrv ?: continue
+                val z = 0.6 * ((rhr - rMean) / rSd) - 0.6 * ((hrv - hMean) / hSd)
+                series.add(MetricSeriesRow(WHOOP, d.day, "stress", round2((1.5 + z).coerceIn(0.0, 3.0))))
+            }
         }
 
         repo.upsertDailyMetrics(daily)
@@ -280,6 +308,15 @@ object DemoSeeder {
 
     private fun round1(x: Double) = round(x * 10.0) / 10.0
     private fun round2(x: Double) = round(x * 100.0) / 100.0
+
+    /** Mean + (population) standard deviation of a sample; SD floored so a z-score never divides by zero.
+     *  Mirrors WhoopImporter.meanStd, used to derive the demo "stress" series exactly like a real import. */
+    private fun meanStd(a: List<Double>): Pair<Double, Double> {
+        if (a.isEmpty()) return 0.0 to 1.0
+        val m = a.sum() / a.size
+        val v = a.sumOf { (it - m) * (it - m) } / a.size
+        return m to maxOf(sqrt(v), 0.0001)
+    }
 
     /** A plausible light→deep→rem cycle as a stage-segments array (minutes). Tolerant by design. */
     private fun stagesJson(deep: Double, rem: Double, light: Double, awakeMin: Int): String {

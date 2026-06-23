@@ -46,7 +46,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayOwnershipRow::class,
         LabMarkerRow::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class WhoopDatabase : RoomDatabase() {
@@ -292,6 +292,33 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v11 -> v12: ADDITIVE — adds `sleepSession.motionJSON` + `sleepSession.sleepStateJSON` (nullable
+         * TEXT), the Android port of the Swift WhoopStore v18 migration. Per-epoch analytics banked beside
+         * the existing `stagesJSON` on the same row: the SleepStager's per-epoch motion magnitudes (H8) and
+         * the decoded v18 band sleep_state per epoch (H2 persist half).
+         *
+         * ALTER ... ADD COLUMN only (no data touched), so existing rows are untouched and read back with
+         * both columns = NULL — exactly the additive, nullable-safe form of MIGRATION_3_4 (already-offloaded
+         * raw streams survive; the strap trims acked history and won't re-send it). The SQL MUST match Room's
+         * generated column for a `String?` field exactly: TEXT, no NOT NULL, no SQL DEFAULT (a Kotlin
+         * construction default never reaches the schema). Like the others this is the no-destructive-fallback
+         * path: a mismatch throws loudly rather than silently wiping non-resendable history.
+         *
+         * The SQL is exposed as [SLEEP_MOTION_STATE_MIGRATION_SQL] so a plain-JVM unit test
+         * ([com.noop.data.SleepMotionStateMigrationTest]) can pin this shape without Robolectric.
+         */
+        internal val SLEEP_MOTION_STATE_MIGRATION_SQL: List<String> = listOf(
+            "ALTER TABLE `sleepSession` ADD COLUMN `motionJSON` TEXT",
+            "ALTER TABLE `sleepSession` ADD COLUMN `sleepStateJSON` TEXT",
+        )
+
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (stmt in SLEEP_MOTION_STATE_MIGRATION_SQL) db.execSQL(stmt)
+            }
+        }
+
         private fun build(appContext: Context): WhoopDatabase =
             Room.databaseBuilder(appContext, WhoopDatabase::class.java, DB_NAME)
                 // Real additive migration — NO destructive fallback (see the class doc): with
@@ -300,7 +327,7 @@ abstract class WhoopDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
-                    MIGRATION_10_11,
+                    MIGRATION_10_11, MIGRATION_11_12,
                 )
                 .build()
     }

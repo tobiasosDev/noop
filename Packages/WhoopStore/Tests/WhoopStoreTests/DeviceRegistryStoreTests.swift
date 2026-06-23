@@ -75,6 +75,47 @@ final class DeviceRegistryStoreTests: XCTestCase {
         XCTAssertNil(try store.device(forPeripheralId: "no-such-peripheral"))
     }
 
+    // ah-delete (#616): deleteAllData(deviceId: "apple-health") clears every row stored under the
+    // Apple-Health source across the deviceId-keyed tables, while leaving another device's rows untouched.
+    func testDeleteAllDataClearsOnlyTheTargetDevicesRows() throws {
+        let dbq = try makeDB()
+        let store = DeviceRegistryStore(dbQueue: dbq)
+
+        // Seed apple-health + my-whoop rows in two device-scoped tables (appleDaily + metricSeries).
+        try dbq.write { db in
+            for dev in ["apple-health", "my-whoop"] {
+                try db.execute(sql: "INSERT INTO appleDaily (deviceId, day, steps) VALUES (?, ?, ?)",
+                               arguments: [dev, "2026-06-15", 1234])
+                try db.execute(sql: "INSERT INTO metricSeries (deviceId, day, key, value) VALUES (?, ?, ?, ?)",
+                               arguments: [dev, "2026-06-15", "steps", 1234.0])
+            }
+        }
+
+        func count(_ table: String, _ deviceId: String) throws -> Int {
+            try dbq.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table) WHERE deviceId = ?",
+                                 arguments: [deviceId]) ?? 0
+            }
+        }
+
+        // Both devices start with a row in each table.
+        XCTAssertEqual(try count("appleDaily", "apple-health"), 1)
+        XCTAssertEqual(try count("metricSeries", "apple-health"), 1)
+        XCTAssertEqual(try count("appleDaily", "my-whoop"), 1)
+
+        try store.deleteAllData(deviceId: "apple-health")
+
+        // The apple-health rows are gone everywhere; my-whoop's rows survive.
+        XCTAssertEqual(try count("appleDaily", "apple-health"), 0)
+        XCTAssertEqual(try count("metricSeries", "apple-health"), 0)
+        XCTAssertEqual(try count("appleDaily", "my-whoop"), 1)
+        XCTAssertEqual(try count("metricSeries", "my-whoop"), 1)
+
+        // The registry row itself is never touched by a delete-data op (the seeded my-whoop remains).
+        XCTAssertEqual(try store.all().count, 1)
+        XCTAssertEqual(try store.activeDeviceId(), "my-whoop")
+    }
+
     func testDayOwnershipUpsertAndRead() throws {
         let store = DeviceRegistryStore(dbQueue: try makeDB())
         try store.setDayOwner(day: "2026-06-15", deviceId: "my-whoop", locked: true)

@@ -3,14 +3,14 @@ import SwiftUI
 // MARK: - Recovery Ring (§9.3) — THE signature component
 //
 // A 240° open gauge arc (gap at the bottom), thick rounded-cap stroke filled
-// with an AngularGradient sampling the recovery gradient (Titanium & Gold: the
-// `goldGradient` ramp via `recoveryStops`), filled to score/100 of the 240° span
-// over a faint `surfaceInset` track. A soft outer BLOOM whose intensity scales with
-// score; a luminous leading bead at the fill tip; a draw-in animation when the value
-// changes. Center shows the big Helvetica-700 number (no %), a state word tinted to
-// the sampled color, and an optional supporting line.
+// with an AngularGradient sampling the recovery gradient (WHOOP: value-based
+// green→yellow→red via `recoveryStops`), filled to score/100 of the 240° span
+// over a faint `surfaceInset` track. NO outer bloom (WHOOP-flat); a crisp leading
+// bead at the fill tip; a draw-in animation when the value changes. Center shows the
+// big rounded-700 number (no %), a state word tinted to the sampled color, and an
+// optional supporting line.
 //
-// This is also the app's BRAND GLYPH: an open ~80% ring + a SOLID GOLD CORE DOT
+// This is also the app's BRAND GLYPH: an open ~80% ring + a SOLID ACCENT CORE DOT
 // ("on-device core"). The recovery ring uniquely carries a micro "NOOP" wordmark
 // above the number (letter-spacing ≈ .34em, tertiary) so the lock-up reads as the
 // "O" in NOOP. The arc geometry, gradient stroke, track and centre number live in
@@ -149,14 +149,14 @@ public struct RecoveryRing: View {
             .accessibilityHidden(true)
     }
 
-    /// The brand "on-device core" — a small solid GOLD dot at the exact centre. It belongs to the
-    /// glyph-only brand lock-up (logo / nav / onboarding), where it reads as the core of the open
-    /// ring. On a METRIC gauge the centre is occupied by the read-out number, and a dot sitting
-    /// behind the digits just muddies them (community feedback at the v3 launch), so it is hidden
-    /// whenever a number is shown — leaving a clean ring + number + micro-NOOP wordmark.
+    /// The brand "on-device core" — a small solid ACCENT dot at the exact centre (WHOOP: blue, no
+    /// gold). It belongs to the glyph-only brand lock-up (logo / nav / onboarding), where it reads as
+    /// the core of the open ring. On a METRIC gauge the centre is occupied by the read-out number, and
+    /// a dot sitting behind the digits just muddies them (community feedback at the v3 launch), so it
+    /// is hidden whenever a number is shown — leaving a clean ring + number + micro-NOOP wordmark.
     private var coreDot: some View {
         Circle()
-            .fill(StrandPalette.gold)
+            .fill(StrandPalette.accent)
             .frame(width: diameter * 0.026, height: diameter * 0.026)
             .opacity(showsLabel ? 0.0 : 1.0)       // hidden under the number; full when glyph-only
             .allowsHitTesting(false)

@@ -52,9 +52,9 @@ struct ManualWorkoutSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space5) {
             header
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                 field("Sport") {
                     sportPicker
                 }
@@ -88,7 +88,7 @@ struct ManualWorkoutSheet: View {
             if let validationNote { noteRow(validationNote) }
             footer
         }
-        .padding(24)
+        .padding(NoopMetrics.space6)
         // A fixed 420pt is right for the free-floating macOS sheet, but on iPhone it's wider than
         // the screen, so the Avg HR/Calories row, the Start DatePicker and the footer ran off the
         // right edge (#185, same fix as WhatsNewView/ScoringGuideView). iOS fills the presented
@@ -195,17 +195,14 @@ struct ManualWorkoutSheet: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
+        HStack(spacing: NoopMetrics.space3) {
+            NoopButton("Cancel", kind: .tertiary) { dismiss() }
             Spacer()
-            Button(editing == nil ? "Add" : "Save") { save() }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
-                .disabled(builtRow == nil)
-                .accessibilityLabel(editing == nil ? "Add workout" : "Save workout")
+            NoopButton(editing == nil ? "Add" : "Save", systemImage: "checkmark", kind: .primary) {
+                save()
+            }
+            .disabled(builtRow == nil)
+            .accessibilityLabel(editing == nil ? "Add workout" : "Save workout")
         }
     }
 
@@ -316,8 +313,8 @@ struct StartWorkoutSheet: View {
     private var inputShape: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+            HStack(alignment: .top, spacing: NoopMetrics.space3) {
                 Image(systemName: "figure.run")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(StrandPalette.effortColor)
@@ -377,22 +374,17 @@ struct StartWorkoutSheet: View {
             .background(StrandPalette.surfaceInset, in: inputShape)
             .overlay(inputShape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
 
-            HStack {
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.plain)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textSecondary)
+            HStack(spacing: NoopMetrics.space3) {
+                NoopButton("Cancel", kind: .tertiary) { dismiss() }
                 Spacer()
-                Button("Start \(selected)") {
+                NoopButton("Start \(selected)", systemImage: "figure.run", kind: .primary) {
                     onStart(selected)
                     dismiss()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
                 .accessibilityLabel("Start \(selected)")
             }
         }
-        .padding(24)
+        .padding(NoopMetrics.space6)
         #if os(macOS)
         .frame(width: 420)
         #else

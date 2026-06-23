@@ -10,9 +10,9 @@ import StrandDesign
 // Settings → About, the ⓘ on each Today score, and the one-time first-run card.
 //
 // All copy here is the single approved source of truth, shared verbatim across
-// macOS / iOS / Android. Each score section is tinted with the SAME accent the rest
-// of the app uses for that metric (Charge = recovery green, Effort = strain rose,
-// Rest = sleep purple), so a glance maps a section to its tile.
+// macOS / iOS / Android. Each score section is tinted with the SAME Reset accent the
+// rest of the app uses for that score's hero ring (Charge = green, Effort = blue
+// accent, Rest = restColor slate), so a glance maps a section to its Today ring.
 
 /// The three score sections the guide can deep-link to. The raw value is used as the
 /// ScrollViewReader anchor id. The Android port mirrors these case names exactly.
@@ -23,22 +23,14 @@ enum ScoreSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The accent each section uses — matched to the Today tile / ring for continuity.
+    /// The accent each section uses — the SAME Reset score token its Today hero ring draws with, so a
+    /// section reads as that score's colour. No gold / strain / sleep-purple: Charge = chargeColor green,
+    /// Effort = effortColor blue accent, Rest = restColor slate (Design Reset, 2026-06-23).
     var accent: Color {
         switch self {
-        case .charge: return StrandPalette.accent          // recovery ring spark
-        case .effort: return StrandPalette.strain066        // strain spark
-        case .rest:   return StrandPalette.metricPurple     // sleep spark
-        }
-    }
-
-    /// The Bevel colour world this score belongs to — drives the card tint, the sample
-    /// gauge stroke and the scenic bloom, so each section reads as its own domain.
-    var domain: DomainTheme {
-        switch self {
-        case .charge: return .charge
-        case .effort: return .effort
-        case .rest:   return .rest
+        case .charge: return StrandPalette.chargeColor     // Charge hero ring — green
+        case .effort: return StrandPalette.effortColor     // Effort hero ring — blue accent
+        case .rest:   return StrandPalette.restColor       // Rest hero ring — slate
         }
     }
 
@@ -79,11 +71,9 @@ struct ScoringGuideView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                // A scenic Charge-tinted hero behind the title region sets the premium tone
-                // the moment the guide opens — the same backdrop the Today rings float over.
-                .background {
-                    ScenicHeroBackground(domain: .charge, starCount: 28, fadesToBase: true)
-                }
+                // Design Reset: a FLAT opaque WHOOP-grey title surface — no scenic hero, no bloom, no
+                // domain tint. The header reads as a clean raised card edge, matching the Today look.
+                .background(StrandPalette.surfaceRaised)
             Divider().overlay(StrandPalette.hairline)
             ScrollViewReader { proxy in
                 ScrollView {
@@ -187,46 +177,37 @@ struct ScoringGuideView: View {
 
     private func legendDot(_ section: ScoreSection, _ label: String) -> some View {
         HStack(spacing: 6) {
-            Circle().fill(section.domain.color).frame(width: 8, height: 8)
+            Circle().fill(section.accent).frame(width: 8, height: 8)
             Text(label).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
     }
 
-    /// One colour-accented score section: a frosted, domain-tinted card carrying a sample
-    /// BevelGauge of that world beside a tinted headline, the body, and an italic "vs WHOOP"
-    /// line set off by a hairline rule. The gauge is illustrative — a "what a strong day reads
-    /// like" preview in the section's own colour — so a glance maps a card to its Today ring.
+    /// One colour-accented score section: a FLAT WHOOP-grey card (faintly washed with the section's Reset
+    /// accent) carrying a clean sample ring of that score beside an accent-tinted headline, the body, and
+    /// an italic "vs WHOOP" line set off by a hairline rule. The ring is illustrative — a "what a strong
+    /// day reads like" preview in the section's own colour — so a glance maps a card to its Today ring.
+    /// Design Reset: a flat GlowRing (no bloom) replaces the old BevelGauge; the accent is a Reset score
+    /// token, never gold / strain / sleep-purple.
     private func scoreCard(_ section: ScoreSection, headline: String, body: String, vsWhoop: String) -> some View {
-        NoopCard(tint: section.domain.color) {
+        NoopCard(tint: section.accent) {
             VStack(alignment: .leading, spacing: 14) {
-                // Header row — the sample gauge sits beside the tinted icon + headline.
+                // Header row — the flat sample ring sits beside the accent icon + headline.
                 HStack(alignment: .center, spacing: 14) {
-                    BevelGauge(
-                        fraction: section.sampleFraction,
-                        stops: section.domain.gradient.stops,
-                        tipColor: section.domain.bright,
-                        numberText: section.sampleNumber,
-                        captionText: section.rawValue.capitalized,
-                        diameter: 84,
-                        lineWidth: 9,
-                        showsLabel: true,
-                        animatedFraction: section.sampleFraction,
-                        bloomActive: true
-                    )
-                    .accessibilityHidden(true)
+                    sampleRing(section)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: section.icon)
                                 .font(.system(size: 16))
-                                .foregroundStyle(section.domain.color)
+                                .foregroundStyle(section.accent)
                                 .accessibilityHidden(true)
                             Text(section.rawValue.capitalized)
                                 .font(StrandFont.overline)
                                 .tracking(StrandFont.overlineTracking)
                                 .textCase(.uppercase)
-                                .foregroundStyle(section.domain.color)
+                                .foregroundStyle(section.accent)
                         }
                         Text(headline).font(StrandFont.headline)
                             .foregroundStyle(StrandPalette.textPrimary)
@@ -243,7 +224,7 @@ struct ScoringGuideView: View {
                     Text("vs WHOOP").font(StrandFont.overline)
                         .tracking(StrandFont.overlineTracking)
                         .textCase(.uppercase)
-                        .foregroundStyle(section.domain.color)
+                        .foregroundStyle(section.accent)
                         .padding(.top, 1)
                     Text(vsWhoop)
                         .font(StrandFont.footnote)
@@ -254,14 +235,36 @@ struct ScoringGuideView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Deep-link highlight: a brief domain-tinted ring when arrived at via an ⓘ.
+        // Deep-link highlight: a brief accent-tinted ring when arrived at via an ⓘ.
         .overlay(
             RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                .strokeBorder(section.domain.color, lineWidth: 2)
+                .strokeBorder(section.accent, lineWidth: 2)
                 .opacity(highlighted == section ? 1 : 0)
         )
         .animation(.easeOut(duration: 0.35), value: highlighted)
         .id(section.id)
+    }
+
+    /// The flat illustrative ring for a score section — a clean GlowRing (Design Reset: solid crisp arc,
+    /// NO bloom) in the section's Reset accent, with the score name as a small caption below, matching the
+    /// Today hero rings. Decorative ("what a strong day looks like"), so it's hidden from VoiceOver by the
+    /// caller. Replaces the old per-section BevelGauge(bloomActive: true).
+    private func sampleRing(_ section: ScoreSection) -> some View {
+        VStack(spacing: 5) {
+            GlowRing(
+                fraction: section.sampleFraction,
+                value: section.sampleFraction * 100,
+                format: { "\(Int($0.rounded()))" },
+                color: section.accent,
+                diameter: 76,
+                lineWidth: 8
+            )
+            Text(section.rawValue.capitalized)
+                .font(StrandFont.overline)
+                .tracking(StrandFont.overlineTracking)
+                .textCase(.uppercase)
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
     }
 
     private var confidenceCard: some View {

@@ -162,4 +162,34 @@ final class CaffeineDecayTests: XCTestCase {
         store.clearAll()
         XCTAssertFalse(store.estimate().hasActive)
     }
+
+    // MARK: - Cutoff window (PR#566) — parity with the Kotlin CaffeineCutoffTest
+
+    func testCutoffLeadIsTwoHalfLivesForQuarterResidual() {
+        XCTAssertEqual(CaffeineDecay.cutoffLeadHours(), 2 * hl, accuracy: 1e-9)
+    }
+
+    func testCutoffIsBedtimeMinusLead() {
+        // Bedtime 23:00 (1380), lead 11 h → cutoff 12:00 (720).
+        let bed = 23 * 60
+        let expected = bed - Int(2 * hl * 60)
+        XCTAssertEqual(CaffeineDecay.cutoffMinutesSinceMidnight(bedtimeMinutes: bed), expected)
+    }
+
+    func testEarlyBedtimeWrapsToPreviousEvening() {
+        // Bedtime 09:00 (540): 540 - 660 = -120 → normalised to 22:00 (1320).
+        XCTAssertEqual(CaffeineDecay.cutoffMinutesSinceMidnight(bedtimeMinutes: 9 * 60), 1320)
+    }
+
+    func testMorningCoffeeIsNotLateAndAfternoonIs() {
+        XCTAssertFalse(CaffeineDecay.isPastCutoff(intakeMinutes: 8 * 60, bedtimeMinutes: 23 * 60))
+        XCTAssertTrue(CaffeineDecay.isPastCutoff(intakeMinutes: 16 * 60, bedtimeMinutes: 23 * 60))
+    }
+
+    func testIntakeExactlyAtCutoffIsNotLate() {
+        let bed = 23 * 60
+        let cutoffRaw = bed - Int(2 * hl * 60)
+        XCTAssertFalse(CaffeineDecay.isPastCutoff(intakeMinutes: cutoffRaw, bedtimeMinutes: bed))
+        XCTAssertTrue(CaffeineDecay.isPastCutoff(intakeMinutes: cutoffRaw + 1, bedtimeMinutes: bed))
+    }
 }

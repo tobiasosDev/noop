@@ -82,12 +82,12 @@ struct WorkoutsView: View {
         ScreenScaffold(title: "Workouts", subtitle: "Every session, threaded together.",
                        onRefresh: { await repo.refresh() }) {
             if allRows.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                     ComingSoon(what: loaded
                         ? "No workouts yet. They come from your WHOOP and Apple Health history. Import in Data Sources to bring them in — or add one you tracked elsewhere."
                         : "Loading your sessions…")
                     if loaded {
-                        HStack(spacing: 10) { startLiveWorkoutButton; addWorkoutButton }
+                        HStack(spacing: NoopMetrics.rowSpacing) { startLiveWorkoutButton; addWorkoutButton }
                     }
                 }
             } else {
@@ -136,6 +136,11 @@ struct WorkoutsView: View {
             ManualWorkoutSheet(editing: target.editing) { row, replacing in
                 Task {
                     await repo.saveManualWorkout(row, replacing: replacing)
+                    // #598: rescore the just-added workout from the strap's HR for its window NOW, so its
+                    // average / peak HR, strain and calories appear immediately (from your own strap data)
+                    // instead of waiting up to 15 minutes for the next analyze tick. No-ops when the strap
+                    // had no HR for that window, and never overrides a value you typed yourself.
+                    await model.intelligence.analyzeRecent()
                     await reload()
                     // Post-log note (#439): if this sport now has a solid/building recovery-cost
                     // entry, surface its personal-pattern sentence as a transient caption.
@@ -220,10 +225,10 @@ struct WorkoutsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(12)
+        .padding(NoopMetrics.space3)
         .background(StrandPalette.effortColor.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
             .strokeBorder(StrandPalette.effortColor.opacity(0.22), lineWidth: 1))
         .transition(.opacity)
         .accessibilityElement(children: .combine)
@@ -293,14 +298,9 @@ struct WorkoutsView: View {
     /// Opens the add sheet (editing == nil). Present on the populated screen and the empty state so a
     /// user with no imports can still log a session.
     private var addWorkoutButton: some View {
-        Button {
+        NoopButton("Add workout", systemImage: "plus", kind: .secondary) {
             sheet = WorkoutSheetTarget(editing: nil)
-        } label: {
-            Label("Add workout", systemImage: "plus")
-                .font(StrandFont.subhead)
         }
-        .buttonStyle(.bordered)
-        .tint(StrandPalette.accent)
         .accessibilityLabel("Add a workout")
     }
 
@@ -308,18 +308,14 @@ struct WorkoutsView: View {
     /// place people instinctively look — instead of only from the Live screen. Starts the session and
     /// presents the in-exercise view directly (no cross-view auto-present race with LiveView's sheet).
     private var startLiveWorkoutButton: some View {
-        Button {
+        NoopButton(model.activeWorkout == nil ? "Start workout" : "View active workout",
+                   systemImage: model.activeWorkout == nil ? "figure.run" : "timer",
+                   kind: .primary) {
             // No active session → pick a named sport first (#519), then the sheet's onStart begins it
             // and opens the in-exercise view. Already active → jump straight back into the live view.
             if model.activeWorkout == nil { showStartSport = true }
             else { showLiveWorkout = true }
-        } label: {
-            Label(model.activeWorkout == nil ? "Start Workout" : "View active workout",
-                  systemImage: model.activeWorkout == nil ? "figure.run" : "timer")
-                .font(StrandFont.subhead)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(StrandPalette.accent)
         .accessibilityLabel(model.activeWorkout == nil ? "Start a workout" : "View the active workout")
     }
 
@@ -366,34 +362,30 @@ struct WorkoutsView: View {
         return .all
     }
 
-    // MARK: - Effort hero (weekly effort over a scenic Effort backdrop)
+    // MARK: - Effort hero (typical effort on a flat Reset card)
 
-    /// A Bevel hero for the windowed range: the typical session Effort on the shared layered StrainGauge,
-    /// floated over an Effort-tinted scenic backdrop, with the session count + total time alongside. The
-    /// gauge reads the AVERAGE per-session strain (the stored 0–100 Effort axis mapped to the gauge's
-    /// 0–21 span, exactly like the Today effort hero); the headline number is shown on the user's scale.
+    /// Design Reset hero for the windowed range: the typical session Effort on the clean flat ring
+    /// (GlowRing, bloom OFF), on a flat opaque Reset card — NO scenic backdrop float — with the session
+    /// count + total time alongside. The ring reads the AVERAGE per-session strain (the stored 0–100
+    /// Effort axis, mirroring the Today effort ring); the headline number is shown on the user's scale.
     @ViewBuilder
     private func effortHero(rows: [WorkoutRow], effectiveRange: Range, groups: [SportGroup]) -> some View {
         let strains = rows.compactMap(\.strain)
         let avgStrain = strains.isEmpty ? 0 : strains.reduce(0, +) / Double(strains.count)
         let totalTimeH = rows.compactMap(\.durationS).reduce(0, +) / 3600.0
-        ZStack {
-            ScenicHeroBackground(domain: .effort)
-                .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-            NoopCard(padding: 20, tint: StrandPalette.effortColor) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: 24) {
-                        effortHeroGauge(avgStrain: avgStrain, hasData: !strains.isEmpty)
-                        effortHeroStats(rows: rows, effectiveRange: effectiveRange,
-                                        groups: groups, totalTimeH: totalTimeH)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    VStack(alignment: .center, spacing: 16) {
-                        effortHeroGauge(avgStrain: avgStrain, hasData: !strains.isEmpty)
-                        effortHeroStats(rows: rows, effectiveRange: effectiveRange,
-                                        groups: groups, totalTimeH: totalTimeH)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+        NoopCard(padding: 20, tint: StrandPalette.effortColor) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 24) {
+                    effortHeroGauge(avgStrain: avgStrain, hasData: !strains.isEmpty)
+                    effortHeroStats(rows: rows, effectiveRange: effectiveRange,
+                                    groups: groups, totalTimeH: totalTimeH)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .center, spacing: 16) {
+                    effortHeroGauge(avgStrain: avgStrain, hasData: !strains.isEmpty)
+                    effortHeroStats(rows: rows, effectiveRange: effectiveRange,
+                                    groups: groups, totalTimeH: totalTimeH)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -401,18 +393,38 @@ struct WorkoutsView: View {
 
     @ViewBuilder
     private func effortHeroGauge(avgStrain: Double, hasData: Bool) -> some View {
+        // Design Reset: the clean flat ring (GlowRing, bloom OFF) used on the Today effort hero — not the
+        // legacy bloom StrainGauge. Value is on the user's selected Effort scale; the arc fills value/max.
+        let diameter: CGFloat = 168
+        let scaleMax: Double = effortScale == .whoop ? 21 : 100
+        let displayValue = UnitFormatter.effortValue(avgStrain, scale: effortScale)
         VStack(spacing: 8) {
             Text("TYPICAL EFFORT")
                 .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
                 .foregroundStyle(StrandPalette.effortColor)
-            StrainGauge(
-                strain: UnitFormatter.effortValue(avgStrain, scale: effortScale),
-                outOf: effortScale == .whoop ? 21 : 100,
-                diameter: 168, lineWidth: 15,
-                showsLabel: hasData, showsHover: false,
-                valueFormat: { _ in UnitFormatter.effortDisplay(avgStrain, scale: effortScale) }
-            )
-            .frame(maxWidth: .infinity)
+            if hasData {
+                GlowRing(
+                    fraction: displayValue / scaleMax,
+                    value: displayValue,
+                    format: { _ in UnitFormatter.effortDisplay(avgStrain, scale: effortScale) },
+                    color: StrandPalette.effortColor,
+                    diameter: diameter, lineWidth: diameter * 0.10
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                // No strain data in the window — the faint full-circle track with a centred "No data",
+                // matching the Today empty ring (flat, bloom off).
+                ZStack {
+                    Circle().stroke(StrandPalette.textPrimary.opacity(0.10),
+                                    style: StrokeStyle(lineWidth: diameter * 0.10, lineCap: .round))
+                    Text("No data")
+                        .font(StrandFont.headline)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineLimit(1).minimumScaleFactor(0.7).fixedSize()
+                }
+                .frame(width: diameter, height: diameter)
+                .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -425,7 +437,8 @@ struct WorkoutsView: View {
                 .font(StrandFont.headline)
                 .foregroundStyle(StrandPalette.textPrimary)
             HStack(spacing: NoopMetrics.gap) {
-                heroStat("Sessions", "\(rows.count)", tint: StrandPalette.effortColor)
+                heroCountStat("Sessions", value: Double(rows.count),
+                              format: { "\(Int($0.rounded()))" }, tint: StrandPalette.effortColor)
                 heroStat("Active", oneDecimal(totalTimeH) + "h", tint: StrandPalette.textPrimary)
                 heroStat("Top sport", modal.count > 0 ? "\(modal.count)×" : "—",
                          tint: StrandPalette.effortBright)
@@ -446,6 +459,20 @@ struct WorkoutsView: View {
                 .foregroundStyle(StrandPalette.textSecondary)
             Text(value).font(StrandFont.number(20))
                 .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A hero stat whose number ticks up to its value on appear/change — the NOOP signature for a big
+    /// count. Same layout as `heroStat`; used for the plain session count.
+    private func heroCountStat(_ title: String, value: Double,
+                               format: @escaping (Double) -> String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
+                .foregroundStyle(StrandPalette.textSecondary)
+            CountUpText(value: value, format: format, font: StrandFont.number(20), color: tint)
+                .lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -533,7 +560,7 @@ struct WorkoutsView: View {
     }
 
     /// A slim proportional HR-zone bar for one sport's sessions — the zone colours, with the busiest
-    /// zone carrying a bright "now" end-cap glow so the card reads as a Bevel chart, not a flat strip.
+    /// zone carrying a crisp bright end-cap stroke so the card reads as a chart, not a flat strip. No glow.
     private func zoneMiniBar(_ z: WorkoutZones.Summary) -> some View {
         let busiest = z.minutes.indices.max(by: { z.minutes[$0] < z.minutes[$1] }) ?? 0
         return GeometryReader { geo in
@@ -545,8 +572,7 @@ struct WorkoutsView: View {
                         .overlay {
                             if i == busiest {
                                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                    .stroke(StrandPalette.hrZoneColor(i + 1).opacity(0.9), lineWidth: 1)
-                                    .shadow(color: StrandPalette.hrZoneColor(i + 1).opacity(0.7), radius: 4)
+                                    .strokeBorder(StrandPalette.textPrimary.opacity(0.85), lineWidth: 1.5)
                             }
                         }
                 }
@@ -580,7 +606,7 @@ struct WorkoutsView: View {
             NoopCard(tint: StrandPalette.effortColor) {
                 VStack(alignment: .leading, spacing: 12) {
                     // Proportional stacked bar — same construction as SleepView's stage bar, with the
-                    // busiest zone carrying a bright glowing end-cap so it reads as a Bevel chart.
+                    // busiest zone carrying a crisp bright end-cap stroke so it reads as a chart. No glow.
                     let busiest = z.minutes.indices.max(by: { z.minutes[$0] < z.minutes[$1] }) ?? 0
                     GeometryReader { geo in
                         HStack(spacing: 2) {
@@ -591,8 +617,7 @@ struct WorkoutsView: View {
                                     .overlay {
                                         if i == busiest {
                                             Rectangle()
-                                                .stroke(StrandPalette.hrZoneColor(i + 1), lineWidth: 1.5)
-                                                .shadow(color: StrandPalette.hrZoneColor(i + 1).opacity(0.7), radius: 6)
+                                                .strokeBorder(StrandPalette.textPrimary.opacity(0.85), lineWidth: 1.5)
                                         }
                                     }
                             }

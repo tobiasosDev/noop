@@ -63,6 +63,70 @@ struct MarginalRadioDetector {
     }
 }
 
+/// Detects a WHOOP 4 "bond-loop" (#617): the strap bonds successfully, then the encrypted link drops
+/// ~1s later with a CONNECTION TIMEOUT (`CBError.connectionTimeout`), the auto-rescan reconnects, it
+/// bonds again, and dies again — an endless bond→timeout cycle on macOS/iOS that never settles and never
+/// tells the user why.
+///
+/// The tell is a TIMEOUT drop that lands shortly after a GENUINE bond: bond → die-soon → rescan → bond →
+/// die-soon. A bond that survives well past the window is healthy and breaks the streak — links flap for
+/// benign reasons minutes in, and a late drop must NOT be blamed on the bond. We don't trip on a single
+/// cycle (one quick drop is noise); we trip on >= `tripThreshold` CONSECUTIVE bond-then-quick-timeout
+/// cycles. Once tripped, BLEManager surfaces the EXISTING re-pair guide (`state.reconnectGuide`) so the
+/// user gets the forget-and-re-pair steps instead of watching a silent loop drain the battery.
+///
+/// Pure + value-typed so the decision is unit-testable without a CoreBluetooth seam — same shape as
+/// `MarginalRadioDetector`.
+struct PostBondTimeoutLoopDetector {
+    /// How many consecutive bond-then-quick-timeout cycles before we surface the re-pair guide.
+    /// 2 (not 1): one quick post-bond drop is noise; two in a row is the loop, not a fluke.
+    let tripThreshold: Int
+    /// A timeout only counts as "right after bonding" if it lands within this window of the bond. A drop
+    /// well into a healthy session is unrelated to bonding and must NOT count (that would mis-trip a good
+    /// link that merely flapped later). Generous vs the radio detector's 20s: the loop's signature is a
+    /// near-immediate (~1s) drop, but pre-loop links can limp a few seconds before timing out.
+    let quickTimeoutWindow: TimeInterval
+
+    private(set) var consecutiveBondTimeouts = 0
+    /// True once we've tripped: BLEManager has surfaced (or should surface) the re-pair guide.
+    private(set) var tripped = false
+
+    init(tripThreshold: Int = 2, quickTimeoutWindow: TimeInterval = 8) {
+        self.tripThreshold = tripThreshold
+        self.quickTimeoutWindow = quickTimeoutWindow
+    }
+
+    /// A connection ended. `wasBonded` = the link reached a genuine encrypted bond this connection;
+    /// `secondsSinceBond` = how long after bonding the link ended (nil if we never bonded); `timedOut` =
+    /// the drop looks like a connection timeout (vs an intentional disconnect, a bond reset, a clean close).
+    /// Returns true if THIS event tripped the loop (a freshly-crossed threshold), so the caller can
+    /// log/surface the guide exactly once.
+    mutating func connectionEnded(wasBonded: Bool, secondsSinceBond: TimeInterval?, timedOut: Bool) -> Bool {
+        // Only a timeout that lands within the window after we actually bonded is evidence of the loop.
+        // Anything else (never bonded, non-timeout close, a drop long after a healthy bond) breaks the
+        // streak — a single healthy spell should clear prior suspicion.
+        let bondThenQuickTimeout = wasBonded && timedOut
+            && (secondsSinceBond.map { $0 <= quickTimeoutWindow } ?? false)
+        guard bondThenQuickTimeout else {
+            consecutiveBondTimeouts = 0
+            return false
+        }
+        consecutiveBondTimeouts += 1
+        if !tripped && consecutiveBondTimeouts >= tripThreshold {
+            tripped = true
+            return true        // freshly tripped — caller surfaces the re-pair guide once
+        }
+        return false
+    }
+
+    /// Clear all suspicion: a clean session is flowing, or the user explicitly disconnected. Lets a
+    /// transient bond hiccup recover instead of permanently flagging the link as bond-looping.
+    mutating func reset() {
+        consecutiveBondTimeouts = 0
+        tripped = false
+    }
+}
+
 /// Decides when a completed sync that handed over only the strap's console/diagnostic output (no sensor
 /// records) is sustained enough to warn that the strap's clock has lost sync and it isn't banking to flash
 /// (#77 / #91 / #120). A SINGLE empty cycle is common on a perfectly healthy strap — the strap can hand
@@ -91,6 +155,58 @@ struct EmptySyncTracker {
         }
         consecutiveEmptySyncs += 1
         return consecutiveEmptySyncs >= threshold
+    }
+}
+
+/// #580: a connected WHOOP 5/MG whose firmware acks SEND_HISTORICAL_DATA but emits ZERO type-0x2F
+/// offload frames. Live HR streams fine over the standard 0x2A37 profile, but the historical offload is
+/// empty, so every session runs the 60s idle watchdog out to a "timeout" and surfaces the WHOOP-4
+/// "strap went quiet" sync error — even though nothing is wrong, the 5/MG history offload is simply
+/// experimental/unsupported on that firmware. Worse, the empty offload leaves the link idle, so the
+/// 120s liveness watchdog can bounce-disconnect/rescan every ~2 min in a thrash loop.
+///
+/// This pure tracker counts CONSECUTIVE empty 5/MG offloads (a timeout with no offload frames and no
+/// rows persisted). Once `quietThreshold` is reached it reports the strap as "history-empty" so the
+/// caller can (a) surface an honest "connected, history sync experimental on 5.0" state instead of a
+/// sync error, and (b) back off the bounce loop. Any offload that DOES hand over real records clears the
+/// streak — so a strap that later starts banking recovers immediately. Value type → unit-testable
+/// (Whoop5EmptyOffloadTrackerTests) without a CoreBluetooth seam. Mirrored on Android.
+struct Whoop5EmptyOffloadTracker {
+    /// Consecutive empty 5/MG offloads before we treat the strap as history-empty (experimental). 2 (not
+    /// 1): the very first offload after connect can race the strap waking its flash, so one empty cycle is
+    /// noise; two in a row is the firmware genuinely not serving history.
+    let quietThreshold: Int
+
+    private(set) var consecutiveEmpty = 0
+    /// True once `quietThreshold` consecutive empty offloads have been seen — the link is up + live HR is
+    /// flowing but the 5/MG history offload is empty. Drives the honest home-state flag AND the bounce
+    /// backoff. Cleared the moment any offload banks real records.
+    private(set) var historyEmpty = false
+
+    init(quietThreshold: Int = 2) { self.quietThreshold = quietThreshold }
+
+    /// Record a completed/timed-out 5/MG offload. `bankedRecords` = this offload routed real offload
+    /// frames / persisted rows (the strap IS handing over history). Returns true if THIS call freshly
+    /// crossed the threshold (so the caller can log/surface once). A banking offload resets everything.
+    mutating func recordOffload(bankedRecords: Bool) -> Bool {
+        guard !bankedRecords else {
+            consecutiveEmpty = 0
+            historyEmpty = false
+            return false
+        }
+        consecutiveEmpty += 1
+        if !historyEmpty && consecutiveEmpty >= quietThreshold {
+            historyEmpty = true
+            return true     // freshly crossed — caller logs/surfaces once
+        }
+        return false
+    }
+
+    /// Clear all suspicion — a fresh connect, or the user explicitly re-requested a sync. Lets a strap
+    /// that starts banking (or a transient empty spell) recover without waiting out the streak.
+    mutating func reset() {
+        consecutiveEmpty = 0
+        historyEmpty = false
     }
 }
 
@@ -264,9 +380,20 @@ public final class BLEManager: NSObject, ObservableObject {
     /// #80 marginal-radio fallback: tracks consecutive arm-then-quick-timeout cycles. When it trips,
     /// `standardHRFallback` goes true and the next connect skips arming R10/R11 (relies on 0x2A37).
     private var marginalRadio = MarginalRadioDetector()
+    /// #617 bond-loop detector: tracks consecutive bond-then-quick-timeout cycles on a WHOOP 4. When it
+    /// trips, BLEManager surfaces the existing re-pair guide (`state.reconnectGuide`) instead of looping
+    /// silently. Reset on a clean session / intentional disconnect / a successful connect.
+    private var postBondLoop = PostBondTimeoutLoopDetector()
+    /// Wall time the encrypted bond was established this connection, to measure how soon a drop follows
+    /// the bond (the #617 bond-loop tell). nil until bonded; cleared on disconnect.
+    private var bondedAt: Date?
     /// #126 false-alarm guard: tracks CONSECUTIVE console-only completed syncs so the "clock has lost
     /// sync" banner only fires on sustained emptiness, not a single transient empty cycle on a healthy strap.
     private var emptySyncTracker = EmptySyncTracker()
+    /// #580: tracks CONSECUTIVE empty 5/MG offloads so a 5/MG whose firmware serves no history offload (but
+    /// streams live HR fine) reads as "history sync experimental on 5.0" instead of a sync error, and the
+    /// 120s bounce loop backs off while live HR is flowing. Reset on connect / a banking offload.
+    private var whoop5EmptyOffload = Whoop5EmptyOffloadTracker()
     /// When true, SKIP arming the R10/R11 raw realtime stream on connect — the radio couldn't sustain
     /// it (see MarginalRadioDetector). Live HR then comes only from the already-subscribed low-bandwidth
     /// 0x2A37 standard-HR profile. Per-session: set by the detector, cleared on a clean reconnect (a
@@ -614,6 +741,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // A user-initiated teardown is a clean slate: clear any #80 marginal-radio fallback so the next
         // (manual) reconnect attempts the full R10/R11 stream again rather than inheriting old suspicion.
         marginalRadio.reset()
+        postBondLoop.reset()   // #617: a clean teardown clears the bond-loop streak so a manual reconnect starts fresh
         readoptingTo = nil   // #52: a clean teardown abandons any in-flight pin handoff
         standardHRFallback = false
         state.standardHRMode = nil
@@ -1130,6 +1258,13 @@ public final class BLEManager: NSObject, ObservableObject {
            let summary = Backfiller.sessionSummaryLine(rows: bf.sessionRowsPersisted, motion: bf.sessionMotionRows, nights: bf.sessionNights) {
             log(summary)
         }
+        // #547 RE-POLLUTION: this session's ingest gate dropped bad-clock records, so the strap has a
+        // wandering clock and may have banked similar garbage on an OLDER build whose gate was weaker. Arm
+        // a heal re-run so the next analyze tick purges any such pollution — not gated behind the one-shot
+        // done flag. Pure UserDefaults set (no engine handle here); IntelligenceEngine honours it next tick.
+        if (backfiller?.sessionDroppedImplausible ?? 0) > 0 {
+            IntelligenceEngine.requestTimestampReheal()
+        }
         // #364 auto-continue spin-detector: did THIS session move the strap's trim cursor? Compare the
         // Backfiller's current high-water trim against where it stood when the previous session ended.
         // A frozen cursor (console-only / strap refusing to trim) ⇒ don't re-kick (it would spin forever).
@@ -1178,6 +1313,13 @@ public final class BLEManager: NSObject, ObservableObject {
             } else {
                 state.lastSyncError = nil
             }
+            // #580: a 5/MG that reaches a real HISTORY_COMPLETE with banked sensor records proves its
+            // history offload IS working — clear the experimental note + empty streak so the home state
+            // stops saying "history sync experimental".
+            if selectedModel.deviceFamily == .whoop5, bankedSensorRecords {
+                whoop5EmptyOffload.reset()
+                state.historySyncExperimental = false
+            }
             UserDefaults.standard.set(state.lastSyncedAt, forKey: "lastSyncedAt")
             // NOTE: the auto-continue streak is NOT reset here. A HISTORY_COMPLETE is no longer assumed to
             // mean "caught up" (#25): a strap whose firmware segments a deep offload into many small
@@ -1185,7 +1327,33 @@ public final class BLEManager: NSObject, ObservableObject {
             // 6-per-connection cap. The streak is cleared only once shouldAutoContinue proves we're actually
             // caught up — inside maybeAutoContinueBackfill's else path, fired below for BOTH exit reasons.
         } else if reason == "timeout" {
-            state.lastSyncError = "Sync interrupted — the strap went quiet. It will retry on the next sync."
+            // #580: distinguish a genuine WHOOP-4 "strap went quiet mid-sync" from a WHOOP 5/MG whose
+            // firmware acks SEND_HISTORICAL_DATA but never emits a single type-0x2F offload frame. The
+            // 5/MG case isn't a failure — live HR is streaming fine over 0x2A37, the history offload is
+            // just experimental/empty on that firmware. "Banked" = this offload made ANY offload progress
+            // (chunks acked, rows persisted, or deep packets seen); an empty 5/MG offload has none.
+            let bankedThisOffload = state.syncChunksThisSession > 0
+                || (backfiller?.sessionRowsPersisted ?? 0) > 0
+                || state.deepPacketsThisSession > 0
+            if selectedModel.deviceFamily == .whoop5 {
+                let crossed = whoop5EmptyOffload.recordOffload(bankedRecords: bankedThisOffload)
+                if whoop5EmptyOffload.historyEmpty {
+                    // Honest home state (#580): NOT a sync error — connected + live HR, history experimental.
+                    state.historySyncExperimental = true
+                    state.lastSyncError = nil
+                    if crossed {
+                        log("Backfill: WHOOP 5/MG offload empty \(whoop5EmptyOffload.consecutiveEmpty)× — history sync is experimental on 5.0; surfacing 'connected, history experimental' (not a sync error) and backing off the bounce loop.")
+                    }
+                } else {
+                    // Either the first empty cycle (could be the strap waking flash — stay quiet, don't
+                    // cry failure) OR a banking offload that just cleared the streak (recovery — drop the
+                    // experimental note). Both want a clean, error-free state.
+                    state.historySyncExperimental = false
+                    state.lastSyncError = nil
+                }
+            } else {
+                state.lastSyncError = "Sync interrupted — the strap went quiet. It will retry on the next sync."
+            }
         }
         checkStrapLiveness()         // safety-net: strap ahead of us AND our frontier frozen ⇒ stuck?
         // #364 / #25: a session that ended on the 60s IDLE cap OR on a true HISTORY_COMPLETE while still
@@ -1574,8 +1742,15 @@ public final class BLEManager: NSObject, ObservableObject {
         enableLiveNotifications(reason: "keepalive")
         // Liveness watchdog: if NOTHING has arrived for a while, the stream/link stalled.
         // Bounce the connection — the auto-rescan on disconnect re-bonds and resumes streaming.
-        if Date().timeIntervalSince(lastDataAt) > 120 {
-            log("No data for >120s — bouncing link to resume streaming")
+        // #580: a known history-empty 5/MG (firmware serves no offload) gets a far longer fuse. The
+        // standard 0x2A37 HR profile keeps the link genuinely alive, but its packets can lull for >120s
+        // when the strap is off-wrist / resting, and an empty offload leaves the data channel quiet — so
+        // the old 120s rule disconnected/rescanned a perfectly healthy link every ~2 min (the thrash this
+        // fixes). A WHOOP 4 (real "not recording" path) keeps the tight 120s fuse unchanged.
+        let bounceFuse: TimeInterval =
+            (selectedModel.deviceFamily == .whoop5 && whoop5EmptyOffload.historyEmpty) ? 600 : 120
+        if Date().timeIntervalSince(lastDataAt) > bounceFuse {
+            log("No data for >\(Int(bounceFuse))s — bouncing link to resume streaming")
             if let p = peripheral { central.cancelPeripheralConnection(p) }
             return
         }
@@ -1970,6 +2145,7 @@ public final class BLEManager: NSObject, ObservableObject {
                 send(.runHapticsPattern, payload: [2, UInt8(clamping: decision.buzzLoops), 0, 0, 0])
                 let mins = Int((decision.bout?.durationS ?? 0) / 60)
                 log("Inactivity: nudged after a \(mins)-min sedentary stretch.")
+                AppModel.postInactivity(minutes: mins)   // #577 — local notification (iOS-only, self-gated on notif.masterEnabled)
             }
         }
     }
@@ -2092,6 +2268,30 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
             standardHRFallback = true
             log("Marginal radio (#80): \(marginalRadio.consecutiveArmTimeouts) arm-then-timeout cycles — next connect uses standard-HR mode (0x2A37 only)")
         }
+        // #617 bond-loop detection: same pre-reset read. The bond-loop tell is a CONNECTION TIMEOUT that
+        // lands within seconds of a genuine bond — bond → drop → rescan → bond → drop, forever. We require
+        // the OS to classify the drop as a connection timeout (`CBError.connectionTimeout`), not merely any
+        // error, so a one-off radio blip or a different failure doesn't get mistaken for the loop. Once it
+        // trips, surface the EXISTING re-pair guide (the same forget-and-re-pair steps the #74/firmware-reset
+        // path shows) rather than letting the link loop silently and drain the battery.
+        let connTimedOut: Bool = (error as? CBError)?.code == .connectionTimeout
+        let sinceBond = bondedAt.map { Date().timeIntervalSince($0) }
+        if postBondLoop.connectionEnded(wasBonded: bondedAt != nil,
+                                        secondsSinceBond: sinceBond,
+                                        timedOut: connTimedOut && !intentionalDisconnect) {
+            log("Bond-loop (#617): \(postBondLoop.consecutiveBondTimeouts) bond-then-timeout cycles — surfacing the re-pair guide")
+            if state.reconnectGuide == nil {
+                state.reconnectGuide = """
+                Your strap keeps connecting and then dropping a second later. This is almost always a stale Bluetooth pairing — usually after a WHOOP firmware update, or the official WHOOP app holding the strap. NOOP works fine once it's re-paired:
+
+                1. Quit the official WHOOP app (or turn off Bluetooth on that phone).
+                2. Open System Settings → Bluetooth and Forget your WHOOP if it's listed.
+                3. Tap the strap repeatedly until its LEDs flash blue (pairing mode).
+                4. Come back here and reconnect.
+                """
+            }
+        }
+        bondedAt = nil   // cleared after the bond-loop detector above read it (#617)
         state.connected = false
         state.encryptedBond = false   // cleared with didBond; next session must re-prove the bond (#69)
         state.charging = nil          // a stale charging flag must not outlive the link
@@ -2127,6 +2327,11 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         state.r22FlagsAccepted = 0
         state.deepPacketsThisSession = 0
         lastOffloadFrameAt = nil   // #174: don't carry a stale cooldown reference into the next session
+        // #580: a fresh connection earns a fresh empty-offload streak — a strap that was history-empty last
+        // session might bank this time (or vice-versa). Clear the experimental note too; the next offload
+        // re-derives it. (The honest flag is per-link, like the syncing pill / reject counters above.)
+        whoop5EmptyOffload.reset()
+        state.historySyncExperimental = false
         backfillTimeout?.cancel()
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
@@ -2389,6 +2594,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                 didBond = true
                 state.bonded = true
                 state.encryptedBond = true   // genuine encrypted bond (not the live-HR shortcut) — #69
+                bondedAt = Date()            // #617: start the bond→drop stopwatch for the bond-loop detector
                 state.pairingHint = nil
                 bondRefusalStreak = 0         // #78: a genuine bond resets the refusal streak
                 noteGenuineBond(of: peripheral)   // #52: this strap bonds fine; clears any pin-refusal streak
@@ -2443,6 +2649,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
             didBond = true
             state.bonded = true
             state.encryptedBond = true   // WHOOP 4 confirmed-write bond is always genuine — #69
+            bondedAt = Date()            // #617: start the bond→drop stopwatch for the bond-loop detector
             noteGenuineBond(of: peripheral)   // #52: this strap bonds fine; clears any pin-refusal streak
             log("BONDED (confirmed write acknowledged) — custom channels should now flow")
         }
@@ -2628,6 +2835,13 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                     log("Get Data Range raw frame (#451 — for offset analysis): \(hex)")
                     if let newest = BLEManager.dataRangeNewestUnix(from: frame) {
                         strapNewestTs = newest                    // feeds the liveness watchdog
+                        // #547 SESSION-RELATIVE gate: publish the strap's banked-record window to the
+                        // Backfiller so the historical ingest gate can reject a record dated months outside
+                        // THIS strap's own [oldest, newest] (wandering-clock pollution that clears the
+                        // absolute 2023-11 floor). The newest marker alone gives an upper bound; the oldest
+                        // (set below when present) closes the lower bound. The gate ignores a half/malformed
+                        // window, so setting newest before oldest is decoded is safe.
+                        backfiller?.sessionNewestUnix = newest
                         // Observability for the "last night didn't sync" reports (#364): print the NEWEST
                         // record the strap actually holds. With the persisted-N line this lets one connect tell
                         // a banked-but-not-yet-reached backlog (newest == last night, cursor still grinding)
@@ -2638,6 +2852,7 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                         // Also surface the OLDEST banked record so one connect shows the full backlog SPAN — the
                         // depth a deep oldest-first drain has to cover before recent nights land (#364).
                         if let oldest = BLEManager.dataRangeOldestUnix(from: frame), oldest < newest {
+                            backfiller?.sessionOldestUnix = oldest   // #547: closes the session-relative window
                             let spanDays = (newest - oldest) / 86_400
                             log("Strap banked history span: \(d.string(from: Date(timeIntervalSince1970: TimeInterval(oldest)))) → newest (~\(spanDays) day\(spanDays == 1 ? "" : "s") of backlog, drained oldest-first)")
                         }

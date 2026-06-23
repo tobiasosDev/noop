@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -72,6 +73,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -130,6 +132,7 @@ private enum class Destination(
 
     // Group: Health
     Health("health", "Health", Icons.Filled.MonitorHeart),
+    Hydration("hydration", "Hydration", Icons.Filled.WaterDrop),
     VitalSigns("vital_signs", "Vital Signs", Icons.Filled.HealthAndSafety),
     VitalSignsDetail("vital_detail/{key}", "Vital Signs", Icons.Filled.HealthAndSafety),
     LabBook("lab_book", "Lab Book", Icons.Filled.HealthAndSafety),
@@ -254,6 +257,9 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         // The leading profile avatar opens Settings (where the photo is set/changed),
                         // mirroring iOS's avatar-leading Today header. The drawer hamburger is unchanged.
                         onOpenSettings = { nav.navigateTopLevel(Destination.Settings.route) },
+                        // The opt-in Hydration card (only shown when Hydration tracking is on) pushes its
+                        // detail. A normal push so the back-stack returns to Today.
+                        onOpenHydration = { nav.navigate(Destination.Hydration.route) },
                     )
                 }
                 composable(Destination.Live.route) {
@@ -296,6 +302,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         onOpenFusedRecord = { nav.navigateTopLevel(Destination.FusedRecord.route) },
                     )
                 }
+                composable(Destination.Hydration.route) { HydrationScreen(viewModel) }
                 composable(Destination.VitalSigns.route) {
                     VitalSignsScreen(
                         vm = viewModel,
@@ -640,7 +647,6 @@ private val navFadeSpec = tween<Float>(durationMillis = 240, easing = NavEasing)
  */
 @Composable
 internal fun BrandMark(size: Dp = 22.dp) {
-    val sweep = Brush.sweepGradient(*Palette.goldGradient.toTypedArray())
     Canvas(modifier = Modifier.size(size)) {
         val stroke = this.size.minDimension * 0.13f          // ~2px-equivalent at 22dp
         val radius = (this.size.minDimension - stroke) / 2f
@@ -657,7 +663,7 @@ internal fun BrandMark(size: Dp = 22.dp) {
         )
         // Open recovery-ring arc: ~80% (288°), −90° start (12 o'clock), clockwise.
         drawArc(
-            brush = sweep,
+            color = Palette.chargeColor,
             startAngle = -90f,
             sweepAngle = 288f,
             useCenter = false,
@@ -665,8 +671,8 @@ internal fun BrandMark(size: Dp = 22.dp) {
             size = arcSize,
             style = capStroke,
         )
-        // Solid gold "on-device core" dot at the centre.
-        drawCircle(color = Palette.gold, radius = stroke * 0.62f, center = center)
+        // Solid WHITE "on-device core" dot at the centre (green ring + white core — iOS parity, no gold).
+        drawCircle(color = Color.White, radius = stroke * 0.62f, center = center)
     }
 }
 

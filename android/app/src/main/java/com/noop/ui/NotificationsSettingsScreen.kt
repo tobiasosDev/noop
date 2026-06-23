@@ -230,6 +230,10 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
     var phoneCallsEnabled by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.CALLS_PHONE, false)) }
     var voipCallsEnabled by remember { mutableStateOf(NotifPrefs.getBool(context, NotifPrefs.CALLS_VOIP, false)) }
     var callsPattern by remember { mutableStateOf(NotifPrefs.callPattern(context)) }
+    // Scheduled report notifications (#517) — opt-in, default OFF. SharedPreferences isn't reactive, so
+    // each Switch mirrors into local state and writes straight through to NoopPrefs.
+    var morningReport by remember { mutableStateOf(NoopPrefs.morningReportEnabled(context)) }
+    var postWorkoutReport by remember { mutableStateOf(NoopPrefs.postWorkoutReportEnabled(context)) }
     var phonePermissionDenied by remember { mutableStateOf(false) }
     val phonePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -430,6 +434,40 @@ fun NotificationsSettingsScreen(vm: AppViewModel) {
                     Spacer(Modifier.weight(1f))
                 }
             }
+        }
+
+        // MARK: Daily reports (#517) — phone notifications, not wrist buzzes. Opt-in, default OFF, no AI.
+        AlertSection(
+            icon = Icons.Filled.NotificationsActive,
+            title = "Daily reports",
+            blurb = "Optional phone notifications, off by default. These arrive after your strap syncs " +
+                "and NOOP scores the data — so they land soon after, not the exact second you wake or " +
+                "finish a workout. Everything is worked out on this phone.",
+        ) {
+            FormToggleRow(
+                label = "Morning recap",
+                help = "After last night is processed, a notification with your Charge and Rest. Posts " +
+                    "once a day, after your strap has synced the night.",
+                checked = morningReport,
+                onChange = {
+                    morningReport = it
+                    NoopPrefs.setMorningReportEnabled(context, it)
+                },
+            )
+            RowDivider()
+            FormToggleRow(
+                label = "Post-workout summary",
+                help = "When a new workout syncs in, a notification with its Effort, duration and average " +
+                    "heart rate. Shows up after the session reaches NOOP on the next sync.",
+                checked = postWorkoutReport,
+                onChange = {
+                    postWorkoutReport = it
+                    NoopPrefs.setPostWorkoutReportEnabled(context, it)
+                    // Seed the frontier to the newest existing workout when turning ON, so enabling it
+                    // doesn't immediately fire a summary for a session already in history.
+                    if (it) vm.seedWorkoutReportFrontier()
+                },
+            )
         }
     }
 }

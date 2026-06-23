@@ -31,6 +31,12 @@ struct DataSourcesView: View {
     @State private var wearableImporting = false
     @State private var wearableSummary: String?
     @State private var wearableFailed = false
+    // "Remove Apple Health imported data" (ah-delete #616): a destructive escape hatch that purges every
+    // row stored under the "apple-health" source via DeviceRegistryStore.deleteAllData. Two-step (a
+    // confirmation alert) since it can't be undone. Local to this screen; no live strap data is touched.
+    @State private var appleHealthDeleting = false
+    @State private var confirmDeleteAppleHealth = false
+    @State private var appleHealthDeletedSummary: String?
 
     // "Broadcast heart rate" (opt-in, OFF by default): make NOOP a standard BLE Heart Rate peripheral
     // (0x180D / 0x2A37) so a gym treadmill / Zwift / Peloton can read the live strap HR NOOP receives.
@@ -63,16 +69,16 @@ struct DataSourcesView: View {
         ScreenScaffold(title: "Data Sources",
                        subtitle: "Everything stays on \(Platform.deviceNounPhrase). Bring your history in once, then it's yours.",
                        onRefresh: { await repo.refresh() }) {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                whoopCard
-                appleHealthCard
-                xiaomiCard
-                nutritionCard
-                liftingCard
-                activityFileCard
-                wearableCard
-                broadcastHrCard
-                liveCard
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                whoopCard.staggeredAppear(index: 0)
+                appleHealthCard.staggeredAppear(index: 1)
+                xiaomiCard.staggeredAppear(index: 2)
+                nutritionCard.staggeredAppear(index: 3)
+                liftingCard.staggeredAppear(index: 4)
+                activityFileCard.staggeredAppear(index: 5)
+                wearableCard.staggeredAppear(index: 6)
+                broadcastHrCard.staggeredAppear(index: 7)
+                liveCard.staggeredAppear(index: 8)
             }
         }
         .onAppear {
@@ -94,6 +100,13 @@ struct DataSourcesView: View {
                       allowsMultipleSelection: false) { result in
             handleImportResult(result, for: importTarget)
         }
+        // ah-delete (#616): strongly-worded confirm before purging the Apple Health source.
+        .alert("Remove Apple Health imported data?", isPresented: $confirmDeleteAppleHealth) {
+            Button("Cancel", role: .cancel) { }
+            Button("Remove", role: .destructive) { deleteAppleHealthData() }
+        } message: {
+            Text("This permanently deletes everything imported from Apple Health — heart rate, HRV, sleep, steps, workouts and more. Your live strap data is untouched. This can't be undone.")
+        }
     }
 
     private var whoopCard: some View {
@@ -104,16 +117,14 @@ struct DataSourcesView: View {
                                tone: hasWhoop ? .accent : .neutral),
              subtitle: "Import your full WHOOP history — recovery, strain, sleep, workouts — from a data export (.zip). Works for WHOOP 4.0, 5.0 and MG. Get one at app.whoop.com → Data Management.") {
             let importingWhoop = model.isImporting(.whoop)
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button {
                     presentImporter(.whoop)
                 } label: {
                     Label(importingWhoop ? "Importing…" : "Choose export…",
                           systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
                 if importingWhoop { ProgressView().controlSize(.small) }
             }
@@ -131,18 +142,36 @@ struct DataSourcesView: View {
              tint: StrandPalette.metricCyan,
              subtitle: "Import an Apple Health export (Health app → profile → Export All Health Data → export.zip). 7 years of HR, HRV, sleep, SpO₂, steps and more — streamed locally. Large exports take a minute or two.") {
             let importingAppleHealth = model.isImporting(.appleHealth)
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.appleHealth) } label: {
                     Label(importingAppleHealth ? "Working…" : "Choose export.zip…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.metricCyan)
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
+                .buttonStyle(NoopButtonStyle(.primary))
+                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting || appleHealthDeleting)
                 if importingAppleHealth { ProgressView().controlSize(.small) }
             }
             if let s = model.appleHealthImportSummary {
                 Text(s).font(StrandFont.subhead)
                     .foregroundStyle(model.appleHealthImportFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+            }
+            // ah-delete (#616): a destructive "Remove imported data" action wired to
+            // DeviceRegistryStore.deleteAllData(deviceId: "apple-health"). Always offered (the user may
+            // have imported in a prior session, so we don't gate on this run's summary), with a
+            // confirmation step since it permanently clears every Apple-Health-sourced row.
+            HStack(spacing: NoopMetrics.space3) {
+                Button(role: .destructive) {
+                    confirmDeleteAppleHealth = true
+                } label: {
+                    Label(appleHealthDeleting ? "Removing…" : "Remove imported data", systemImage: "trash")
+                }
+                .buttonStyle(NoopButtonStyle(.destructive))
+                .disabled(model.hasActiveImport || appleHealthDeleting)
+                .accessibilityLabel("Remove Apple Health imported data")
+                if appleHealthDeleting { ProgressView().controlSize(.small) }
+            }
+            if let s = appleHealthDeletedSummary {
+                Text(s).font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.statusPositive)
             }
         }
     }
@@ -152,12 +181,11 @@ struct DataSourcesView: View {
              tint: StrandPalette.metricAmber,
              subtitle: "Import your Mi Band history — steps, heart rate, resting HR, sleep stages, SpO₂, stress and sleep score — straight from the Mi Fitness app. On your iPhone: Files → On My iPhone → Mi Fitness, long-press the folder → Compress, then choose the .zip here. Fully offline; no Xiaomi account or Bluetooth needed. Smart Band 8/9/10.") {
             let importingXiaomi = model.isImporting(.xiaomi)
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.xiaomi) } label: {
                     Label(importingXiaomi ? "Importing…" : "Choose Mi Fitness export…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.metricAmber)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
                 if importingXiaomi { ProgressView().controlSize(.small) }
             }
@@ -172,12 +200,11 @@ struct DataSourcesView: View {
         card(title: "Nutrition (.csv)", icon: "fork.knife",
              tint: StrandPalette.metricAmber,
              subtitle: "Import daily nutrition totals — calories in, protein, carbs, fat (and weight if present) — from a Cronometer or MacroFactor CSV export. Other trackers work too if the file has a date column and daily totals.") {
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.nutrition) } label: {
                     Label(nutritionImporting ? "Importing…" : "Choose .csv…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
                 if nutritionImporting { ProgressView().controlSize(.small) }
             }
@@ -192,12 +219,11 @@ struct DataSourcesView: View {
         card(title: "Lifting log (Hevy / Liftosaur)", icon: "dumbbell.fill",
              tint: DomainTheme.effort.color,
              subtitle: "Import your strength-training history from a Hevy CSV export or a Liftosaur JSON export. Each workout becomes a Strength session with a training-volume estimate (weight × reps). It's a volume figure, not a measured strain — it never changes your Effort.") {
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.lifting) } label: {
                     Label(liftingImporting ? "Importing…" : "Choose export…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
                 if liftingImporting { ProgressView().controlSize(.small) }
             }
@@ -212,12 +238,11 @@ struct DataSourcesView: View {
         card(title: "Workout file (GPX / TCX / FIT)", icon: "point.topleft.down.curvedto.point.bottomright.up",
              tint: StrandPalette.metricAmber,
              subtitle: "Import a single exported workout file from any brand — Garmin, Coros, Suunto, Wahoo, Polar, Strava, Apple — straight off your device. GPS route, distance, heart rate and calories come in where the file has them. Fully offline; nothing leaves \(Platform.deviceNounPhrase).") {
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.activityFile) } label: {
                     Label(activityFileImporting ? "Importing…" : "Choose .gpx / .tcx / .fit…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.metricAmber)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
                 if activityFileImporting { ProgressView().controlSize(.small) }
             }
@@ -232,12 +257,11 @@ struct DataSourcesView: View {
         card(title: "Oura / Fitbit / Garmin export", icon: "figure.mind.and.body",
              tint: StrandPalette.metricPurple,
              subtitle: "Import your own data export from Oura, Fitbit or Garmin — sleep, resting heart rate, HRV, steps and more, where the export has them. Download it from the brand's app (Oura: Account → Export Data; Fitbit: Google Takeout; Garmin: Export Your Data), then choose the file here. Fully offline; nothing leaves \(Platform.deviceNounPhrase). Each brand's own readiness or sleep score is kept for reference only — your scores stay yours.") {
-            HStack(spacing: 12) {
+            HStack(spacing: NoopMetrics.space3) {
                 Button { presentImporter(.wearable) } label: {
                     Label(wearableImporting ? "Importing…" : "Choose export…", systemImage: "tray.and.arrow.down")
-                        .padding(.horizontal, 6)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.metricPurple)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting || wearableImporting)
                 if wearableImporting { ProgressView().controlSize(.small) }
             }
@@ -507,6 +531,39 @@ struct DataSourcesView: View {
         }
     }
 
+    /// ah-delete (#616): purge every row stored under the "apple-health" source by calling
+    /// `DeviceRegistryStore.deleteAllData(deviceId:)` (via the device registry's `deleteDeviceData`,
+    /// which clears all `deviceId`-keyed tables in one transaction). The registry row itself is the
+    /// seeded WHOOP device — "apple-health" is a source, not a paired device — so nothing in the
+    /// Devices list changes; only the imported recordings go. Refresh so Today/Explore/Insights drop
+    /// the now-empty source, and clear the import summary so the card reads as "nothing imported".
+    private func deleteAppleHealthData() {
+        guard !appleHealthDeleting else { return }
+        appleHealthDeleting = true
+        appleHealthDeletedSummary = nil
+        Task {
+            guard let store = await repo.storeHandle() else {
+                appleHealthDeletedSummary = nil
+                appleHealthDeleting = false
+                return
+            }
+            do {
+                // `registryQueue` is the nonisolated GRDB handle the synchronous DeviceRegistryStore
+                // wraps — same construction the rest of the app uses (AppModel / BLEManager).
+                try DeviceRegistryStore(dbQueue: store.registryQueue).deleteAllData(deviceId: model.appleDeviceId)
+                await repo.refresh()
+                model.appleHealthImportSummary = nil
+                model.appleHealthImportFailed = false
+                appleHealthDeletedSummary = "Removed all Apple Health imported data."
+                logImport("Apple Health: imported data removed")
+            } catch {
+                appleHealthDeletedSummary = "Couldn't remove the data: \(error.localizedDescription)"
+                logImport("Apple Health delete failed: \(error.localizedDescription)")
+            }
+            appleHealthDeleting = false
+        }
+    }
+
     private var liftingDayFormatter: DateFormatter {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -603,6 +660,13 @@ struct DataSourcesView: View {
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // FI-2 (#490) — the 4.0-vs-5.0 explainer. Broadcast works for BOTH strap generations because it
+            // re-shares whatever LIVE heart rate NOOP already has off the strap; it doesn't depend on the
+            // 5/MG-only deep-data path. The honest distinction is WHERE that live HR comes from (4.0 = the
+            // strap's standard HR characteristic; 5/MG = PPG-derived once connected), not whether broadcast
+            // works at all. Stated plainly so a 4.0 owner knows this is for them too.
+            generationExplainer
+
             // Honest live status only while it's on: a warning note if the radio can't run, else either
             // who's reading it or that we're waiting (never a fabricated "connected").
             if broadcastHrEnabled {
@@ -627,6 +691,45 @@ struct DataSourcesView: View {
                 }
             }
         }
+    }
+
+    /// FI-2 (#490) — a compact, honest "works with both strap generations" explainer under the broadcast
+    /// toggle. Two short lines (4.0 / 5.0·MG) frame WHERE the live HR comes from on each, so a WHOOP 4.0
+    /// owner knows broadcast is for them and a 5/MG owner understands the PPG-derived source — without
+    /// over-promising. Plain copy, no claim that either generation is "better".
+    private var generationExplainer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            generationRow(title: "WHOOP 4.0",
+                          detail: "Broadcasts the strap's own live heart rate over Bluetooth.")
+            generationRow(title: "WHOOP 5.0 & MG",
+                          detail: "Broadcasts the live heart rate NOOP derives from the strap once connected.")
+        }
+        .padding(.top, 2)
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(DomainTheme.effort.color.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func generationRow(title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DomainTheme.effort.color)
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(StrandFont.footnote.weight(.semibold))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                Text(detail)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(detail)")
     }
 
     private var liveCard: some View {
@@ -656,8 +759,8 @@ struct DataSourcesView: View {
                               subtitle: String,
                               @ViewBuilder content: @escaping () -> C) -> some View {
         NoopCard(padding: 18, tint: tint) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
+                HStack(spacing: NoopMetrics.space2 + 2) {
                     Image(systemName: icon)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(tint)

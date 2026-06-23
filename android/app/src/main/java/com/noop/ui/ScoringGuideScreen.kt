@@ -56,9 +56,9 @@ import kotlin.math.roundToInt
 // Settings → About, the ⓘ on each Today score, and the one-time first-run card.
 //
 // All copy here is the single approved source of truth, shared verbatim across
-// macOS / iOS / Android. Each score section is tinted with the SAME accent the rest
-// of the app uses for that metric (Charge = recovery green, Effort = strain rose,
-// Rest = sleep purple), so a glance maps a section to its tile.
+// macOS / iOS / Android. Design Reset: each score section is accented with the SAME Reset
+// score token its Today hero ring draws with (Charge = green, Effort = blue accent, Rest =
+// slate) — no gold / strain / sleep-purple — so a glance maps a section to its Today ring.
 
 /**
  * The three score sections the guide can deep-link to. Case names mirror the macOS/iOS
@@ -71,12 +71,14 @@ enum class ScoreSection {
     EFFORT,
     REST;
 
-    /** The accent each section uses — matched to the Today tile / ring for continuity. */
+    /** The accent each section uses — the SAME Reset score token its Today hero ring draws with, so a
+     *  section reads as that score's colour. No gold / strain / sleep-purple: Charge = chargeColor green,
+     *  Effort = effortColor blue accent, Rest = restColor slate (Design Reset, 2026-06-23). */
     val accent: Color
         get() = when (this) {
-            CHARGE -> Palette.accent        // recovery ring spark
-            EFFORT -> Palette.strain066     // strain spark
-            REST -> Palette.metricPurple    // sleep spark
+            CHARGE -> Palette.chargeColor   // Charge hero ring — green
+            EFFORT -> Palette.effortColor   // Effort hero ring — blue accent
+            REST -> Palette.restColor       // Rest hero ring — slate
         }
 
     /** The header glyph (heart/spark · flame · moon). */
@@ -92,15 +94,6 @@ enum class ScoreSection {
             CHARGE -> "Charge"
             EFFORT -> "Effort"
             REST -> "Rest"
-        }
-
-    /** The Bevel colour world this score belongs to — drives the card tint, the sample gauge
-     *  stroke and the scenic bloom, so each section reads as its own domain. */
-    val domain: DomainTheme
-        get() = when (this) {
-            CHARGE -> DomainTheme.Charge
-            EFFORT -> DomainTheme.Effort
-            REST -> DomainTheme.Rest
         }
 
     /** A representative sample fraction (0–1) for the section's illustrative gauge — a
@@ -172,10 +165,9 @@ fun ScoringGuideScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = Palette.surfaceBase) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // A scenic Charge-tinted hero behind the title region sets the premium tone the
-            // moment the guide opens — the same backdrop the Today rings float over.
-            Box {
-                ScenicHeroBackground(modifier = Modifier.matchParentSize(), domain = DomainTheme.Charge, starCount = 28)
+            // Design Reset: a FLAT opaque WHOOP-grey title surface — no scenic hero, no bloom, no
+            // domain tint. The header reads as a clean raised card edge, matching the Today look.
+            Box(modifier = Modifier.background(Palette.surfaceRaised)) {
                 Header(onClose = onClose)
             }
             Hairline()
@@ -311,7 +303,7 @@ private fun LegendDot(section: ScoreSection) {
             modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(section.domain.color),
+                .background(section.accent),
         )
         Text(section.label, style = NoopType.caption, color = Palette.textSecondary)
     }
@@ -328,9 +320,9 @@ private fun ScoreCard(
     highlighted: Boolean,
     onPositioned: (Int) -> Unit,
 ) {
-    // Deep-link highlight: a brief domain ring when arrived at via an ⓘ, fading back to the hairline.
+    // Deep-link highlight: a brief accent ring when arrived at via an ⓘ, fading back to the hairline.
     val ringColor by animateColorAsState(
-        targetValue = if (highlighted) section.domain.color else Palette.hairline,
+        targetValue = if (highlighted) section.accent else Palette.hairline,
         label = "scoreCardHighlight",
     )
     val shape = RoundedCornerShape(Metrics.cardRadius)
@@ -339,27 +331,19 @@ private fun ScoreCard(
             .fillMaxWidth()
             .onGloballyPositioned { onPositioned(it.positionInRoot().y.toInt()) }
             .clip(shape)
-            // Frosted, domain-tinted surface — a glassy wash of the section's colour world.
-            .frostedCardSurface(tint = section.domain.color, cornerRadius = Metrics.cardRadius)
+            // Design Reset: a FLAT neutral frosted surface (no domain-colour navy bevel), faintly washed
+            // with the section's Reset accent so a glance still maps a card to its Today ring.
+            .frostedCardSurface(tint = section.accent, cornerRadius = Metrics.cardRadius)
             .border(if (highlighted) 2.dp else 1.dp, ringColor, shape)
             .padding(20.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            // Header row — a sample BevelGauge of the section's world beside the tinted headline.
+            // Header row — a clean flat sample ring (no bloom) of the section's accent beside the headline.
             Row(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BevelGauge(
-                    fraction = section.sampleFraction,
-                    stops = section.domain.gradientStops,
-                    tipColor = section.domain.bright,
-                    numberText = section.sampleNumber,
-                    captionText = section.label,
-                    diameter = 84.dp,
-                    lineWidth = 9.dp,
-                    showsLabel = true,
-                )
+                SampleRing(section)
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f),
@@ -371,13 +355,13 @@ private fun ScoreCard(
                         Icon(
                             section.icon,
                             contentDescription = null,
-                            tint = section.domain.color,
+                            tint = section.accent,
                             modifier = Modifier.size(16.dp),
                         )
                         Text(
                             section.label.uppercase(),
                             style = NoopType.overline,
-                            color = section.domain.color,
+                            color = section.accent,
                         )
                     }
                     Text(headline, style = NoopType.headline, color = Palette.textPrimary)
@@ -392,7 +376,7 @@ private fun ScoreCard(
                 Text(
                     "VS WHOOP",
                     style = NoopType.overline,
-                    color = section.domain.color,
+                    color = section.accent,
                     modifier = Modifier.padding(top = 1.dp),
                 )
                 Text(
@@ -402,6 +386,33 @@ private fun ScoreCard(
                 )
             }
         }
+    }
+}
+
+/**
+ * The flat illustrative ring for a score section — a clean [GlowRing] (Design Reset: solid crisp arc,
+ * NO bloom) in the section's Reset accent, the same primitive the Today hero rings use, with the score
+ * name as a small caption below. Decorative ("what a strong day looks like"), so it carries no semantics.
+ * Replaces the old per-section bloom [BevelGauge].
+ */
+@Composable
+private fun SampleRing(section: ScoreSection) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        GlowRing(
+            fraction = section.sampleFraction.toFloat(),
+            value = section.sampleFraction * 100.0,
+            color = section.accent,
+            diameter = 76.dp,
+            lineWidth = 8.dp,
+        )
+        Text(
+            section.label.uppercase(),
+            style = NoopType.overline,
+            color = Palette.textTertiary,
+        )
     }
 }
 

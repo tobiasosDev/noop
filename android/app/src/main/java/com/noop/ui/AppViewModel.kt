@@ -15,6 +15,7 @@ import com.noop.analytics.IllnessWatch
 import com.noop.analytics.IntelligenceEngine
 import com.noop.analytics.V5HealthSignals
 import com.noop.analytics.RegistryDayOwnerSource
+import com.noop.analytics.RestScorer
 import com.noop.analytics.RouteMath
 import com.noop.analytics.SleepMark
 import com.noop.analytics.SleepMarkType
@@ -27,6 +28,7 @@ import com.noop.location.GpsSession
 import kotlinx.coroutines.Job
 import com.noop.ble.HrBroadcaster
 import com.noop.ble.LiveState
+import com.noop.ble.PuffinExperiment
 import com.noop.ble.WhoopConnectionService
 import com.noop.ble.WhoopModel
 import androidx.health.connect.client.HealthConnectClient
@@ -38,6 +40,9 @@ import com.noop.ingest.HealthConnectImporter
 import com.noop.ingest.HealthConnectWriter
 import com.noop.ingest.LiftingImporter
 import com.noop.notif.IllnessAlertNotifier
+import com.noop.notif.ScheduledReportNotifier
+import com.noop.notif.ScheduledReportPolicy
+import com.noop.notif.scorePctOrNull
 import com.noop.protocol.CommandNumber
 import com.noop.widget.WidgetSnapshot
 import com.noop.widget.WidgetSnapshotStore
@@ -117,8 +122,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Archive (remove) a device — keeps its row + samples (invariant I4). */
-    suspend fun archivePairedDevice(id: String) = noopApp.deviceRegistry.archive(id)
+    /** Archive (remove) a device — keeps its row + samples (invariant I4). H3 (#520): when the removed
+     *  device is a WHOOP, also RELEASE the BLE link so the band can enter pairing mode — archiving the
+     *  registry row alone left NOOP re-grabbing it (the 3s reconnect timer + the persisted pin still
+     *  pointed at it), so it stayed connected and couldn't show its blue pairing LEDs. iOS already does
+     *  this in forgetDevice; this brings Android to parity. A non-WHOOP source (FTMS/HR strap) is owned by
+     *  the SourceCoordinator, not the WHOOP client, so it isn't touched here. */
+    suspend fun archivePairedDevice(id: String) {
+        val devices = runCatching { noopApp.deviceRegistry.all() }.getOrDefault(emptyList())
+        noopApp.deviceRegistry.archive(id)
+        if (com.noop.ble.SourceCoordinator.isWhoop(id, devices)) ble.releaseStrap()
+    }
 
     /** Rename a device (blank clears the nickname → falls back to brand+model). */
     suspend fun renamePairedDevice(id: String, nickname: String?) =
@@ -304,6 +318,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // macOS BehaviorStore.smartAlarmWeekdays (#539).
     private val _smartAlarmWeekdays = MutableStateFlow(NoopPrefs.smartAlarmWeekdays(appContext))
     val smartAlarmWeekdays: StateFlow<Set<Int>> = _smartAlarmWeekdays.asStateFlow()
+    // Per-weekday wake-time OVERRIDES (#554 reimpl): DAY_OF_WEEK → minute-of-day; a day with no entry uses
+    // the default time. Declared above init for the same #84 reason. Empty = no overrides (pre-#554).
+    private val _smartAlarmDayOverrides = MutableStateFlow(NoopPrefs.smartAlarmDayOverrides(appContext))
+    val smartAlarmDayOverrides: StateFlow<Map<Int, Int>> = _smartAlarmDayOverrides.asStateFlow()
 
     // HR-zone haptic coaching (persisted; zone-based, mirrors macOS AppModel.coachZone). Buzzes when you
     // climb into the top zone (ease off) and — if the recovery buzz is on — when you drop back to Zone 1.
@@ -388,6 +406,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Resolve the active band's name for the Live screen header (MW-6). Falls back to "WHOOP" in the
         // UI until this first read lands.
         refreshActiveDeviceName()
+        // #577 — surface the strap's smart-alarm wake as a local notification too (iOS AppModel.postSmartAlarm
+        // twin), so a pocketed phone doesn't miss the wrist buzz. Self-gates on the wrist-alerts master.
+        ble.onSmartAlarmFired = { com.noop.notif.SmartAlarmNotifier.onFired(appContext) }
         // Smooth HR from each LiveState emission, and re-arm the strap's firmware alarm whenever it
         // (re)bonds. A smart-alarm time changed while the strap was away never reached it — the send
         // is gated on bond — so the strap kept the OLD time and fired at it (#59). Gated on enabled so
@@ -468,6 +489,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (previousAlert == null) {
                     _healthAlert.value?.let { IllnessAlertNotifier.onEvaluated(appContext, it) }
                 }
+                // Morning recap (#517) — opt-in, default OFF. Once today's row carries a banked night
+                // (totalSleepMin != null), post a one-per-day Charge + Rest recap. recovery == Charge;
+                // Rest is recomputed from the night's totals via RestScorer (the same single source of
+                // truth Trends/Insights use). The notifier's persisted day gate makes this safe to call
+                // on every republish. Honest: a night with only one of the two scores omits the other.
+                _today.value?.let { todayRow ->
+                    if (todayRow.totalSleepMin != null) {
+                        ScheduledReportNotifier.onMorning(
+                            context = appContext,
+                            chargePct = todayRow.recovery.scorePctOrNull(),
+                            restPct = RestScorer.restFromDaily(todayRow).scorePctOrNull(),
+                        )
+                    }
+                }
                 // v5 skin-temp suite: run the Cycle / Body-clock / Illness-heads-up engines over the same
                 // cached history and publish their RESULTS for the Health hub. The richer IllnessSignalEngine
                 // here is the v5 replacement for AppModel.evaluateIllness's body (the macOS Result analogue);
@@ -486,10 +521,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Throttled + no-op without a placed widget; never let a Glance hiccup kill the collector.
                 runCatching {
                     val live = ble.state.value
+                    val todayRow = _today.value
                     WidgetSnapshotStore.push(
                         appContext,
                         WidgetSnapshot(
-                            recoveryPct = _today.value?.recovery?.roundToInt(),
+                            recoveryPct = todayRow?.recovery?.roundToInt(),
+                            // Rest = the sleep_performance composite from THIS row's banked stage figures
+                            // (pure, honest-null until last night is scored); Effort = the 0–100 strain. (#516)
+                            restPct = todayRow?.let { RestScorer.restFromDaily(it)?.roundToInt() },
+                            effortPct = todayRow?.strain?.roundToInt(),
                             heartRate = live.heartRate,
                             batteryPct = live.batteryPct?.roundToInt(),
                             connected = live.connected,
@@ -514,7 +554,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // rows ONCE so the analyzeRecent pass below recomputes the real days cleanly. Guarded by a
             // persisted flag (re-running is harmless — the deletes are idempotent). Runs BEFORE the rescore.
             runCatching {
-                if (!NoopPrefs.tsHealDone(appContext)) {
+                // Run when the one-shot heal hasn't run yet OR a sync just flagged a re-heal (#547
+                // re-pollution): a wandering-clock strap re-sends bad-dated records across syncs, so a single
+                // on-upgrade pass can't be the only defence. The pending flag is cleared once the re-heal runs.
+                if (!NoopPrefs.tsHealDone(appContext) || NoopPrefs.tsHealPending(appContext)) {
                     val purged = repository.healImplausibleTimestamps()
                     if (purged > 0) {
                         ble.externalLog(
@@ -523,6 +566,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     NoopPrefs.setTsHealDone(appContext)
+                    NoopPrefs.setTsHealPending(appContext, false)
                 }
             }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
             // One-shot on-upgrade Effort rescore (#313): recompute strain from source across the FULL
@@ -539,6 +583,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
             while (isActive) {
+                // #547 RE-POLLUTION: a sync since the last tick may have flagged a re-heal (its ingest gate
+                // dropped bad-clock records). Re-run the purge BEFORE this tick's rescore so the affected days
+                // recompute clean — not gated behind the one-shot done flag. Idempotent on a clean DB.
+                runCatching {
+                    if (NoopPrefs.tsHealPending(appContext)) {
+                        val purged = repository.healImplausibleTimestamps()
+                        if (purged > 0) {
+                            ble.externalLog(
+                                "Heal #547: purged $purged row(s) with an implausible timestamp " +
+                                    "(bad strap clock detected this sync); rescoring clean days.",
+                            )
+                        }
+                        NoopPrefs.setTsHealPending(appContext, false)
+                    }
+                }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
                 runCatching {
                     IntelligenceEngine.analyzeRecent(
                         repo = repository,
@@ -572,6 +631,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         // report ships proof of what was computed per day. Mirrors the macOS sink wired to
                         // live.append(log:). (Sleep overhaul §2.5.)
                         diag = { line -> ble.externalLog(line) },
+                        // Opt-in experimental sleep staging (V2) — read off SharedPreferences here (the
+                        // analytics layer is Context-free) and thread it into the sleep self-heal. (V7 3b)
+                        useExperimentalSleepV2 = PuffinExperiment.from(appContext).experimentalSleepV2,
                     )
                     // analyzeRecent now hops to Dispatchers.Default; a scope cancellation surfaces as a
                     // CancellationException that runCatching would otherwise swallow, breaking the loop's
@@ -873,7 +935,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  Sleep screen already applied the change optimistically. */
     suspend fun updateSleepSessionTimes(session: com.noop.data.SleepSession, newStartTs: Long, newEndTs: Long) {
         runCatching { repository.updateSleepSessionTimes(session, newStartTs, newEndTs) }
-        rescoreAfterSleepEdit()
+        rescoreAfterEdit()
     }
 
     /** Delete one sleep session, then re-score the affected day immediately so the dashboard aggregates
@@ -882,7 +944,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  optimistically, so the day recomputes without the misread night either way. (#281) */
     suspend fun deleteSleepSession(session: com.noop.data.SleepSession) {
         runCatching { repository.deleteSleepSession(session) }
-        rescoreAfterSleepEdit()
+        rescoreAfterEdit()
     }
 
     /** Manually add a missed nap as its OWN session (#508) — staged from raw, written under the computed
@@ -892,11 +954,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  recomputes from the persisted rows on its next reload. */
     suspend fun addManualNap(startTs: Long, endTs: Long) {
         runCatching { repository.addManualNap(deviceId, startTs, endTs) }
-        rescoreAfterSleepEdit()
+        rescoreAfterEdit()
     }
 
+    // --- On-device short-nap detection (PR #569 reimpl under NoopApp). Candidates are detected on the
+    // offload hook (WhoopBleClient.maybeDetectNaps) and queued in NapStore; this is the review surface. ---
+
+    /** Whether on-device nap detection is enabled (opt-in, default OFF). */
+    val napDetectionEnabled: StateFlow<Boolean> get() = _napDetectionEnabled
+    private val _napDetectionEnabled = MutableStateFlow(com.noop.analytics.NapPrefs.enabled(appContext))
+
+    fun setNapDetectionEnabled(enabled: Boolean) {
+        _napDetectionEnabled.value = enabled
+        com.noop.analytics.NapPrefs.setEnabled(appContext, enabled)
+    }
+
+    /** The detected naps awaiting review (newest first). Read on demand by the Automations review card. */
+    fun pendingNaps(): List<com.noop.analytics.NapCandidate> =
+        com.noop.data.NapStore.pending(appContext)
+
+    /** Accept a detected nap: persist it as a manual nap session (the SAME #508 overlap-guarded path) and
+     *  drop it from the review queue. Returns the still-pending list for the UI to re-render. */
+    suspend fun acceptDetectedNap(candidate: com.noop.analytics.NapCandidate): List<com.noop.analytics.NapCandidate> {
+        addManualNap(candidate.start, candidate.end)
+        return com.noop.data.NapStore.remove(appContext, com.noop.data.NapStore.idFor(candidate))
+    }
+
+    /** Dismiss a detected nap: drop it AND remember the window so a re-detect can't re-queue it. */
+    fun dismissDetectedNap(candidate: com.noop.analytics.NapCandidate): List<com.noop.analytics.NapCandidate> =
+        com.noop.data.NapStore.dismiss(appContext, com.noop.data.NapStore.idFor(candidate))
+
     /**
-     * Re-score recent days right after a sleep edit (edit / delete / add-nap), so daily recovery + the
+     * Re-score recent days right after an edit that changes them (a sleep edit / delete / add-nap, or a
+     * manually-added workout — #598), so daily recovery + the
      * persisted sleep_performance recompute and [recentDays] (daysMergedFlow) republishes to Today the
      * same instant the Sleep tab updates — closing the up-to-15-min staleness where Charge / Rest on Today
      * disagreed with the Sleep tab after an edit (audit #2/#3/#4). The args are kept byte-identical to the
@@ -905,7 +995,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * a failure here just leaves the loop to catch up; never throws into the edit caller. CancellationException
      * is rethrown so a ViewModel teardown mid-edit isn't swallowed (matches the loop's #125 handling).
      */
-    private suspend fun rescoreAfterSleepEdit() {
+    private suspend fun rescoreAfterEdit() {
         runCatching {
             IntelligenceEngine.analyzeRecent(
                 repo = repository,
@@ -925,6 +1015,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .getLong(Baselines.hrvBaselineEpochKey, 0L).toDouble(),
                 recoveryEpoch = NoopPrefs.of(appContext)
                     .getLong(Baselines.recoveryBaselineEpochKey, 0L).toDouble(),
+                // Opt-in experimental sleep staging (V2) — same flag the 15-min loop reads, so a manual
+                // re-score after an edit stages with the same engine the user chose. (V7 Pillar 3b)
+                useExperimentalSleepV2 = PuffinExperiment.from(appContext).experimentalSleepV2,
             )
         }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
     }
@@ -945,10 +1038,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Fill imported sessions' missing HR from strap samples (#77), same as before; detected /
             // manual rows already carry their own HR so they pass through unchanged.
             val filled = repository.fillWorkoutHrFromStrap((whoop + apple + detected))
-            _workouts.value = WorkoutEditing
-                .filterDismissed(filled + lifting, markers)
+            // #687: collapse the SAME activity tracked live under the strap AND imported from Health
+            // Connect / Apple Health into one richer entry — they sit under different sources so without
+            // this they show as two sessions. Dedup runs on the dismissed-filtered set, before the sort.
+            val sorted = WorkoutEditing
+                .dedupCrossSource(WorkoutEditing.filterDismissed(filled + lifting, markers))
                 .sortedByDescending { it.startTs }
+            _workouts.value = sorted
+            // Post-workout summary (#517) — opt-in, default OFF. The newest session (by start) drives a
+            // one-shot Effort + duration + avg-HR notification when it's strictly newer than the last one
+            // summarised, so a re-sync of the same backlog never re-fires. Honest timing: a strap-only
+            // workout only surfaces on the next history offload, so the copy says "after your strap synced".
+            sorted.firstOrNull()?.let { maybeNotifyWorkout(it) }
         }
+    }
+
+    /** Seed the post-workout notification frontier to the newest existing workout WITHOUT notifying, so
+     *  enabling the toggle doesn't immediately fire a summary for a session already in history (#517).
+     *  Called from the Settings toggle. Reads the already-loaded list; only advances the marker forward. */
+    fun seedWorkoutReportFrontier() {
+        ScheduledReportNotifier.seedWorkoutFrontier(appContext, _workouts.value.maxOfOrNull { it.startTs })
+    }
+
+    /** Build the opt-in post-workout summary copy from [row] (Effort on the user's scale, duration, avg HR)
+     *  and hand it to the notifier, which applies the strictly-newer gate. avgHr is omitted when absent —
+     *  never invented. No-op when the toggle is off (gated inside the notifier). */
+    private fun maybeNotifyWorkout(row: WorkoutRow) {
+        // Effort is the workout's stored 0–100 strain, shown on the user's chosen scale (0–100 or 0–21).
+        // A session with no scored strain still gets a summary (duration + HR), but without an Effort line.
+        val scale = UnitPrefs.effortScale(appContext)
+        val durMin = ((row.durationS ?: (row.endTs - row.startTs).toDouble()) / 60.0).roundToInt()
+        val (title, body) = if (row.strain != null) {
+            ScheduledReportPolicy.workoutCopy(
+                sportLabel = WorkoutEditing.displaySport(row.sport),
+                effortDisplay = UnitFormatter.effortDisplay(row.strain, scale),
+                effortMaxLabel = UnitFormatter.effortScaleMax(scale),
+                durationLabel = ScheduledReportPolicy.durationLabel(durMin),
+                avgHr = row.avgHr,
+            )
+        } else {
+            // No strain: a leaner summary that still tells the user the session landed.
+            val pieces = buildList {
+                add(ScheduledReportPolicy.durationLabel(durMin))
+                row.avgHr?.let { add("avg $it bpm") }
+            }
+            "Workout logged — ${WorkoutEditing.displaySport(row.sport)}" to
+                (pieces.joinToString(" · ") + ". Summarised after your strap synced.")
+        }
+        ScheduledReportNotifier.onWorkout(appContext, row.startTs, title, body)
     }
 
     // MARK: - Workout detail reads (#410) — suspend helpers, additive
@@ -984,6 +1121,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun saveManualWorkout(row: WorkoutRow, replacing: WorkoutRow? = null) {
         viewModelScope.launch {
             runCatching { repository.saveManualWorkout(row, replacing) }
+            // #598: rescore the just-added workout from the strap's HR for its window NOW, so its average /
+            // peak HR, strain and calories appear immediately instead of waiting for the next analyze tick.
+            // No-ops when there's no strap HR for the window; never overrides a value the user typed.
+            rescoreAfterEdit()
             loadWorkouts()
         }
     }
@@ -1298,6 +1439,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         applySmartAlarm()
     }
 
+    /** Set a per-weekday wake-time override (#554 reimpl). [minutes] = null clears the override for [dow]
+     *  (that day falls back to the default time). Persists + re-arms immediately so the next occurrence
+     *  uses the new time. */
+    fun setSmartAlarmDayOverride(dow: Int, minutes: Int?) {
+        if (dow !in 1..7) return
+        val next = _smartAlarmDayOverrides.value.toMutableMap()
+        if (minutes == null) next.remove(dow) else next[dow] = minutes.coerceIn(0, 24 * 60 - 1)
+        _smartAlarmDayOverrides.value = next
+        NoopPrefs.setSmartAlarmDayOverrides(appContext, next)
+        applySmartAlarm()
+    }
+
     // --- PHONE smart alarm (#207). The setters persist + (re)arm the GUARANTEED OS alarm via
     // [SmartAlarmScheduler]: scheduling the hard deadline FIRST, before any smart logic exists, so the
     // fallback is in place the instant the alarm is enabled. Whether the strap is connected is
@@ -1434,7 +1587,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ble.disableStrapAlarm()
             return
         }
-        val epochSec = nextSmartAlarmEpochSec(_smartAlarmMinutes.value, _smartAlarmWeekdays.value)
+        val epochSec = nextSmartAlarmEpochSec(
+            _smartAlarmMinutes.value,
+            _smartAlarmWeekdays.value,
+            dayOverrides = _smartAlarmDayOverrides.value,
+        )
         if (epochSec == null) {
             // No enabled weekday in the next week (only reachable from a corrupted set) — disarm rather
             // than arm a misleading time the user never asked for. Mirrors macOS.
@@ -1650,23 +1807,36 @@ internal fun nextSmartAlarmEpochSec(
     weekdays: Set<Int>,
     nowMs: Long = System.currentTimeMillis(),
     calendarFactory: () -> java.util.Calendar = { java.util.Calendar.getInstance() },
+    dayOverrides: Map<Int, Int> = emptyMap(),
 ): Long? {
     val valid = weekdays.filter { it in 1..7 }.toSet()
     // An EMPTY input means "every day" (backward compatible). A non-empty selection that filters to
     // nothing (only out-of-range numbers) has no valid day to fire on, so it's null, not a daily alarm.
     if (weekdays.isNotEmpty() && valid.isEmpty()) return null
+    // Per-weekday OVERRIDES (#554): only valid (day 1…7, minute in-range) entries count; a day without an
+    // override uses the default [minuteOfDay]. When the map is empty this is byte-for-byte the old path.
+    val cleanOverrides = dayOverrides.filterKeys { it in 1..7 }.filterValues { it in 0 until 24 * 60 }
     for (offset in 0..7) {
+        // Resolve this calendar day's weekday first, so the per-day override time is applied BEFORE the
+        // strictly-future check (a later override time can make today's occurrence still pending).
+        val probe = calendarFactory().apply {
+            timeInMillis = nowMs
+            add(java.util.Calendar.DAY_OF_YEAR, offset)
+        }
+        val dow = probe.get(java.util.Calendar.DAY_OF_WEEK)
+        // Skip days the alarm doesn't fire on (empty weekdays = every day).
+        if (weekdays.isNotEmpty() && !valid.contains(dow)) continue
+        val wakeMin = cleanOverrides[dow] ?: minuteOfDay
         val cal = calendarFactory().apply {
             timeInMillis = nowMs
             add(java.util.Calendar.DAY_OF_YEAR, offset)
-            set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
-            set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+            set(java.util.Calendar.HOUR_OF_DAY, wakeMin / 60)
+            set(java.util.Calendar.MINUTE, wakeMin % 60)
             set(java.util.Calendar.SECOND, 0)
             set(java.util.Calendar.MILLISECOND, 0)
         }
         if (cal.timeInMillis <= nowMs) continue
-        if (weekdays.isEmpty()) return cal.timeInMillis / 1000
-        if (valid.contains(cal.get(java.util.Calendar.DAY_OF_WEEK))) return cal.timeInMillis / 1000
+        return cal.timeInMillis / 1000
     }
     return null
 }

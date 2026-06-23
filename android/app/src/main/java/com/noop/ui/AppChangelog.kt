@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "6.0.3"
+    const val CURRENT_VERSION = "7.0.1"
 
     data class Release(
         val version: String,
@@ -36,6 +36,83 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "7.0.1",
+            title = "Fixes: the experimental sleep toggle now works, steps calibration, manual workouts on WHOOP 5/MG, and a sane HRV reading",
+            date = "June 2026",
+            items = listOf(
+                "**Experimental Sleep Staging V2 actually re-stages your nights now.** Turning it on was only re-staging nights you'd hand-edited, so most of your sleep looked unchanged. It now re-stages every night, so the new staging shows up across your history the moment you switch it on.",
+                "**WHOOP 4.0 steps calibration moves on.** The steps estimate could get stuck saying it needed more days even once it had them, so it never finished calibrating. It now advances and locks in your personal coefficient as soon as there's enough to learn from.",
+                "**Manual workouts on a WHOOP 5/MG record heart rate again.** A workout you started by hand on a 5/MG could finish with no heart rate and fail to save. It now captures your heart rate through the session and saves the workout properly.",
+                "**A wildly out-of-range imported HRV no longer shows a nonsense headline.** An imported HRV value that was far outside any believable range could drive a silly \"way over baseline\" headline. NOOP now ignores the impossible value instead of building a verdict on it.",
+                "**The About screen shows the right version.** The version pill in Settings → About now reads the app's real version, so it can't drift out of date again.",
+            )),
+        Release(
+            version = "7.0.0",
+            title = "Everything: a whole new look, hydration, automatic workout detection, and smarter sleep",
+            date = "June 2026",
+            items = listOf(
+                "**A whole new look.** NOOP has been redesigned from the ground up — flat, clean colour rings, a day-cycle scene that moves with your day, and a Today screen you can customise to show what matters to you. The same fresh look lands on iPhone, Mac and Android together.",
+                "**New: Hydration tracking.** Opt in and log your water through the day with a simple tap, set a daily target, and see how you're doing at a glance. Off by default — turn it on in Settings.",
+                "**New: Automatic workout detection.** Opt in and NOOP spots a likely workout from your heart rate and motion and offers it for a one-tap add, so a session you forgot to start doesn't go unrecorded. Nothing is logged without you confirming it. Off by default.",
+                "**Experimental: Sleep Staging V2.** A new on-device sleep stager you can switch on to try a sharper deep/REM/light breakdown. Clearly labelled experimental while we prove it against real nights.",
+                "**Sleep marks.** Tap to mark when you turned in and when you woke, so you keep your own record of bedtime and wake alongside what the strap worked out.",
+                "**Plus a batch of fixes** across sync, scoring and the screens you use every day.",
+            )),
+        Release(
+            version = "6.2.2",
+            title = "Deep Timeline you can scroll through days, faster manual workouts, and a storage clean-up",
+            date = "June 2026",
+            items = listOf(
+                "**The Deep Timeline can reach your other days now.** It used to only ever show today, so if today was still syncing it looked empty even though your history was right there. It now lets you step back through previous days, and it opens on your most recent day with data instead of a blank today. Thanks @ruedigermunz (#597).",
+                "**Manual workouts fill in their numbers straight away, and you can set the exact start time.** When you add a workout over a window your strap was recording, its average and peak heart rate, strain and calories now appear immediately from your strap data. And the Add Workout sheet now has a proper start date and time picker instead of \"minutes ago\", matching the iPhone and Mac. Thanks @virajshoor, @pilleuspulcher-blip (#598).",
+                "**Coach tables render properly.** When the AI Coach answers with a small comparison table, it now shows as a real grid instead of raw `| ... |` text, matching the Mac and iPhone. Thanks @Divad27 (#593).",
+                "**Russian is here.** Full Russian translation on the Apple side; Android language support is still on the way. Thanks @Te1man (#594).",
+                "**Storage clean-up (iPhone).** A failed or retried Apple Health import could strand a multi-gigabyte copy the Storage screen never saw; NOOP now reclaims those leftovers automatically. (No Android-facing change — this was an iPhone import path.) Thanks @exzanimo (#590).",
+            ),
+        ),
+        Release(
+            version = "6.2.1",
+            title = "Fix: imported phone steps were being double-counted",
+            date = "June 2026",
+            items = listOf(
+                "**Your imported steps add up properly now.** If you wear an Apple Watch as well as carrying your iPhone, Apple Health stores both their step counts for the same walk. NOOP was adding them together, so a busy day could read close to double the real number, which also threw off the steps calibration. It now does what the Health app does: it counts each source on its own and keeps the higher one, so a 7,000-step day reads 7,000, not 14,000. Re-import your Apple Health export after updating to clean up past days. Thanks @bringiton321 (#589).",
+            ),
+        ),
+        Release(
+            version = "6.2.0",
+            title = "See Everything: the Deep Timeline, a sleep movement graph, and a big board-clear",
+            date = "June 2026",
+            items = listOf(
+                "**See everything, second by second: the new Deep Timeline.** Open a metric and pinch to zoom from a whole day right down to per-second detail. Your strap records far more than the old 5-minute averages let you see, and now you can: heart rate, HRV, SpO2, skin temperature, respiration and movement, all at full resolution, all on your device. Find it on the Explore tab. Thanks to everyone who asked for this (#575, #574, #582).",
+                "**A movement graph for your sleep.** The Sleep screen now draws a restlessness trace under your hypnogram, so you can see how much you stirred through the night. Thanks @mad201802 (#407).",
+                "**WHOOP 5.0 is honest about sync now.** A connected 5.0 that's streaming live heart rate but hasn't offloaded history no longer says \"not connected\" — it says history sync is still experimental on the 5.0, and it stops the battery-draining reconnect loop while it waits (#580).",
+                "**Storage, cleaned up.** Added a Storage screen so you can see what's using space and clear it safely (the matching iPhone import bloat is fixed too). Thanks @exzanimo (#590).",
+                "**Clearer steps, alarms and Mac.** Steps now tells you exactly how many more days it needs to calibrate (and shows your imported phone steps directly), the Mac explains that R22 deep data needs an iPhone or Android, and inactivity nudges and your smart alarm can now also reach you as a phone notification. Thanks @bringiton321, @hkuehl, @artur01-code (#589, #587, #577).",
+                "**Tighter sleep dates.** A WHOOP with a wandering clock could re-send records stamped with wrong dates and scramble which night was which. NOOP now checks each record against the strap's own data range and drops the impossible ones (#547).",
+                "**Polish + a share card.** No more black band under the camera notch (thanks @cooki371, @Divad27), profile photos import the right way up, Fitbit imports are faster, and the strap scan backs off to save battery during reconnects (thanks @ryanbr). Plus a new share card overlaying your Charge, Effort and Rest on a photo (#559).",
+                "**Spot HRV won't fake it.** An on-demand HRV reading now refuses to give a number when too much of the capture was noise, instead of showing you a shaky one. Thanks @ryanbr (#585).",
+            )),
+        Release(
+            version = "6.1.1",
+            title = "Fix: a night with a brief wake-up showed as separate naps",
+            date = "June 2026",
+            items = listOf(
+                "**Fixed: one continuous night could show as a main sleep plus phantom naps.** After the 6.1.0 sleep rebuild, if you stirred briefly overnight the Sleep tab could split that single night into a \"main\" block plus one or two naps, even though your recovery and your Today total were already correct. The Sleep tab now stitches those fragments back into one night, exactly the way the rest of the app already counted them, so a biphasic or briefly-interrupted night reads as the continuous sleep it was. Thanks pilleuspulcher for the strap log that pinned it down.",
+            )),
+        Release(
+            version = "6.1.0",
+            title = "A big one: smarter sleep, naps, more devices, and a load of fixes",
+            date = "June 2026",
+            items = listOf(
+                "**Sleep got smarter and more honest.** A night split by a wake-up is now counted in full instead of just one fragment. A bad-clock strap can no longer pass off a 12-hour block as one night. A still morning right after you wake is no longer mistaken for a second sleep. And when the deep/REM split can't be trusted on a quiet night, NOOP says so instead of guessing. Your own hand-edits to a night also win over an imported value now.",
+                "**Naps, spotted on your device.** Opt in and NOOP notices a likely nap from your motion and offers it for a one-tap add. Nothing is logged automatically, and it never touches your real sleep scores. Thanks @cbarrado.",
+                "**WHOOP 4.0 sleep on older firmware.** Straps on an older offload layout that used to bank nothing now hand over the motion NOOP needs to stage sleep. Thanks airtonzanon for the captures.",
+                "**More at a glance.** A new 2x2 Android home-screen widget shows Charge, Effort and Rest together, plus optional morning-recap and post-workout notifications, both off by default and no AI involved.",
+                "**Caffeine cutoff and per-day alarms.** Set a \"no caffeine after\" time with a gentle late-intake nudge (thanks @mvanhorn), and set different smart-alarm wake times per weekday (thanks @MumiZed).",
+                "**WHOOP 4.0 gets more.** Broadcast your heart rate out from a 4.0, not just a 5.0; a clearer steps calibration; and honest \"what your strap can and can't read\" copy instead of bare dashes. On Android, removing a device now properly releases the Bluetooth link so the band can re-pair.",
+                "**Polish and fixes.** Fixed the iPhone score-ring overlap, a battery-friendly skip of the idle background re-score (thanks @ryanbr), last-synced time that survives a restart (thanks @tavelli), a charging bolt on the Live screen, a Linux raw-capture import, and German is now fully translated.",
+            )),
         Release(
             version = "6.0.3",
             title = "Date-hygiene fix for straps with a bad clock",

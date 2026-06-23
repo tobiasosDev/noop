@@ -25,7 +25,7 @@ struct IntelligenceView: View {
             explainerCard
             if intelligence.computing {
                 NoopCard(padding: 20, tint: StrandPalette.chargeColor) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: NoopMetrics.rowSpacing) {
                         ProgressView().controlSize(.small)
                         Text("Crunching your raw streams…").font(StrandFont.subhead)
                             .foregroundStyle(StrandPalette.textSecondary)
@@ -33,7 +33,7 @@ struct IntelligenceView: View {
                 }
             } else if let note = intelligence.note {
                 NoopCard(padding: 20, tint: StrandPalette.chargeColor) {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: NoopMetrics.rowSpacing) {
                         Image(systemName: "moon.zzz.fill").foregroundStyle(StrandPalette.chargeColor)
                             .accessibilityHidden(true)
                         Text(note).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
@@ -69,8 +69,9 @@ struct IntelligenceView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
-                    ForEach(filtered) { day in
+                    ForEach(Array(filtered.enumerated()), id: \.element.id) { index, day in
                         dayCard(day)
+                            .staggeredAppear(index: index)
                     }
                 }
             }
@@ -121,38 +122,34 @@ struct IntelligenceView: View {
                                            plannedSleepHours: plannedHours)
     }
 
-    /// Animated draw-in for the hero forecast gauge — set to the fill fraction on appear so the
-    /// arc sweeps in, exactly as TodayView drives its rings. Charge world (green).
-    @State private var heroFraction: Double = 0
-
-    /// The forecast hero — tomorrow-morning Charge as a layered BevelGauge floated over a scenic
-    /// Charge-tinted backdrop, with the plain-English estimate read-out beneath. The number, ± band
-    /// and copy are unchanged; only the container + gauge are new (presentation-only).
+    /// The forecast hero — tomorrow-morning Charge as a clean flat GlowRing on a flat opaque
+    /// surfaceRaised card (the Design Reset look), with the plain-English estimate read-out beneath.
+    /// No scenic backdrop, no bloom gauge — the read-outs sit on an opaque card so they stay crisp,
+    /// the same wash-out fix the Today hero got. The number, ± band and copy are unchanged.
     private func forecastCard(_ f: RecoveryForecast) -> some View {
         let frac = min(max(f.charge / 100.0, 0), 1)
         return VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Tomorrow's Charge", overline: "Evening forecast", trailing: "Estimate")
-            ZStack {
-                ScenicHeroBackground(domain: .charge)
-                    .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+            NoopCard(padding: 20, tint: StrandPalette.chargeColor) {
                 VStack(spacing: 14) {
-                    BevelGauge(
+                    GlowRing(
                         fraction: frac,
-                        stops: StrandPalette.recoveryStops,
-                        tipColor: StrandPalette.recoveryColor(f.charge),
-                        numberText: "\(Int(f.charge.rounded()))",
-                        captionText: "± \(Int(f.band.rounded()))",
-                        stateText: StrandPalette.recoveryState(f.charge),
+                        value: f.charge,
+                        format: { "\(Int($0.rounded()))" },
+                        color: StrandPalette.recoveryColor(f.charge),
                         diameter: 184,
-                        lineWidth: 15,
-                        animatedFraction: heroFraction
+                        lineWidth: 18
                     )
+                    .overlay(alignment: .bottom) {
+                        Text("± \(Int(f.band.rounded())) · \(StrandPalette.recoveryState(f.charge))")
+                            .font(StrandFont.captionNumber)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .offset(y: 26)
+                    }
                     .padding(.top, 4)
+                    .padding(.bottom, 18)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Tomorrow's Charge estimate \(Int(f.charge.rounded())) plus or minus \(Int(f.band.rounded()))")
-                    .onAppear {
-                        withAnimation(.easeOut(duration: 0.9)) { heroFraction = frac }
-                    }
                     VStack(alignment: .leading, spacing: 10) {
                         Text("You'll likely wake around \(Int(f.charge.rounded())) ± \(Int(f.band.rounded())) Charge if you sleep about \(sleepHoursLabel(f.plannedSleepHours)) tonight.")
                             .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
@@ -164,7 +161,6 @@ struct IntelligenceView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(20)
             }
         }
     }
@@ -179,8 +175,8 @@ struct IntelligenceView: View {
 
     private var explainerCard: some View {
         NoopCard(padding: 20, tint: StrandPalette.chargeColor) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+                HStack(spacing: NoopMetrics.rowSpacing) {
                     Image(systemName: "brain.head.profile").foregroundStyle(StrandPalette.chargeColor)
                         .accessibilityHidden(true)
                     Text("How this works").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
@@ -189,7 +185,7 @@ struct IntelligenceView: View {
                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 // The Charge model made concrete — the five weighted inputs, each its own metric accent.
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                     Text("Charge model").strandOverline()
                     weightRow("Heart-rate variability", "~55%", fraction: 0.55, color: StrandPalette.metricPurple)
                     weightRow("Resting heart rate", "~20%", fraction: 0.20, color: StrandPalette.metricRose)
@@ -212,20 +208,15 @@ struct IntelligenceView: View {
     /// One weighted-input row: label + percent + a thin proportional meter on the inset well, tinted
     /// to the input's own metric accent. Presentation of the Charge model — no per-day data.
     private func weightRow(_ label: String, _ percent: String, fraction: Double, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
             HStack {
                 Text(label).font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
                 Spacer()
                 Text(percent).font(StrandFont.captionNumber).foregroundStyle(color)
             }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(StrandPalette.surfaceInset)
-                    Capsule().fill(color)
-                        .frame(width: geo.size.width * min(max(fraction, 0), 1))
-                }
-            }
-            .frame(height: 6)
+            // The NOOP signature segmented bar — counts up on appear, tinted to the input's accent.
+            // The Charge weights span 0…0.55, so the bar reads each input's share of the model.
+            PipBar(value: fraction, range: 0...0.55, segments: 18, tint: color, height: 8)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label): \(percent) of Charge")
@@ -233,7 +224,7 @@ struct IntelligenceView: View {
 
     private func dayCard(_ d: IntelligenceEngine.Computed) -> some View {
         NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                 HStack {
                     Text(d.day).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
@@ -255,17 +246,12 @@ struct IntelligenceView: View {
                     stat("HRV", d.hrv.map { "\(Int($0.rounded()))" } ?? "—", StrandPalette.metricPurple)
                     stat("RHR", d.rhr.map { "\($0)" } ?? "—", StrandPalette.metricRose)
                 }
-                // Effort load meter (0–100), tinted along the strain ramp — at-a-glance cardio load.
+                // Effort load meter (0–100) as the NOOP segmented bar — counts up on appear, tinted
+                // along the strain ramp so it reads as at-a-glance cardio load.
                 if let s = d.strain {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(StrandPalette.surfaceInset)
-                            Capsule().fill(StrandPalette.strainColor(s))
-                                .frame(width: geo.size.width * min(max(s / 100.0, 0), 1))
-                        }
-                    }
-                    .frame(height: 6)
-                    .accessibilityHidden(true)
+                    PipBar(value: s, range: 0...100, segments: 20,
+                           tint: StrandPalette.strainColor(s), height: 8)
+                        .accessibilityHidden(true)
                 }
             }
         }

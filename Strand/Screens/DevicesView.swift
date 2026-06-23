@@ -54,8 +54,8 @@ private struct DevicesContent: View {
     private var removedDevices: [PairedDevice] { registry.devices.filter { $0.status == .archived } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            ForEach(activeDevices) { device in
+        VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+            ForEach(Array(activeDevices.enumerated()), id: \.element.id) { idx, device in
                 DeviceCard(
                     device: device,
                     isActive: device.status == .active,
@@ -66,9 +66,11 @@ private struct DevicesContent: View {
                     onMakeActive: { switchTarget = device },
                     onRename: { renameDraft = device.nickname ?? device.displayName; renameTarget = device },
                     onRemove: { removeTarget = device })
+                    .staggeredAppear(index: idx)
             }
 
             addButton
+                .staggeredAppear(index: activeDevices.count)
 
             if !removedDevices.isEmpty { removedSection }
 
@@ -147,24 +149,15 @@ private struct DevicesContent: View {
     // MARK: Pieces
 
     private var addButton: some View {
-        Button {
+        NoopButton("Add a device", systemImage: "plus", kind: .primary, fullWidth: true) {
             showAddWizard = true
-        } label: {
-            Label("Add a device", systemImage: "plus")
-                .font(StrandFont.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(StrandPalette.accent)
         .accessibilityLabel("Add a device")
-        .padding(.top, 4)
     }
 
     private var removedSection: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+        VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
             Text("Removed").strandOverline()
-                .padding(.top, 8)
             ForEach(removedDevices) { device in
                 DeviceCard(
                     device: device,
@@ -190,7 +183,6 @@ private struct DevicesContent: View {
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.top, 8)
     }
 
     // MARK: Logic
@@ -222,7 +214,7 @@ private struct DevicesContent: View {
 // MARK: - Device card
 
 /// One paired device as a card: name, brand/model, capabilities line, a state pill, last-seen, and a
-/// per-device actions menu. The active device is tinted (gold) and carries an "Active" pill.
+/// per-device actions menu. The active device is tinted with the accent (WHOOP blue) and carries an "Active" pill.
 private struct DeviceCard: View {
     let device: PairedDevice
     let isActive: Bool
@@ -241,8 +233,8 @@ private struct DeviceCard: View {
 
     var body: some View {
         StrandCard(padding: 18, tint: isActive ? StrandPalette.accent : nil) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
+                HStack(alignment: .top, spacing: NoopMetrics.space3) {
                     Image(systemName: icon)
                         .font(StrandFont.title2)
                         .foregroundStyle(isActive ? StrandPalette.accent : StrandPalette.textSecondary)

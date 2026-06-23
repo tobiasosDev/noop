@@ -17,6 +17,9 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
     /// 800+ day imported history (#345). Defaults to `false` so every existing caller keeps
     /// the eager `VStack` and its identical layout/scroll behaviour.
     var lazy: Bool = false
+    /// Optional full-bleed view drawn behind the scroll content at the TOP of the screen (e.g. Today's
+    /// day-cycle scene). Defaults to nil so other screens stay on the flat canvas; nil renders nothing.
+    var topBackground: AnyView? = nil
     /// Optional element pinned to the header's trailing edge (e.g. the strap-battery badge on Today).
     /// Defaults to `EmptyView` via the convenience init below, so other screens are unaffected.
     @ViewBuilder var trailing: () -> Trailing
@@ -47,7 +50,23 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             #endif
         }
-        .background(StrandPalette.surfaceBase)
+        #if os(iOS)
+        // #697: stop a vertical scroll from drifting/bouncing the screen left-right. `.basedOnSize` only
+        // permits horizontal bounce when content genuinely overflows the width (it does not here, the column
+        // is width-capped), so the spurious horizontal rubber-band that caused the sideways drift is gone.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #endif
+        // The flat canvas, plus an optional full-bleed TOP backdrop (Today's day-cycle scene) drawn behind
+        // the scroll content — edge-to-edge under the status bar. The scene is CONFINED to the header+hero
+        // band (see SceneScreenBackground.height) so it fades out ABOVE the dashboard cards, which then sit
+        // on the opaque canvas and stay fully legible (Aaron 2026-06-23: cards were "losing the data").
+        .background(alignment: .top) {
+            ZStack(alignment: .top) {
+                StrandPalette.surfaceBase
+                topBackground
+            }
+            .ignoresSafeArea()
+        }
         .modifier(RefreshableIfNeeded(onRefresh: onRefresh))
     }
 
@@ -89,10 +108,10 @@ extension ScreenScaffold where Trailing == EmptyView {
     /// Convenience init for the common case with no header trailing element — keeps every existing
     /// call site (which never passed `trailing`) source-compatible.
     init(title: LocalizedStringKey?, subtitle: LocalizedStringKey? = nil,
-         onRefresh: (() async -> Void)? = nil, lazy: Bool = false,
+         onRefresh: (() async -> Void)? = nil, lazy: Bool = false, topBackground: AnyView? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(title: title, subtitle: subtitle, onRefresh: onRefresh, lazy: lazy,
-                  trailing: { EmptyView() }, content: content)
+                  topBackground: topBackground, trailing: { EmptyView() }, content: content)
     }
 }
 

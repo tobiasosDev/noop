@@ -31,17 +31,23 @@ struct LiveWorkoutView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                heroHeartRate
-                effortGauge
-                zoneRail
-                statsGrid
-                if live.hasSensorMetrics { sensorRow }
-                Spacer(minLength: 12)
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                let cards: [AnyView] = [
+                    AnyView(header),
+                    AnyView(heroHeartRate),
+                    AnyView(effortGauge),
+                    AnyView(zoneRail),
+                    AnyView(statsGrid),
+                ]
+                ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
+                    card.staggeredAppear(index: index)
+                }
+                if live.hasSensorMetrics { sensorRow.staggeredAppear(index: 5) }
+                Spacer(minLength: NoopMetrics.space3)
                 endButton
             }
-            .padding(28)
+            .screenPadding()
+            .padding(.vertical, NoopMetrics.space6)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // A scenic Effort-tinted backdrop behind the whole in-exercise screen, fading to the base — the
@@ -52,6 +58,15 @@ struct LiveWorkoutView: View {
         }
         // If the workout ended elsewhere (process restart cleared it), close the screen.
         .onChangeCompat(of: model.activeWorkout == nil) { gone in if gone { onClose() } }
+        // Arm the realtime HR stream while the in-exercise screen is up (#681). On a WHOOP 5/MG live HR
+        // only flows while the puffin realtime stream is armed; previously only the Live tab armed it, so
+        // starting a manual workout straight from Workouts (Live never opened) left `model.bpm == nil` —
+        // captureWorkoutSample bailed on every sample and endWorkout silently discarded the empty
+        // session. Ref-counted in AppModel, so when this sheet sits over an already-armed Live tab the
+        // two balance and neither disarms the other (mirrors Android LiveWorkoutScreen's DisposableEffect
+        // requestRealtimeHr/releaseRealtimeHr). Balanced: one start on appear, one stop on disappear.
+        .onAppear { model.startRealtimeHR() }
+        .onDisappear { model.stopRealtimeHR() }
     }
 
     private var header: some View {
@@ -76,20 +91,22 @@ struct LiveWorkoutView: View {
 
     private var heroHeartRate: some View {
         let tint = zone >= 1 ? StrandPalette.hrZoneColor(zone) : StrandPalette.effortColor
-        return NoopCard(padding: 24, tint: StrandPalette.effortColor) {
-            VStack(spacing: 6) {
+        return NoopCard(padding: NoopMetrics.space6, tint: StrandPalette.effortColor) {
+            VStack(spacing: NoopMetrics.space2) {
                 Text("HEART RATE")
                     .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
                     .foregroundStyle(StrandPalette.textSecondary)
-                Text(model.bpm.map { "\($0)" } ?? "—")
-                    .font(StrandFont.rounded(80, weight: .semibold))
-                    .foregroundStyle(tint)
-                    // A soft zone-tinted halo behind the numeral — the Bevel glow.
-                    .background(
-                        Circle().fill(tint.opacity(model.bpm == nil ? 0 : 0.16)).blur(radius: 30)
-                    )
-                    .contentTransition(.numericText())
-                    .animation(.snappy, value: model.bpm)
+                // The big live HR ticks up to its new reading on each beat — crisp, flat, no halo.
+                if let bpm = model.bpm {
+                    CountUpText(value: Double(bpm),
+                                format: { "\(Int($0.rounded()))" },
+                                font: StrandFont.rounded(80, weight: .semibold),
+                                color: tint)
+                } else {
+                    Text("—")
+                        .font(StrandFont.rounded(80, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
                 Text("bpm").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
                 Text(zone >= 1 ? "Zone \(zone) · \(Self.zoneName(zone))" : "Below Zone 1")
                     .font(StrandFont.captionNumber)
@@ -105,8 +122,8 @@ struct LiveWorkoutView: View {
     /// read-outs (mirrors TodayView's effort hero). Display-only — the captured value stays 0–100.
     private var effortGauge: some View {
         let strain = model.activeWorkout?.liveStrain ?? 0
-        return NoopCard(padding: 18, tint: StrandPalette.effortColor) {
-            VStack(spacing: 10) {
+        return NoopCard(padding: NoopMetrics.cardInnerPadding, tint: StrandPalette.effortColor) {
+            VStack(spacing: NoopMetrics.rowSpacing) {
                 Text("EFFORT BUILDING")
                     .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
                     .foregroundStyle(StrandPalette.effortColor)
@@ -206,16 +223,10 @@ struct LiveWorkoutView: View {
     }
 
     private var endButton: some View {
-        Button(role: .destructive) {
+        NoopButton("End workout", systemImage: "stop.fill", kind: .destructive, fullWidth: true) {
             model.endWorkout()
             onClose()
-        } label: {
-            Text("End workout")
-                .font(StrandFont.headline)
-                .frame(maxWidth: .infinity).padding(.vertical, 10)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(StrandPalette.statusCritical)
     }
 
     // MARK: - Helpers

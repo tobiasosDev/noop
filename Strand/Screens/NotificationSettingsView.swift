@@ -12,15 +12,21 @@ struct NotificationSettingsView: View {
     var body: some View {
         ScreenScaffold(title: "Notifications",
                        subtitle: "Buzz your strap when these apps notify you. Everything runs on \(Platform.deviceNounPhrase).") {
-            masterCard
-            if store.activeCategories.isEmpty {
-                emptyAppsCard
-            } else {
-                ForEach(store.activeCategories) { cat in
-                    categoryCard(cat, apps: store.apps(in: cat))
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                masterCard
+                    .staggeredAppear(index: 0)
+                if store.activeCategories.isEmpty {
+                    emptyAppsCard
+                        .staggeredAppear(index: 1)
+                } else {
+                    ForEach(Array(store.activeCategories.enumerated()), id: \.element.id) { idx, cat in
+                        categoryCard(cat, apps: store.apps(in: cat))
+                            .staggeredAppear(index: idx + 1)
+                    }
                 }
+                behaviourCard
+                    .staggeredAppear(index: store.activeCategories.count + 1)
             }
-            behaviourCard
         }
     }
 
@@ -29,7 +35,7 @@ struct NotificationSettingsView: View {
     private var masterCard: some View {
         AlertSection(icon: "bell.badge.fill", title: "Wrist alerts",
                      blurb: "When on, NOOP taps your wrist for the apps you pick below — so you can leave the \(Platform.deviceNoun) and still feel what matters.") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                 Toggle(isOn: $store.masterEnabled) {
                     Text("Enable wrist alerts")
                         .font(StrandFont.body)
@@ -49,8 +55,7 @@ struct NotificationSettingsView: View {
                     } label: {
                         Label("Test buzz", systemImage: "waveform.path")
                     }
-                    .buttonStyle(.bordered)
-                    .tint(StrandPalette.accent)
+                    .buttonStyle(NoopButtonStyle(.secondary))
                     .disabled(!live.bonded)
                     .help(live.bonded ? "Fire a test buzz now" : "Connect your strap to test")
                     .accessibilityHint(live.bonded ? "Fires a test buzz on your strap" : "Connect your strap to enable")
@@ -72,7 +77,7 @@ struct NotificationSettingsView: View {
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(NoopMetrics.space3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(StrandPalette.surfaceInset,
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -294,10 +299,10 @@ private struct AlertSection<Content: View>: View {
 
     var body: some View {
         StrandCard(padding: 20, tint: StrandPalette.accent) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(overline)").strandOverline()
-                    HStack(spacing: 10) {
+                    HStack(spacing: NoopMetrics.space2 + 2) {
                         Image(systemName: icon)
                             .foregroundStyle(StrandPalette.accent)
                             .accessibilityHidden(true)

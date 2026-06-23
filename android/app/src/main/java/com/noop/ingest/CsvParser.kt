@@ -505,6 +505,18 @@ internal object WhoopTime {
         return null
     }
 
+    /**
+     * Parse only an ISO-8601 timestamp that carries an **embedded UTC offset** (e.g. "…Z",
+     * "…+01:00"), returning epoch seconds; null for a zoneless string. Mirror of Swift
+     * `WhoopTime.parseISOWithOffset` — lets callers tell an authoritative-offset timestamp apart from
+     * a zoneless wall-clock one that must be interpreted in a chosen zone (Hevy lifting importer, #649).
+     */
+    fun parseIsoWithOffsetEpochSeconds(raw: String?): Long? {
+        val s = raw?.trim() ?: return null
+        if (s.isEmpty()) return null
+        return parseIso(s)
+    }
+
     private val FULL_DATETIME: java.time.format.DateTimeFormatter =
         java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     private val MINUTE_DATETIME: java.time.format.DateTimeFormatter =

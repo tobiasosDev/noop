@@ -294,8 +294,7 @@ struct WorkoutDetailView: View {
                                         .overlay {
                                             if i == busiest {
                                                 Rectangle()
-                                                    .stroke(StrandPalette.hrZoneColor(i + 1), lineWidth: 1.5)
-                                                    .shadow(color: StrandPalette.hrZoneColor(i + 1).opacity(0.7), radius: 6)
+                                                    .strokeBorder(StrandPalette.textPrimary.opacity(0.85), lineWidth: 1.5)
                                             }
                                         }
                                 }
@@ -350,9 +349,11 @@ struct WorkoutDetailView: View {
             NoopCard(tint: StrandPalette.effortColor) {
                 HStack(alignment: .center, spacing: 18) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(UnitFormatter.effortDisplay(strain, scale: effortScale))
-                            .font(StrandFont.number(34))
-                            .foregroundStyle(StrandPalette.effortBright)
+                        // The session's Effort contribution ticks up to its value — the NOOP signature.
+                        CountUpText(value: UnitFormatter.effortValue(strain, scale: effortScale),
+                                    format: { String(format: "%.1f", $0) },
+                                    font: StrandFont.number(34),
+                                    color: StrandPalette.effortBright)
                         Text(effortScale == .whoop ? "strain (0–21)" : "Effort (0–100)")
                             .font(StrandFont.footnote)
                             .foregroundStyle(StrandPalette.textTertiary)

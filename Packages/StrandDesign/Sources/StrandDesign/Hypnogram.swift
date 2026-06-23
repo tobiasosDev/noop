@@ -127,17 +127,8 @@ public struct Hypnogram: View {
                             let rect = bandRect(for: interval, in: geo.size)
                             let color = StrandPalette.sleepStageColor(interval.stage)
                             let dimmed = hoverIndex != nil && hoverIndex != idx
-                            // soft bloom under REM so the brightest sleep stage (#6FA8E8) reads as "glowing"
-                            if interval.stage == .rem {
-                                RoundedRectangle(cornerRadius: rect.height / 2)
-                                    .fill(color)
-                                    .frame(width: rect.width, height: rect.height)
-                                    .blur(radius: 6)
-                                    .opacity(dimmed ? 0.35 : 0.7)
-                                    .additiveBloom()
-                                    .position(x: rect.midX, y: rect.midY)
-                                    .accessibilityHidden(true)
-                            }
+                            // Design Reset (WHOOP): NO REM bloom — every stage band is a flat, crisp
+                            // solid pill; fill-contrast (not a glow) separates the four stages.
                             RoundedRectangle(cornerRadius: rect.height / 2)
                                 .fill(color)
                                 .frame(width: rect.width, height: rect.height)

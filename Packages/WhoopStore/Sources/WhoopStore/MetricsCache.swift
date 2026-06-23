@@ -194,6 +194,82 @@ extension WhoopStore {
         }
     }
 
+    // MARK: - Per-epoch sleep analytics (v18: motionJSON / sleepStateJSON)
+    //
+    // Banked on the EXISTING sleepSession row (deviceId, startTs) beside `stagesJSON`, NOT on
+    // CachedSleepSession — these are aux per-session series the analytics layer writes/reads through
+    // targeted methods (the same shape as `updateSleepStages`), so the common session read path stays
+    // lean and the recompute/import/edit upserts (which don't name these columns) preserve them.
+    // HONESTY: an absent signal is stored as SQL NULL and read back as `nil`, never a fabricated zero array.
+
+    /// Persist the SleepStager's per-epoch motion magnitudes for one session, as a compact JSON array on
+    /// the same 30 s epoch grid as `stagesJSON`. Keyed by the immutable detected key (deviceId, startTs).
+    /// Passing an EMPTY array clears the column to NULL (no series), never an empty `[]` masquerading as
+    /// data. Returns rows changed (0 when no such session). Twin of Android `dao.updateSessionMotion`.
+    @discardableResult
+    public func persistSessionMotion(deviceId: String, sessionStart: Int, motionEpochs: [Double]) async throws -> Int {
+        let json = motionEpochs.isEmpty ? nil : Self.encodeDoubleArray(motionEpochs)
+        return try syncWrite { db in
+            try db.execute(sql: """
+                UPDATE sleepSession SET motionJSON = ?
+                WHERE deviceId = ? AND startTs = ?
+                """, arguments: [json, deviceId, sessionStart])
+            return db.changesCount
+        }
+    }
+
+    /// The persisted per-epoch motion magnitudes for one session, or nil when the column is NULL / the
+    /// session doesn't exist / the JSON is unparseable (absent stays absent). Keyed by detected startTs.
+    public func sessionMotion(deviceId: String, sessionStart: Int) async throws -> [Double]? {
+        try syncRead { db in
+            let json = try String.fetchOne(db, sql: """
+                SELECT motionJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
+                """, arguments: [deviceId, sessionStart])
+            return json.flatMap(Self.decodeDoubleArray)
+        }
+    }
+
+    /// Persist the decoded v18 band sleep_state per epoch for one session — the Interpreter's `(sb>>4)&3`
+    /// band value, one entry per epoch — as a compact JSON array of ints. Keyed by (deviceId, startTs).
+    /// EMPTY clears to NULL (no banked band state). Returns rows changed. Twin of `dao.updateSessionSleepState`.
+    @discardableResult
+    public func persistSessionSleepState(deviceId: String, sessionStart: Int, states: [Int]) async throws -> Int {
+        let json = states.isEmpty ? nil : Self.encodeIntArray(states)
+        return try syncWrite { db in
+            try db.execute(sql: """
+                UPDATE sleepSession SET sleepStateJSON = ?
+                WHERE deviceId = ? AND startTs = ?
+                """, arguments: [json, deviceId, sessionStart])
+            return db.changesCount
+        }
+    }
+
+    /// The persisted decoded v18 band sleep_state per epoch for one session, or nil when unset / unparseable
+    /// (absent stays absent). Keyed by detected startTs.
+    public func sessionSleepState(deviceId: String, sessionStart: Int) async throws -> [Int]? {
+        try syncRead { db in
+            let json = try String.fetchOne(db, sql: """
+                SELECT sleepStateJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
+                """, arguments: [deviceId, sessionStart])
+            return json.flatMap(Self.decodeIntArray)
+        }
+    }
+
+    /// Compact JSON encoders/decoders for the per-epoch series — a bare `[Double]`/`[Int]` array (no
+    /// pretty-printing) so the column stays small and round-trips byte-for-byte with the Android port.
+    static func encodeDoubleArray(_ xs: [Double]) -> String? {
+        (try? JSONEncoder().encode(xs)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static func decodeDoubleArray(_ json: String) -> [Double]? {
+        json.data(using: .utf8).flatMap { try? JSONDecoder().decode([Double].self, from: $0) }
+    }
+    static func encodeIntArray(_ xs: [Int]) -> String? {
+        (try? JSONEncoder().encode(xs)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    static func decodeIntArray(_ json: String) -> [Int]? {
+        json.data(using: .utf8).flatMap { try? JSONDecoder().decode([Int].self, from: $0) }
+    }
+
     /// Upsert cached daily metrics. Natural key (deviceId, day). Returns rows changed.
     @discardableResult
     public func upsertDailyMetrics(_ days: [DailyMetric], deviceId: String) async throws -> Int {

@@ -22,6 +22,8 @@ import com.noop.alarm.SleepWindowWatcher
 import com.noop.alarm.SmartAlarmScheduler
 import com.noop.alarm.SmartAlarmStore
 import com.noop.analytics.IllnessWatch
+import com.noop.analytics.RestScorer
+import com.noop.data.DailyMetric
 import com.noop.location.GpsSession
 import com.noop.location.LocationTracker
 import com.noop.notif.BatteryAlertNotifier
@@ -174,9 +176,11 @@ class WhoopConnectionService : Service() {
                 repo.daysMergedFlow("my-whoop").catch { emit(emptyList()) },
             ) { state, days ->
                 val todayKey = java.time.LocalDate.now().toString()
+                // Carry the whole today row (not just recovery) so the 2x2 widget can derive Rest +
+                // Effort from the same banked figures — honest-null until each is scored. (#516)
                 Triple(
                     state,
-                    days.lastOrNull { it.day == todayKey }?.recovery,
+                    days.lastOrNull { it.day == todayKey },
                     // Illness watch in the background (gated on the opt-out pref): the FGS is the
                     // only long-lived collector, so this is what makes the early-warning reach a
                     // user who hasn't opened the app today.
@@ -188,8 +192,8 @@ class WhoopConnectionService : Service() {
                 // every push mid-flight and the widget starved on stale data the moment HR started
                 // streaming. Conflation still processes only the latest value — just without the axe.
                 .conflate()
-                .collect { (state, recovery, illness) ->
-                postNotification(state, recovery)
+                .collect { (state, today, illness) ->
+                postNotification(state, today?.recovery)
                 // Banner transition (clear → raised) → real system notification; the notifier's
                 // persisted day gate dedupes against the app-open (AppViewModel) call site.
                 if (lastIllnessAlert == null && illness != null) {
@@ -210,7 +214,11 @@ class WhoopConnectionService : Service() {
                     WidgetSnapshotStore.push(
                         this@WhoopConnectionService,
                         WidgetSnapshot(
-                            recoveryPct = recovery?.roundToInt(),
+                            recoveryPct = today?.recovery?.roundToInt(),
+                            // Rest = the sleep_performance composite from today's banked stage figures
+                            // (pure, honest-null until last night is scored); Effort = the 0–100 strain. (#516)
+                            restPct = today?.let { RestScorer.restFromDaily(it)?.roundToInt() },
+                            effortPct = today?.strain?.roundToInt(),
                             heartRate = state.heartRate,
                             batteryPct = state.batteryPct?.roundToInt(),
                             connected = state.connected,

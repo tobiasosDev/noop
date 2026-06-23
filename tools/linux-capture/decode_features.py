@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS feat_rr (
 );
 CREATE TABLE IF NOT EXISTS feat_ppg (
     device_id INTEGER NOT NULL, unix INTEGER NOT NULL, sample_idx INTEGER NOT NULL,
-    channel INTEGER NOT NULL, value INTEGER NOT NULL,
+    channel INTEGER NOT NULL, value INTEGER NOT NULL, burst_index INTEGER,
     PRIMARY KEY (device_id, unix, sample_idx, channel)
 );
 CREATE TABLE IF NOT EXISTS feat_event (
@@ -46,6 +46,12 @@ def apply_schema(conn):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(feat_second)")}
     if "skin_temp_c" not in cols:
         conn.execute("ALTER TABLE feat_second ADD COLUMN skin_temp_c REAL")
+    # Idempotent migration for pre-existing DBs (PR#553): add feat_ppg.burst_index — the raw per-burst
+    # counter at v26 frame[21] (formerly mis-decoded as a 1..26 ppg_channel; a real capture read 65, so it
+    # is NOT a channel id). v26 PPG rows now store channel=0 and carry the raw counter here for analysis.
+    ppg_cols = {r[1] for r in conn.execute("PRAGMA table_info(feat_ppg)")}
+    if "burst_index" not in ppg_cols:
+        conn.execute("ALTER TABLE feat_ppg ADD COLUMN burst_index INTEGER")
     conn.commit()
 
 
@@ -107,9 +113,13 @@ def feature_to_rows(rec):
         }
         for i, v in enumerate(rr):
             out["rr"].append({"unix": unix, "idx": i, "rr_ms": v})
-        ch = p.get("ppg_channel", 0)
+        # v26 PPG (PR#553): frame[21] is a raw per-burst counter (`burst_index`), NOT a channel — a real
+        # capture read 65, outside any 26-channel sweep. So the channel column is forced to 0 and the raw
+        # counter is stored alongside (nullable; absent when the decoder didn't surface it).
+        burst = p.get("burst_index")
         for i, v in enumerate(p.get("ppg_waveform") or []):
-            out["ppg"].append({"unix": unix, "sample_idx": i, "channel": ch, "value": v})
+            out["ppg"].append({"unix": unix, "sample_idx": i, "channel": 0,
+                               "value": v, "burst_index": burst})
         return out
 
     if itype == _EVENT_TYPE:
@@ -150,9 +160,11 @@ def apply_rows(conn, device_id, mapped):
             cur.execute("INSERT OR IGNORE INTO feat_rr (device_id, unix, idx, rr_ms) VALUES (?,?,?,?)",
                         (device_id, r["unix"], r["idx"], r["rr_ms"]))
         for r in m.get("ppg", []):
-            cur.execute("INSERT OR IGNORE INTO feat_ppg (device_id, unix, sample_idx, channel, value) "
-                        "VALUES (?,?,?,?,?)",
-                        (device_id, r["unix"], r["sample_idx"], r["channel"], r["value"]))
+            cur.execute("INSERT OR IGNORE INTO feat_ppg "
+                        "(device_id, unix, sample_idx, channel, value, burst_index) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (device_id, r["unix"], r["sample_idx"], r["channel"], r["value"],
+                         r.get("burst_index")))
         e = m.get("event")
         if e:
             cur.execute("INSERT OR IGNORE INTO feat_event (device_id, unix, kind, event_num, payload_json) "

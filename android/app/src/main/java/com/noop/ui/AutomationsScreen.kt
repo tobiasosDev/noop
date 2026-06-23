@@ -19,7 +19,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
@@ -37,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +51,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.analytics.HrZones
+import com.noop.analytics.NapCandidate
 import com.noop.ble.PuffinExperiment
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -71,6 +77,7 @@ fun AutomationsScreen(viewModel: AppViewModel) {
     val smartAlarm by viewModel.smartAlarmEnabled.collectAsStateWithLifecycle()
     val alarmMinutes by viewModel.smartAlarmMinutes.collectAsStateWithLifecycle()
     val alarmWeekdays by viewModel.smartAlarmWeekdays.collectAsStateWithLifecycle()
+    val alarmDayOverrides by viewModel.smartAlarmDayOverrides.collectAsStateWithLifecycle()
     // Illness watch is real + persisted (opt-OUT — the watch has always run on Android).
     val illnessWatch by viewModel.illnessWatchEnabled.collectAsStateWithLifecycle()
     // Battery alerts are real + persisted (opt-OUT, default ON; #368, thanks @ujix).
@@ -223,6 +230,15 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                     onToggle = { dow -> viewModel.setSmartAlarmWeekdays(toggledSmartAlarmWeekday(dow, alarmWeekdays)) },
                 )
                 RowDivider()
+                // Per-weekday wake-time OVERRIDES (#554 reimpl): set a different time for any day the alarm
+                // fires on; a day with no override uses the "Wake at" time above.
+                AlarmDayOverridePicker(
+                    defaultMinutes = alarmMinutes,
+                    enabledDays = alarmWeekdays,
+                    overrides = alarmDayOverrides,
+                    onSetOverride = { dow, minutes -> viewModel.setSmartAlarmDayOverride(dow, minutes) },
+                )
+                RowDivider()
                 // A WHOOP 5/MG only arms when Experimental probes are on; without it the time is saved
                 // but the strap is NEVER armed, so call that out in amber rather than promise a wake (#111).
                 if (live.whoop5Detected && !experimentalOn) {
@@ -348,6 +364,11 @@ fun AutomationsScreen(viewModel: AppViewModel) {
             }
         }
 
+        // On-device short-nap detection (PR #569 reimpl) — opt-in, default OFF. Detected on the offload
+        // hook; a confident nap is offered as a review card you accept (it becomes a nap session) or
+        // dismiss. NEVER auto-written.
+        NapDetectionSection(viewModel)
+
         // Illness early-warning (real + persisted; opt-OUT — the watch has always run on Android).
         SettingsSection(
             icon = Icons.Filled.MonitorHeart,
@@ -377,6 +398,152 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 onChange = { viewModel.setBatteryAlertsEnabled(it) },
             )
         }
+    }
+}
+
+// MARK: - On-device nap detection (PR #569 reimpl under NoopApp)
+
+/**
+ * The nap-detection automation: a toggle plus the REVIEW queue. Detection runs on the offload hook
+ * (WhoopBleClient.maybeDetectNaps → the pure NapDetector); a confident NAP is queued in NapStore and shown
+ * here as a card the user ACCEPTS (→ a manual nap session, the #508 path) or DISMISSES. The engine never
+ * auto-writes a session, and an INCONCLUSIVE window queues nothing — honest by construction.
+ */
+@Composable
+private fun NapDetectionSection(viewModel: AppViewModel) {
+    val scope = rememberCoroutineScope()
+    val enabled by viewModel.napDetectionEnabled.collectAsStateWithLifecycle()
+    // The queue isn't a reactive flow (it's written from the BLE layer); re-read it on each toggle/action.
+    var pending by remember { mutableStateOf(viewModel.pendingNaps()) }
+
+    SettingsSection(
+        icon = Icons.Filled.Bedtime,
+        title = "Nap detection",
+        blurb = "Spots a likely daytime nap from the strap's motion and heart rate on each history sync, " +
+            "then asks you to confirm it. Inferred and approximate — NOOP never adds a nap to your sleep " +
+            "without your OK.",
+        active = enabled,
+    ) {
+        ToggleRow(
+            label = "Detect short naps",
+            help = "When a sync shows a quiet, settled stretch in the day, NOOP offers it here for you to keep or skip.",
+            checked = enabled,
+            onChange = {
+                viewModel.setNapDetectionEnabled(it)
+                if (it) pending = viewModel.pendingNaps()
+            },
+        )
+        if (enabled) {
+            if (pending.isEmpty()) {
+                RowDivider()
+                Text(
+                    "No naps to review. Detected naps show up here after a history sync.",
+                    style = NoopType.footnote, color = Palette.textTertiary,
+                )
+            } else {
+                pending.forEach { nap ->
+                    RowDivider()
+                    NapReviewRow(
+                        nap = nap,
+                        onAccept = { scope.launch { pending = viewModel.acceptDetectedNap(nap) } },
+                        onDismiss = { pending = viewModel.dismissDetectedNap(nap) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One pending nap candidate: an honest "HH:mm–HH:mm · ~N min" line (+ mean HR when known) with Keep /
+ *  Skip controls. Keep persists it as a nap session; Skip forgets it (and won't re-queue the window). */
+@Composable
+private fun NapReviewRow(nap: NapCandidate, onAccept: () -> Unit, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(napWindowLabel(nap, ctx), style = NoopType.body, color = Palette.textPrimary)
+            Text(napDetailLabel(nap), style = NoopType.footnote, color = Palette.textTertiary)
+        }
+        Spacer(Modifier.width(8.dp))
+        NapActionButton(Icons.Filled.Check, "Keep this nap", Palette.statusPositive, onAccept)
+        Spacer(Modifier.width(8.dp))
+        NapActionButton(Icons.Filled.Close, "Skip this nap", Palette.textTertiary, onDismiss)
+    }
+}
+
+@Composable
+private fun NapActionButton(icon: ImageVector, contentDescription: String, tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Palette.surfaceInset)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** "HH:mm–HH:mm · ~N min", local time. Pure-ish (reads the device clock format only). */
+private fun napWindowLabel(nap: NapCandidate, ctx: android.content.Context): String {
+    val fmt = android.text.format.DateFormat.getTimeFormat(ctx)
+    val start = fmt.format(java.util.Date(nap.start * 1000L))
+    val end = fmt.format(java.util.Date(nap.end * 1000L))
+    val mins = nap.durationS / 60
+    return "$start – $end · ~$mins min"
+}
+
+private fun napDetailLabel(nap: NapCandidate): String =
+    if (nap.meanHr != null) "Quiet and settled, mean HR ~${nap.meanHr} bpm." else "Quiet and settled."
+
+// MARK: - Per-weekday wake-time overrides (PR #554 reimpl under NoopApp)
+
+/**
+ * Per-weekday wake-time OVERRIDES for the smart alarm (#554). For each day the alarm fires on, shows the
+ * effective wake time (the day's override, else the default) as a [TimeChip]; picking a time sets that
+ * day's override, and a "Reset" affordance clears it back to the default. Days the alarm doesn't fire on
+ * aren't shown (no point overriding a day it won't ring). Empty enabledDays = every day, so all seven show.
+ */
+@Composable
+private fun AlarmDayOverridePicker(
+    defaultMinutes: Int,
+    enabledDays: Set<Int>,
+    overrides: Map<Int, Int>,
+    onSetOverride: (Int, Int?) -> Unit,
+) {
+    val fireDays = SMART_ALARM_WEEKDAY_ORDER.filter { smartAlarmWeekdayIsSelected(it, enabledDays) }
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Per-day wake time", style = NoopType.caption, color = Palette.textTertiary)
+        fireDays.forEach { dow ->
+            val effective = overrides[dow] ?: defaultMinutes
+            val hasOverride = overrides.containsKey(dow)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(smartAlarmWeekdayName(dow), style = NoopType.body, color = Palette.textPrimary)
+                Spacer(Modifier.weight(1f))
+                if (hasOverride) {
+                    Text(
+                        "Reset",
+                        style = NoopType.caption,
+                        color = Palette.accent,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onSetOverride(dow, null) }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                TimeChip(
+                    minutes = effective,
+                    accessibilityLabel = "${smartAlarmWeekdayName(dow)} wake time",
+                    onPicked = { onSetOverride(dow, it) },
+                )
+            }
+        }
+        Text(
+            "Each day uses the time above unless you set a different one here.",
+            style = NoopType.footnote, color = Palette.textTertiary,
+        )
     }
 }
 

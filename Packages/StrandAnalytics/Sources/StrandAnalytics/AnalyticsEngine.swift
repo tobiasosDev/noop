@@ -84,6 +84,12 @@ public enum AnalyticsEngine {
         /// a personal skin-temp baseline from these nightly means and re-derives
         /// `DailyMetric.skinTempDevC` in a second pass. APPROXIMATE.
         public let nightlySkinTempC: Double?
+        /// Per-session per-epoch MOTION magnitudes (H8), keyed by each matched session's detected start
+        /// (`SleepSession.start`), on the same 30 s epoch grid as that session's `stagesJSON`. The caller
+        /// persists these via `WhoopStore.persistSessionMotion` after upserting the sleep-session rows. A
+        /// session with too little gravity to grid is OMITTED (no key), so the caller never persists a
+        /// fabricated zero series. (H8)
+        public let sessionMotionByStart: [Int: [Double]]
 
         public init(daily: DailyMetric, sleepSessions: [SleepSession],
                     cachedSleep: [CachedSleepSession], workouts: [ExerciseSession],
@@ -91,7 +97,8 @@ public enum AnalyticsEngine {
                     restScore: Double? = nil,
                     chargeConfidence: ScoreConfidence = .calibrating,
                     effortConfidence: ScoreConfidence = .calibrating,
-                    restConfidence: ScoreConfidence = .calibrating) {
+                    restConfidence: ScoreConfidence = .calibrating,
+                    sessionMotionByStart: [Int: [Double]] = [:]) {
             self.daily = daily; self.sleepSessions = sleepSessions
             self.cachedSleep = cachedSleep; self.workouts = workouts
             self.recovery = recovery; self.strain = strain
@@ -100,6 +107,7 @@ public enum AnalyticsEngine {
             self.chargeConfidence = chargeConfidence
             self.effortConfidence = effortConfidence
             self.restConfidence = restConfidence
+            self.sessionMotionByStart = sessionMotionByStart
         }
     }
 
@@ -220,11 +228,25 @@ public enum AnalyticsEngine {
                                   // computes this once per run from the trailing sleep history and threads
                                   // it down; pure-function callers/tests leave it nil and stay on the
                                   // cold-start band. (#547)
-                                  habitualMidsleepSec: Int? = nil) -> DayResult {
+                                  habitualMidsleepSec: Int? = nil,
+                                  // The strap's OWN persisted v18 BAND sleep_state per timestamp (Interpreter's
+                                  // `(sb>>4)&3`: 0 wake/1 still/2 asleep/3 up). Consumed ONLY to confirm a
+                                  // borderline H7 morning re-onset — a daytime block the strap itself scored
+                                  // "asleep" is kept even on a borderline HR dip (#531). Default empty keeps
+                                  // pure-function callers/tests free of it; IntelligenceEngine threads the
+                                  // night window's persisted band state. (#531 / H8 consume)
+                                  bandSleepState: [(ts: Int, state: Int)] = [],
+                                  // Opt-in experimental sleep staging (V2). When true, detected nights are
+                                  // staged by `SleepStagerV2` instead of V1. Default false keeps V1 the
+                                  // byte-identical default for pure-function callers/tests; IntelligenceEngine
+                                  // threads `PuffinExperiment.experimentalSleepV2Enabled`. (V7 / #690)
+                                  useSleepStagerV2: Bool = false) -> DayResult {
 
         // ── Sleep detection + staging ─────────────────────────────────────────
         let allSessions = SleepStager.detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity,
-                                                  tzOffsetSeconds: tzOffsetSeconds, wristOff: wristOff)
+                                                  tzOffsetSeconds: tzOffsetSeconds, wristOff: wristOff,
+                                                  bandSleepState: bandSleepState,
+                                                  useSleepStagerV2: useSleepStagerV2)
         // Sessions attributed to `day` = those whose end falls on `day` (LOCAL day, #277). `day` is
         // the caller's local-day key; attribute by the same offset so the bucket and the key agree.
         let matched = allSessions.filter { dayString($0.end, offsetSec: tzOffsetSeconds) == day }
@@ -240,28 +262,34 @@ public enum AnalyticsEngine {
         // selector so the analytics rollup and the Sleep tab resolve to the identical block.
         // Pick by the LEARNED-TIMING score, threading the user's learned habitual midsleep so a
         // late/shift sleeper's real night out-scores a daytime nap (nil = cold-start overnight band).
-        // No selector-side gap-bridge here: the SleepStager already bridges sparse-gravity gaps (up to
-        // ~90 min) when it forms `matched`, and a bridged pick would map to only ONE fragment's bounds —
-        // the AASM aggregate below reads the chosen session's stages, so re-merging across fragments is
-        // out of scope and would risk dropping the second fragment's sleep. Select over `matched` as-is. (#547)
-        let mainNight: SleepSession? = SleepStageTotals.mainNightIndex(
+        // BIPHASIC GAP-BRIDGE (#561): a main sleep briefly interrupted by a short wake (a fragment the
+        // detector left split because the wake gap was longer than its sparse-gravity bridge, or a true
+        // biphasic night) is scored as ONE night via `mainNightGroupIndices`: it bridges adjacent blocks
+        // whose gap is < `gapBridgeMaxMin`, scores the bridged span, and returns ALL the fragments in the
+        // winning group. The AASM aggregate below then SUMS the group's stages — in-bed is the SUM of each
+        // fragment's own in-bed span (the inter-fragment wake gap is NOT part of any fragment, so it is
+        // excluded and we do NOT invent WASO for it). A day with no bridgeable gap collapses to the single
+        // block the bare `mainNightIndex` would pick. Intelligence / the Ledger / the Sleep tab all read
+        // this SAME group (the seam below passes the same `gapBridgeMaxMin`), so #525 does not regress.
+        let mainGroupIdx = SleepStageTotals.mainNightGroupIndices(
             matched.map { SleepStageTotals.NightBlock(start: $0.start, end: $0.end) },
-            offsetSec: tzOffsetSeconds, habitualMidsleepSec: habitualMidsleepSec).map { matched[$0] }
+            offsetSec: tzOffsetSeconds, habitualMidsleepSec: habitualMidsleepSec) ?? []
+        let mainGroup: [SleepSession] = mainGroupIdx.map { matched[$0] }
 
-        // ── Daily sleep aggregates (AASM) over the MAIN night only (#525) ──────
+        // ── Daily sleep aggregates (AASM) SUMMED over the main-night GROUP (#525 / #561) ──
         var deepS = 0.0, remS = 0.0, lightS = 0.0, tstS = 0.0
         var inBedS = 0.0, effWeighted = 0.0
         var disturbances = 0
-        if let s = mainNight {
+        for s in mainGroup {
             let m = SleepStager.hypnogramMetrics(s)
             let inBed = Double(s.end - s.start)
-            inBedS = inBed
-            effWeighted = s.efficiency * inBed
-            deepS = m.deepMin * 60.0
-            remS = m.remMin * 60.0
-            lightS = m.lightMin * 60.0
-            tstS = m.tstS
-            disturbances = m.disturbances
+            inBedS += inBed                       // SUM each fragment's in-bed (excludes the wake gap)
+            effWeighted += s.efficiency * inBed   // in-bed-weighted efficiency across the group
+            deepS += m.deepMin * 60.0
+            remS += m.remMin * 60.0
+            lightS += m.lightMin * 60.0
+            tstS += m.tstS
+            disturbances += m.disturbances
         }
         let efficiency = inBedS > 0 ? effWeighted / inBedS : 0.0
 
@@ -449,11 +477,26 @@ public enum AnalyticsEngine {
                 stagesJSON: encodeStages(s.stages))
         }
 
+        // ── Per-session per-epoch motion (H8) ─────────────────────────────────
+        // The strap's per-epoch movement on the SAME 30 s grid as each session's stages, for the caller to
+        // persist beside `stagesJSON`. A session that can't grid (too little gravity) is omitted, so the
+        // caller persists NULL there rather than a fabricated zero series.
+        var sessionMotionByStart: [Int: [Double]] = [:]
+        for s in matched {
+            let motion = SleepStager.sessionEpochMotion(start: s.start, end: s.end, grav: gravity)
+            if !motion.isEmpty { sessionMotionByStart[s.start] = motion }
+        }
+
         // ── Per-score confidence tiers ────────────────────────────────────────
         let chargeConfidence = ScoreConfidence.charge(recovery: recovery, hrvBaseline: baselines.hrv)
         let effortConfidence = ScoreConfidence.effort(strain: strain, hrSampleCount: hr.count)
+        // Rest confidence with H9: downgrade a high-efficiency night whose deep+REM share is implausibly low
+        // to low-confidence (likely staging miss) — honest, no faked stages. tstS/efficiency are the
+        // main-group totals computed above; restorative = deepS + remS.
         let restConfidence = ScoreConfidence.rest(hasSession: !matched.isEmpty,
-                                                  hasStagedSleep: hasStagedSleep)
+                                                  hasStagedSleep: hasStagedSleep,
+                                                  asleepSeconds: tstS, restorativeSeconds: deepS + remS,
+                                                  efficiency: efficiency)
 
         return DayResult(daily: daily, sleepSessions: matched, cachedSleep: cachedSleep,
                          workouts: workouts, recovery: recovery, strain: strain,
@@ -461,7 +504,8 @@ public enum AnalyticsEngine {
                          restScore: restScore,
                          chargeConfidence: chargeConfidence,
                          effortConfidence: effortConfidence,
-                         restConfidence: restConfidence)
+                         restConfidence: restConfidence,
+                         sessionMotionByStart: sessionMotionByStart)
     }
 
     // MARK: - Rest composite (Charge/Effort/Rest)

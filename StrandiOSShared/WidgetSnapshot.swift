@@ -4,18 +4,29 @@ import Foundation
 /// via an App Group. The app writes it; the widget reads it. Keeping it tiny avoids any cross-process
 /// database access — the widget never opens SQLite.
 public struct WidgetSnapshot: Codable, Equatable {
-    public var recovery: Int?
+    public var recovery: Int?    // Charge (0–100)
     public var bpm: Int?
     public var batteryPct: Int?
     public var bonded: Bool
     public var updated: Date
+    // Richer glance fields (#446). All OPTIONAL with nil defaults so a snapshot written by an OLDER app
+    // build (which never encoded these keys) still decodes — Codable fills a missing optional with nil.
+    public var effort: Int?      // Effort / strain on NOOP's 0–100 axis
+    public var rest: Int?        // Rest (sleep_performance) score, 0–100
+    public var hrv: Int?         // HRV (ms), whole-number for the glance
+    public var restingHr: Int?   // Resting heart rate (bpm)
 
-    public init(recovery: Int?, bpm: Int?, batteryPct: Int?, bonded: Bool, updated: Date) {
+    public init(recovery: Int?, bpm: Int?, batteryPct: Int?, bonded: Bool, updated: Date,
+                effort: Int? = nil, rest: Int? = nil, hrv: Int? = nil, restingHr: Int? = nil) {
         self.recovery = recovery
         self.bpm = bpm
         self.batteryPct = batteryPct
         self.bonded = bonded
         self.updated = updated
+        self.effort = effort
+        self.rest = rest
+        self.hrv = hrv
+        self.restingHr = restingHr
     }
 
     /// App Group suite the app and widget both use. Injected from the `APP_GROUP_ID` build setting
@@ -42,7 +53,8 @@ public struct WidgetSnapshot: Codable, Equatable {
     }
 
     public static var placeholder: WidgetSnapshot {
-        WidgetSnapshot(recovery: 72, bpm: 58, batteryPct: 84, bonded: true, updated: Date())
+        WidgetSnapshot(recovery: 72, bpm: 58, batteryPct: 84, bonded: true, updated: Date(),
+                       effort: 8, rest: 81, hrv: 64, restingHr: 52)
     }
 
     /// Read the last-published snapshot from the shared suite, if any.

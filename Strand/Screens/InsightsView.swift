@@ -161,7 +161,7 @@ struct InsightsView: View {
             if !loaded {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                     // v5: a single row into the "What moves you" hub — the lag-aware ranked-effect feed
                     // + alcohol/caffeine dose-response. Reachable as its own destination too; this is the
                     // honest in-Insights entry point.
@@ -215,8 +215,12 @@ struct InsightsView: View {
                         .frame(width: 30, height: 30)
                         .background(StrandPalette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("What moves you").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        // WHOOP tappable-card title: UPPERCASE tracked white + trailing "›" chevron
+                        // glyph (mirrors "HEALTH MONITOR ›"). The descriptive line stays beneath.
+                        Text("WHAT MOVES YOU \u{203A}")
+                            .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
+                            .foregroundStyle(StrandPalette.textPrimary)
                         Text("Ranked, lag-aware: which of your habits actually move your Charge — plus your personal alcohol/caffeine dose-response.")
                             .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -224,7 +228,7 @@ struct InsightsView: View {
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
+                        .foregroundStyle(StrandPalette.accent)
                         .accessibilityHidden(true)
                 }
             }
@@ -431,14 +435,10 @@ struct InsightsView: View {
                     }
                 }
 
-                Button { startExperiment() } label: {
-                    Label("Start experiment", systemImage: "flask.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
-                .disabled(resolvedExperimentBehaviour == nil)
-                .help("Start a local experiment using today's date as day one.")
+                NoopButton("Start experiment", systemImage: "flask.fill",
+                           kind: .primary, fullWidth: true) { startExperiment() }
+                    .disabled(resolvedExperimentBehaviour == nil)
+                    .help("Start a local experiment using today's date as day one.")
             }
         }
     }
@@ -504,28 +504,24 @@ struct InsightsView: View {
                 .foregroundStyle(StrandPalette.textTertiary)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: NoopMetrics.rowSpacing) {
                 Button { Task { await markExperimentToday(true) } } label: {
                     Label("Mark done today", systemImage: "checkmark.circle.fill")
-                        .lineLimit(1)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
+                .buttonStyle(NoopButtonStyle(.primary))
                 .disabled(snapshot.loggedToday)
 
                 Button { Task { await markExperimentToday(false) } } label: {
                     Label("Skip today", systemImage: "xmark.circle")
-                        .lineLimit(1)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(NoopButtonStyle(.secondary))
 
                 Spacer(minLength: 8)
 
                 Button(role: .destructive) { endExperiment() } label: {
                     Label("End", systemImage: "stop.circle")
-                        .lineLimit(1)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(NoopButtonStyle(.destructive))
                 .help("End the experiment plan. Journal and metric history stay untouched.")
             }
         }
@@ -533,7 +529,7 @@ struct InsightsView: View {
 
     private func experimentField<Content: View>(_ title: LocalizedStringKey,
                                                 @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
             Text(title)
                 .font(StrandFont.overline)
                 .tracking(StrandFont.overlineTracking)
@@ -541,7 +537,7 @@ struct InsightsView: View {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
+        .padding(NoopMetrics.space3)
         .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
         .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(StrandPalette.hairline, lineWidth: 1))
@@ -551,7 +547,7 @@ struct InsightsView: View {
                                    value: String,
                                    caption: String,
                                    tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
             Text(label)
                 .font(StrandFont.caption)
                 .foregroundStyle(StrandPalette.textTertiary)
@@ -567,7 +563,7 @@ struct InsightsView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(NoopMetrics.space3)
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
         .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(StrandPalette.hairline, lineWidth: 1))
@@ -828,6 +824,7 @@ struct InsightsView: View {
             } else {
                 ForEach(ranked.indices, id: \.self) { i in
                     effectCard(ranked[i])
+                        .staggeredAppear(index: i)
                 }
             }
         }
@@ -956,8 +953,9 @@ struct InsightsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                ForEach(activityCosts, id: \.sport) { cost in
+                ForEach(Array(activityCosts.enumerated()), id: \.element.sport) { index, cost in
                     activityCostCard(cost)
+                        .staggeredAppear(index: index)
                 }
             }
         }

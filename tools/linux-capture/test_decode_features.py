@@ -27,6 +27,25 @@ class SchemaTests(unittest.TestCase):
         df.apply_schema(c)  # second apply must not raise
         self.assertTrue(True)
 
+    def test_feat_ppg_has_burst_index_column(self):
+        # PR#553: the raw per-burst counter column ships on a fresh feat_ppg.
+        c = _conn()
+        cols = {r[1] for r in c.execute("PRAGMA table_info(feat_ppg)")}
+        self.assertIn("burst_index", cols)
+
+    def test_burst_index_migration_is_idempotent_on_legacy_db(self):
+        # A pre-PR#553 DB has feat_ppg WITHOUT burst_index; apply_schema must ALTER it in once, and a
+        # second apply must be a no-op (never raise "duplicate column").
+        c = sqlite3.connect(":memory:")
+        c.executescript(
+            "CREATE TABLE feat_ppg (device_id INTEGER NOT NULL, unix INTEGER NOT NULL, "
+            "sample_idx INTEGER NOT NULL, channel INTEGER NOT NULL, value INTEGER NOT NULL, "
+            "PRIMARY KEY (device_id, unix, sample_idx, channel));")
+        df.apply_schema(c)
+        df.apply_schema(c)  # idempotent — must not raise
+        cols = {r[1] for r in c.execute("PRAGMA table_info(feat_ppg)")}
+        self.assertIn("burst_index", cols)
+
 
 class RrStatsTests(unittest.TestCase):
     def test_empty(self):
@@ -79,10 +98,28 @@ class FeatureToRowsTests(unittest.TestCase):
         self.assertIsNone(out["second"]["hr"])
 
     def test_v26_ppg_rows(self):
-        rec = _rec(47, {"ppg_waveform": [10, -20, 30], "ppg_channel": 65}, version=26)
+        # PR#553: v26 PPG rows force channel=0 and carry the raw per-burst counter (`burst_index`) — which
+        # is NOT a channel id (a real capture read 65, outside any 26-channel sweep).
+        rec = _rec(47, {"ppg_waveform": [10, -20, 30], "burst_index": 2}, version=26)
         out = df.feature_to_rows(rec)
         self.assertEqual(len(out["ppg"]), 3)
-        self.assertEqual(out["ppg"][0], {"unix": 1000, "sample_idx": 0, "channel": 65, "value": 10})
+        self.assertEqual(out["ppg"][0],
+                         {"unix": 1000, "sample_idx": 0, "channel": 0, "value": 10, "burst_index": 2})
+
+    def test_v26_ppg_channel_forced_zero_even_if_decoder_emits_one(self):
+        # Defensive: even a stray legacy `ppg_channel` in the parsed map must NOT leak into the channel
+        # column — v26 always pins channel=0 (the burst counter lives in its own column).
+        rec = _rec(47, {"ppg_waveform": [10], "ppg_channel": 65, "burst_index": 7}, version=26)
+        row = df.feature_to_rows(rec)["ppg"][0]
+        self.assertEqual(row["channel"], 0)
+        self.assertEqual(row["burst_index"], 7)
+
+    def test_v26_ppg_burst_index_absent_is_null(self):
+        # Honesty: when the decoder didn't surface a burst counter, the column is None, never a faked 0.
+        rec = _rec(47, {"ppg_waveform": [1, 2]}, version=26)
+        rows = df.feature_to_rows(rec)["ppg"]
+        self.assertEqual(len(rows), 2)
+        self.assertIsNone(rows[0]["burst_index"])
 
     def test_event_named(self):
         rec = _rec(48, {"event": "WRIST_ON", "event_timestamp": 1000, "extra": 7}, unix=None)
@@ -115,7 +152,7 @@ class ApplyRowsTests(unittest.TestCase):
         c = _conn()
         mapped = [
             df.feature_to_rows(_rec(47, {"heart_rate": 95, "rr_intervals": [600, 610]})),
-            df.feature_to_rows(_rec(47, {"ppg_waveform": [1, 2], "ppg_channel": 65}, unix=1001, version=26)),
+            df.feature_to_rows(_rec(47, {"ppg_waveform": [1, 2], "burst_index": 3}, unix=1001, version=26)),
             df.feature_to_rows(_rec(48, {"event": "WRIST_ON", "event_timestamp": 1002}, unix=None)),
         ]
         df.apply_rows(c, 1, mapped)
@@ -123,6 +160,9 @@ class ApplyRowsTests(unittest.TestCase):
         self.assertEqual(c.execute("SELECT COUNT(*) FROM feat_rr").fetchone()[0], 2)
         self.assertEqual(c.execute("SELECT COUNT(*) FROM feat_ppg").fetchone()[0], 2)
         self.assertEqual(c.execute("SELECT kind FROM feat_event").fetchone()[0], "WRIST_ON")
+        # PR#553: the raw per-burst counter persists on feat_ppg.burst_index (channel pinned to 0).
+        ch, bi = c.execute("SELECT channel, burst_index FROM feat_ppg WHERE unix=1001 LIMIT 1").fetchone()
+        self.assertEqual((ch, bi), (0, 3))
 
     def test_idempotent(self):
         c = _conn()

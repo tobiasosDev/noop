@@ -81,6 +81,90 @@ object WorkoutEditing {
         return rows.filter { !isDismissed(it, markers) }
     }
 
+    // MARK: - Cross-source dedup (#687)
+    //
+    // The SAME activity can land twice: once live, Bluetooth-tracked under the strap (rich — real HR
+    // trace, strain, zones, route), and once imported from Health Connect / Apple Health for the same
+    // window (thin — usually just duration + calories). They sit under different deviceIds/sources, so
+    // the workout list shows both as separate sessions. Collapse a pair that is clearly the same bout
+    // (overlapping time window + same sport) to a single richer entry. Mirrors macOS WorkoutSource
+    // dedupCrossSource bound-for-bound.
+
+    /**
+     * Normalised sport key for cross-source matching. Folds the WHOOP camelCase token and a
+     * human-readable import label to the same key ("TraditionalStrengthTraining" and
+     * "Traditional Strength Training" -> "traditionalstrengthtraining"), case- and space-insensitive.
+     */
+    fun sportKey(sport: String): String =
+        displaySport(sport).lowercase().filter { !it.isWhitespace() }
+
+    /**
+     * How many "rich" captured signals a row carries — the tiebreak for which duplicate to keep. A
+     * live-tracked strap session scores high (HR trace, peak, strain, zones, distance); a thin import
+     * scores low. Energy is the most commonly-present import field so it is weighted lowest.
+     */
+    fun richness(row: WorkoutRow): Int {
+        var n = 0
+        if (row.avgHr != null) n++
+        if (row.maxHr != null) n++
+        if (row.strain != null) n++
+        if (!row.zonesJSON.isNullOrEmpty()) n++
+        if ((row.distanceM ?: 0.0) > 0.0) n++
+        if ((row.energyKcal ?: 0.0) > 0.0) n++
+        return n
+    }
+
+    /**
+     * True when two rows are the SAME activity from different sources: same normalised sport AND their
+     * time windows overlap by more than half of the shorter session. The >50%-of-shorter test keeps two
+     * genuinely back-to-back same-sport sessions distinct while still catching the small start/end drift
+     * between a live capture and its import.
+     */
+    fun sameActivity(a: WorkoutRow, b: WorkoutRow): Boolean {
+        if (sportKey(a.sport) != sportKey(b.sport)) return false
+        val overlap = minOf(a.endTs, b.endTs) - maxOf(a.startTs, b.startTs)
+        if (overlap <= 0) return false
+        val shorter = maxOf(1L, minOf(a.endTs - a.startTs, b.endTs - b.startTs))
+        return overlap.toDouble() > 0.5 * shorter.toDouble()
+    }
+
+    /**
+     * Of two same-activity rows, the one to KEEP. Prefer the richer (more captured signals); on a tie
+     * prefer the strap-native source (live/manual/detected/whoop carry the real trace) over a thin
+     * import (Apple Health / Health Connect); final tie -> the longer session, then [a] (stable).
+     */
+    fun preferred(a: WorkoutRow, b: WorkoutRow): WorkoutRow {
+        val ra = richness(a)
+        val rb = richness(b)
+        if (ra != rb) return if (ra > rb) a else b
+        val ia = classify(a.source) == WorkoutSource.APPLE
+        val ib = classify(b.source) == WorkoutSource.APPLE
+        if (ia != ib) return if (ia) b else a // keep the non-import on a richness tie
+        val da = a.endTs - a.startTs
+        val db = b.endTs - b.startTs
+        if (da != db) return if (da > db) a else b
+        return a
+    }
+
+    /**
+     * Collapse cross-source duplicates of the same activity, keeping the richer row of each pair.
+     * Order-stable: walks the input once, and a row that duplicates one already kept is dropped (with
+     * the kept row swapped for the richer of the two). Single-source lists pass through unchanged.
+     */
+    fun dedupCrossSource(rows: List<WorkoutRow>): List<WorkoutRow> {
+        val kept = ArrayList<WorkoutRow>(rows.size)
+        outer@ for (row in rows) {
+            for (i in kept.indices) {
+                if (sameActivity(kept[i], row)) {
+                    kept[i] = preferred(kept[i], row)
+                    continue@outer
+                }
+            }
+            kept.add(row)
+        }
+        return kept
+    }
+
     // MARK: - Building / preserving rows
 
     /**

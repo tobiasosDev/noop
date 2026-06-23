@@ -281,7 +281,7 @@ object AppleHealthImporter {
         if (!agg.markSeen(key)) return
 
         if (numeric == null) return
-        agg.addSample(type, numeric, unit, start, end, start.offsetMin)
+        agg.addSample(type, numeric, unit, start, end, start.offsetMin, source)
     }
 
     // MARK: Workout handling — mirrors HealthXMLDelegate.handleWorkout.
@@ -479,7 +479,7 @@ object AppleHealthImporter {
     )
 
     /** A read-only view of a finalized day, exposing the fields the tests assert on. */
-    internal class DailyAggView(val day: String, val avgHr: Double?, val maxHr: Double?)
+    internal class DailyAggView(val day: String, val avgHr: Double?, val maxHr: Double?, val steps: Double?)
 
     /**
      * Run the SAME sanitizer + tolerant pull-parse + per-day aggregation that production uses, over a
@@ -490,7 +490,7 @@ object AppleHealthImporter {
     internal fun parseStreamForTest(input: InputStream): ParseProbe {
         val agg = Aggregator()
         parseXml(input, agg)
-        val days = agg.finishDays().map { DailyAggView(it.day, it.avgHr, it.maxHr) }
+        val days = agg.finishDays().map { DailyAggView(it.day, it.avgHr, it.maxHr, it.steps) }
         return ParseProbe(
             days = days,
             workoutCount = agg.finishWorkouts(DEFAULT_DEVICE_ID).size,
@@ -686,7 +686,9 @@ private class Aggregator {
         val hr = Mean()
         var maxHr = Double.NEGATIVE_INFINITY
         var hasHr = false
-        var steps = 0.0; var hasSteps = false
+        // #589: per-SOURCE step sums — iPhone + Watch both count the same walk, so summing across
+        // sources double-counts (~2x). Take the MAX source per day at read-out (mirrors Apple Health).
+        val stepsBySource = mutableMapOf<String, Double>()
         var active = 0.0; var hasActive = false
         var basal = 0.0; var hasBasal = false
         val vo2 = Latest()
@@ -745,7 +747,7 @@ private class Aggregator {
         return civilFromDays(days)
     }
 
-    fun addSample(type: String, value: Double, unit: String?, start: HealthDate, end: HealthDate, offsetMin: Int) {
+    fun addSample(type: String, value: Double, unit: String?, start: HealthDate, end: HealthDate, offsetMin: Int, sourceName: String? = null) {
         sawAnyRecord = true
         val day = localDay(start.epoch, offsetMin)
         val a = acc(day)
@@ -763,7 +765,7 @@ private class Aggregator {
                 a.hr.add(value)
                 if (!a.hasHr || value > a.maxHr) { a.maxHr = value; a.hasHr = true }
             }
-            "StepCount" -> { a.steps += value; a.hasSteps = true }
+            "StepCount" -> { a.stepsBySource[sourceName ?: ""] = (a.stepsBySource[sourceName ?: ""] ?: 0.0) + value }
             "ActiveEnergyBurned" -> { a.active += value; a.hasActive = true }
             "BasalEnergyBurned" -> { a.basal += value; a.hasBasal = true }
             "VO2Max" -> a.vo2.consider(value, end.epoch)
@@ -821,7 +823,7 @@ private class Aggregator {
                 avgHr = a.hr.value(),
                 maxHr = if (a.hasHr) a.maxHr else null,
                 walkingHr = a.walking.value(),
-                steps = if (a.hasSteps) a.steps else null,
+                steps = a.stepsBySource.values.maxOrNull(),   // #589 max source, not cross-source sum
                 activeKcal = if (a.hasActive) a.active else null,
                 basalKcal = if (a.hasBasal) a.basal else null,
                 vo2max = a.vo2.value,

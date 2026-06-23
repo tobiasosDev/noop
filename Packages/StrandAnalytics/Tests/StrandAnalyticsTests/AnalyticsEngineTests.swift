@@ -460,6 +460,50 @@ final class AnalyticsEngineTests: XCTestCase {
         XCTAssertEqual(ScoreConfidence.rest(hasSession: true, hasStagedSleep: true), .solid)
     }
 
+    // H9: a high-efficiency night whose deep+REM share is implausibly low is flagged LOW-CONFIDENCE
+    // (downgraded solid → building) — an honest "staging may be off", no faked stages.
+    func testRestConfidenceH9DowngradesLowRestorativeHighEfficiencyNight() {
+        // 8 h asleep, 95% efficient, but only ~3% deep+REM (well below the 10% floor) → building.
+        let asleep = 8.0 * 3600.0
+        let restorative = asleep * 0.03
+        XCTAssertEqual(
+            ScoreConfidence.rest(hasSession: true, hasStagedSleep: true,
+                                 asleepSeconds: asleep, restorativeSeconds: restorative,
+                                 efficiency: 0.95),
+            .building, "high-efficiency night with near-zero deep+REM is low-confidence staging")
+    }
+
+    func testRestConfidenceH9KeepsSolidWhenRestorativeHealthy() {
+        // Same high-efficiency night but a healthy ~45% restorative share → stays solid.
+        let asleep = 8.0 * 3600.0
+        let restorative = asleep * 0.45
+        XCTAssertEqual(
+            ScoreConfidence.rest(hasSession: true, hasStagedSleep: true,
+                                 asleepSeconds: asleep, restorativeSeconds: restorative,
+                                 efficiency: 0.95),
+            .solid)
+    }
+
+    func testRestConfidenceH9DoesNotFlagLowEfficiencyNight() {
+        // A fragmented (low-efficiency) night legitimately carries little deep/REM — the floor must NOT
+        // false-positive there, so it stays whatever the base tier was (solid: it has staged sleep).
+        let asleep = 8.0 * 3600.0
+        let restorative = asleep * 0.03
+        XCTAssertEqual(
+            ScoreConfidence.rest(hasSession: true, hasStagedSleep: true,
+                                 asleepSeconds: asleep, restorativeSeconds: restorative,
+                                 efficiency: 0.60),
+            .solid, "low efficiency legitimately carries less deep/REM — the floor must not flag it")
+    }
+
+    func testRestConfidenceH9NeverUpgradesNonSolidBase() {
+        // No staged sleep → base is .building; H9 only DOWNGRADES, so it can't lift this to solid.
+        XCTAssertEqual(
+            ScoreConfidence.rest(hasSession: true, hasStagedSleep: false,
+                                 asleepSeconds: 8.0 * 3600.0, restorativeSeconds: 0, efficiency: 0.95),
+            .building)
+    }
+
     // MARK: - #525 day with an overnight + a nap reports CONSISTENT totals
     // #525's main-night-not-sum reconciliation is covered deterministically by the SleepStageTotals
     // suite (testOvernightPlusNapReportsConsistentTotalsNotTheSum with explicit stage JSON, plus the

@@ -162,19 +162,14 @@ struct HighlightDot: View {
     var diameter: CGFloat = 9
 
     var body: some View {
+        // Design Reset (WHOOP): a crisp solid dot with a clean surface ring, no blurred bloom halo.
         ZStack {
             Circle()
-                .fill(color)
-                .frame(width: diameter * 1.8, height: diameter * 1.8)
-                .blur(radius: diameter * 0.6)
-                .opacity(0.7)
-                .additiveBloom()
-            Circle()
                 .fill(StrandPalette.surfaceBase)
-                .frame(width: diameter, height: diameter)
+                .frame(width: diameter + 3, height: diameter + 3)
             Circle()
                 .fill(color)
-                .frame(width: diameter - 3, height: diameter - 3)
+                .frame(width: diameter, height: diameter)
         }
         .allowsHitTesting(false)
     }
@@ -182,8 +177,8 @@ struct HighlightDot: View {
 
 // MARK: - "Now" end-cap
 
-/// The glowing "now" marker pinned to a trend line's latest point: a soft tinted halo, a brighter
-/// mid-ring, and a white core — the Bevel idiom. Positioned by `TrendChart` inside its own plot
+/// The crisp "now" marker pinned to a trend line's latest point: a soft tinted outer ring, a brighter
+/// mid-ring, and a white core — flat, no bloom (WHOOP). Positioned by `TrendChart` inside its own plot
 /// coordinate space so it sits exactly on the curve (#458).
 struct NowCapDot: View {
     var color: Color

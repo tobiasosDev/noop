@@ -355,7 +355,28 @@ extension WhoopStore {
                           on: "labMarker", columns: ["deviceId", "category"])
         }
 
-        // HEAL (fork-compat, registered AFTER upstream's v17-lab-book): re-add sleepSession.userEdited if
+        // v18 (H8 + H2-persist): per-SLEEP-SESSION analytics the stager/interpreter already compute then
+        // discard — banked alongside the existing `stagesJSON` on the same row (deviceId, startTs).
+        //   • `motionJSON`     — a compact JSON array of per-epoch motion magnitudes (the SleepStager's
+        //                        per-epoch restlessness signal), one entry per stage epoch, SAME 30 s grid
+        //                        as `stagesJSON`. Persisting it lets restlessness/wake-fragmentation read a
+        //                        real per-epoch series instead of recomputing the whole stager.
+        //   • `sleepStateJSON` — a compact JSON array of the decoded v18 band state per epoch (the
+        //                        Interpreter's `(sb>>4)&3`), so the strap's own banked sleep/wake band is
+        //                        durable rather than dropped after decode (H2 persist half).
+        // Both nullable TEXT: every existing row reads back null (no per-epoch series yet), old readers that
+        // don't SELECT them keep working, and a session with no raw/banked epoch data simply stores null —
+        // an ABSENT signal stays absent, never a fabricated zero series. Additive ALTERs only (no data
+        // touched), so already-offloaded raw streams survive (the strap trims acked history and won't
+        // re-send it). Twin of Android's MIGRATION_11_12.
+        migrator.registerMigration("v18-sleep-motion-state") { db in
+            try db.alter(table: "sleepSession") { t in
+                t.add(column: "motionJSON", .text)
+                t.add(column: "sleepStateJSON", .text)
+            }
+        }
+
+        // HEAL (fork-compat, registered AFTER all upstream migrations): re-add sleepSession.userEdited if
         // it is missing. On databases first provisioned by the tecminds fork, the historical "v13"
         // identifier was consumed by a DIFFERENT
         // migration body (the fork numbered ppgHrSample as v13), so GRDB recorded "v13" as applied and

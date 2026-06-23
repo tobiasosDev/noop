@@ -162,7 +162,10 @@ private fun MoversSection(
                 )
             }
         } else {
-            ranked.forEach { MoverCard(it, outcome) }
+            // Fade + rise the ranked mover cards in sequence (mirrors iOS .staggeredAppear(index:)).
+            ranked.forEachIndexed { i, r ->
+                Box(modifier = Modifier.staggeredAppear(i)) { MoverCard(r, outcome) }
+            }
         }
     }
 }
@@ -267,7 +270,10 @@ private fun DoseSection(cards: List<DoseCardData>) {
                 )
             }
         } else {
-            cards.forEach { DoseResponseCard(it) }
+            // Fade + rise the dose-response cards in sequence (mirrors iOS .staggeredAppear(index:)).
+            cards.forEachIndexed { i, card ->
+                Box(modifier = Modifier.staggeredAppear(i)) { DoseResponseCard(card) }
+            }
         }
     }
 }

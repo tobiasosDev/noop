@@ -18,6 +18,69 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "7.0.1",
+          "buildVersion": "148",
+          "date": "2026-06-23",
+          "localizedDescription": "NOOP 7.0.1. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v7.0.1/NOOP-v7.0.1.ipa",
+          "size": 11581248,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "7.0.0",
+          "buildVersion": "147",
+          "date": "2026-06-23",
+          "localizedDescription": "NOOP 7.0.0. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v7.0.0/NOOP-v7.0.0.ipa",
+          "size": 11574842,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "6.2.2",
+          "buildVersion": "146",
+          "date": "2026-06-22",
+          "localizedDescription": "NOOP 6.2.2. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.2.2/NOOP-v6.2.2.ipa",
+          "size": 9986580,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "6.2.1",
+          "buildVersion": "145",
+          "date": "2026-06-22",
+          "localizedDescription": "NOOP 6.2.1. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.2.1/NOOP-v6.2.1.ipa",
+          "size": 9950145,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "6.2.0",
+          "buildVersion": "144",
+          "date": "2026-06-22",
+          "localizedDescription": "NOOP 6.2.0. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.2.0/NOOP-v6.2.0.ipa",
+          "size": 9948830,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "6.1.1",
+          "buildVersion": "143",
+          "date": "2026-06-22",
+          "localizedDescription": "NOOP 6.1.1. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.1.1/NOOP-v6.1.1.ipa",
+          "size": 9791045,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "6.1.0",
+          "buildVersion": "142",
+          "date": "2026-06-21",
+          "localizedDescription": "NOOP 6.1.0. See the release notes for what changed.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.1.0/NOOP-v6.1.0.ipa",
+          "size": 9792122,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "6.0.3",
           "buildVersion": "141",
           "date": "2026-06-21",
@@ -883,12 +946,12 @@
           "NSHealthUpdateUsageDescription": "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
         }
       },
-      "version": "6.0.3",
-      "buildVersion": "141",
-      "versionDate": "2026-06-21",
-      "versionDescription": "NOOP 6.0.3. See the release notes for what changed.",
-      "downloadURL": "https://github.com/NoopApp/noop/releases/download/v6.0.3/NOOP-v6.0.3.ipa",
-      "size": 9735362,
+      "version": "7.0.1",
+      "buildVersion": "148",
+      "versionDate": "2026-06-23",
+      "versionDescription": "NOOP 7.0.1. See the release notes for what changed.",
+      "downloadURL": "https://github.com/NoopApp/noop/releases/download/v7.0.1/NOOP-v7.0.1.ipa",
+      "size": 11581248,
       "minOSVersion": "17.0"
     }
   ],

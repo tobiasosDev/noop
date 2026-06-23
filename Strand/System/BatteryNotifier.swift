@@ -21,13 +21,20 @@ enum BatteryNotifier {
 
         /// `charging == nil` means unknown — the low alert still fires (only a confirmed `true`
         /// suppresses it). Returns the fire decisions plus the next persisted flag state.
+        ///
+        /// `clearFull` (#514): the strap was showing a "fully charged" notification and has now
+        /// dropped below 100% — the standing note is stale, so cancel it. It's exactly the full
+        /// re-arm transition (previouslyFullAlerted && pct < fullThreshold), surfaced so the
+        /// notifier can pull the delivered + pending full-charge notification by its id.
         static func evaluate(pct: Int,
                              charging: Bool?,
                              lowAlerted: Bool,
                              fullAlerted: Bool)
-            -> (fireLow: Bool, fireFull: Bool, newLowAlerted: Bool, newFullAlerted: Bool) {
+            -> (fireLow: Bool, fireFull: Bool, clearFull: Bool, newLowAlerted: Bool, newFullAlerted: Bool) {
             var low = lowAlerted
             var full = fullAlerted
+            // The stale 100%-full note must be cleared the moment we re-arm below the full line.
+            let clearFull = fullAlerted && pct < fullThreshold
             // Re-arm (hysteresis) so jitter near a threshold can't re-fire.
             if charging == true || pct >= lowRearmAbove { low = false }
             if pct < fullThreshold { full = false }
@@ -36,7 +43,7 @@ enum BatteryNotifier {
             let fireFull = !full && pct >= fullThreshold
             if fireLow { low = true }
             if fireFull { full = true }
-            return (fireLow, fireFull, low, full)
+            return (fireLow, fireFull, clearFull, low, full)
         }
     }
 
@@ -72,6 +79,13 @@ enum BatteryNotifier {
             post(identifier: "battery-full",
                  title: "Strap fully charged",
                  body: "Your WHOOP is at 100%.")
+        }
+        // #514: the strap has dropped below 100% — pull the stale "fully charged" note (delivered
+        // banner + any still-pending request) so it can't linger after the cell discharges.
+        if result.clearFull {
+            let center = UNUserNotificationCenter.current()
+            center.removeDeliveredNotifications(withIdentifiers: ["battery-full"])
+            center.removePendingNotificationRequests(withIdentifiers: ["battery-full"])
         }
     }
 

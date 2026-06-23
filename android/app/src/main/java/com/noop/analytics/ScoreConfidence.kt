@@ -82,5 +82,47 @@ enum class ScoreConfidence(val raw: String) {
             if (!hasSession) return CALIBRATING
             return if (hasStagedSleep) SOLID else BUILDING
         }
+
+        // ── H9 stage low-confidence (restorative-share floor on a high-efficiency night) ──────────────
+
+        /**
+         * Restorative (deep+REM) share of asleep time below which staging is treated as LOW-CONFIDENCE on
+         * an otherwise high-efficiency night. A genuine well-structured adult night sits ~40–50% deep+REM;
+         * a near-zero restorative share on a night that ALSO scored high efficiency is far more likely a
+         * staging miss (the EEG-free classifier's weakest link) than a real night with no deep or REM — so
+         * we flag the LOW CONFIDENCE rather than fake stages or tank Rest. Mirrors Swift
+         * `restorativeLowConfidenceShare`. (#H9)
+         */
+        const val restorativeLowConfidenceShare: Double = 0.10
+
+        /** Efficiency above which the restorative-share floor applies. A low-efficiency (fragmented) night
+         *  legitimately carries less deep/REM, so the floor only flags the suspicious high-efficiency case.
+         *  Mirrors Swift `highEfficiencyThreshold`. (#H9) */
+        const val highEfficiencyThreshold: Double = 0.85
+
+        /**
+         * Rest confidence WITH the H9 stage-quality check. Starts from [forRest], then DOWNGRADES a [SOLID]
+         * tier to [BUILDING] (low-confidence) when the night is high-efficiency yet its restorative
+         * (deep+REM) share is below [restorativeLowConfidenceShare] — a likely staging miss, surfaced
+         * honestly without inventing stages or distorting the Rest score. [CALIBRATING]/[BUILDING] from the
+         * base call are returned unchanged. Engine output only; the UI surfaces the tier later. Mirrors Swift
+         * `rest(hasSession:hasStagedSleep:asleepSeconds:restorativeSeconds:efficiency:)`. (#H9)
+         */
+        fun forRest(
+            hasSession: Boolean,
+            hasStagedSleep: Boolean,
+            asleepSeconds: Double,
+            restorativeSeconds: Double,
+            efficiency: Double,
+        ): ScoreConfidence {
+            val base = forRest(hasSession, hasStagedSleep)
+            if (base != SOLID || asleepSeconds <= 0.0) return base
+            val restorativeShare = restorativeSeconds / asleepSeconds
+            return if (efficiency >= highEfficiencyThreshold && restorativeShare < restorativeLowConfidenceShare) {
+                BUILDING   // high-efficiency night with near-zero deep+REM → low-confidence staging
+            } else {
+                base
+            }
+        }
     }
 }

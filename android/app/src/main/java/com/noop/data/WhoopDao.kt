@@ -114,6 +114,37 @@ interface WhoopDao : DeviceRegistryDao {
     )
     suspend fun updateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int
 
+    /**
+     * v18 (H8): write the per-epoch motion magnitudes (compact JSON array) for one session, banked beside
+     * `stagesJSON` on the same row. Keyed by the IMMUTABLE detected key (deviceId, startTs). `null` clears
+     * the column (no series). Port of iOS WhoopStore.persistSessionMotion (the repository encodes the array).
+     * Returns rows changed (0 when no such session). Targeted UPDATE so the @Upsert recompute/import path —
+     * which never names this column — preserves it. */
+    @Query(
+        "UPDATE sleepSession SET motionJSON = :json WHERE deviceId = :deviceId AND startTs = :sessionStart"
+    )
+    suspend fun updateSessionMotion(deviceId: String, sessionStart: Long, json: String?): Int
+
+    /** v18 (H8): read the per-epoch motion JSON for one session, or null when unset / no such session.
+     *  The repository decodes it to `List<Double>?` (absent stays absent). */
+    @Query("SELECT motionJSON FROM sleepSession WHERE deviceId = :deviceId AND startTs = :sessionStart")
+    suspend fun sessionMotionJson(deviceId: String, sessionStart: Long): String?
+
+    /**
+     * v18 (H2 persist half): write the decoded v18 band sleep_state per epoch (compact JSON int array) for
+     * one session. Keyed by (deviceId, startTs). `null` clears the column. Port of iOS
+     * WhoopStore.persistSessionSleepState. Returns rows changed. Targeted UPDATE so the @Upsert path
+     * preserves it. */
+    @Query(
+        "UPDATE sleepSession SET sleepStateJSON = :json WHERE deviceId = :deviceId AND startTs = :sessionStart"
+    )
+    suspend fun updateSessionSleepState(deviceId: String, sessionStart: Long, json: String?): Int
+
+    /** v18 (H2): read the decoded v18 band sleep_state JSON for one session, or null when unset.
+     *  The repository decodes it to `List<Int>?`. */
+    @Query("SELECT sleepStateJSON FROM sleepSession WHERE deviceId = :deviceId AND startTs = :sessionStart")
+    suspend fun sessionSleepStateJson(deviceId: String, sessionStart: Long): String?
+
     @Upsert
     suspend fun upsertMetricSeries(rows: List<MetricSeriesRow>)
 
@@ -272,6 +303,16 @@ interface WhoopDao : DeviceRegistryDao {
             "ORDER BY startTs ASC LIMIT :limit"
     )
     suspend fun sleepSessions(deviceId: String, from: Long, to: Long, limit: Int): List<SleepSession>
+
+    /** Hand-edited sessions for a device (userEdited = 1), oldest first. Backs the H5 edit-merge (#509):
+     *  the repository maps each to its LOCAL wake-day so [WhoopRepository.mergeDaily] lets the computed
+     *  sleep fields win on those days over a re-imported night. */
+    @Query("SELECT * FROM sleepSession WHERE deviceId = :deviceId AND userEdited = 1 ORDER BY startTs ASC")
+    suspend fun editedSleepSessions(deviceId: String): List<SleepSession>
+
+    /** Reactive variant of [editedSleepSessions] for the merged daily Flow. */
+    @Query("SELECT * FROM sleepSession WHERE deviceId = :deviceId AND userEdited = 1 ORDER BY startTs ASC")
+    fun editedSleepSessionsFlow(deviceId: String): Flow<List<SleepSession>>
 
     // MARK: - Generic metric series (Swift metricSeries, v9)
 

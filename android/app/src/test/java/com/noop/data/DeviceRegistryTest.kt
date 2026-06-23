@@ -71,26 +71,29 @@ class DeviceRegistryTest {
         override suspend fun dayOwner(day: String): DayOwnershipRow? = owners[day]
 
         // deleteAllData: this fake models the registry tables only (pairedDevice/dayOwnership). The
-        // sample-table deletes are validated by the real Room-backed integration; here only the
-        // dayOwnership delete touches state the fake holds. The rest are no-op stubs so the interface
-        // is satisfied without modelling every sample table on the JVM.
-        override suspend fun deleteHrFor(deviceId: String) {}
-        override suspend fun deleteRrFor(deviceId: String) {}
-        override suspend fun deleteSpo2For(deviceId: String) {}
-        override suspend fun deleteSkinTempFor(deviceId: String) {}
-        override suspend fun deleteRespFor(deviceId: String) {}
-        override suspend fun deleteGravityFor(deviceId: String) {}
-        override suspend fun deleteStepsFor(deviceId: String) {}
-        override suspend fun deletePpgHrFor(deviceId: String) {}
-        override suspend fun deleteEventsFor(deviceId: String) {}
-        override suspend fun deleteBatteryFor(deviceId: String) {}
-        override suspend fun deleteDailyMetricsFor(deviceId: String) {}
-        override suspend fun deleteSleepSessionsFor(deviceId: String) {}
-        override suspend fun deleteJournalFor(deviceId: String) {}
-        override suspend fun deleteWorkoutsFor(deviceId: String) {}
-        override suspend fun deleteAppleDailyFor(deviceId: String) {}
-        override suspend fun deleteMetricSeriesFor(deviceId: String) {}
+        // sample-table deletes are validated by the real Room-backed integration; here each delete just
+        // RECORDS the table name + deviceId it was asked to clear (into [deletedTables]) so a test can
+        // assert the fan-out reaches every device-scoped table for the right deviceId, and the
+        // dayOwnership delete additionally mutates the state the fake holds.
+        val deletedTables = mutableListOf<Pair<String, String>>() // (table, deviceId), in call order
+        override suspend fun deleteHrFor(deviceId: String) { deletedTables += "hrSample" to deviceId }
+        override suspend fun deleteRrFor(deviceId: String) { deletedTables += "rrInterval" to deviceId }
+        override suspend fun deleteSpo2For(deviceId: String) { deletedTables += "spo2Sample" to deviceId }
+        override suspend fun deleteSkinTempFor(deviceId: String) { deletedTables += "skinTempSample" to deviceId }
+        override suspend fun deleteRespFor(deviceId: String) { deletedTables += "respSample" to deviceId }
+        override suspend fun deleteGravityFor(deviceId: String) { deletedTables += "gravitySample" to deviceId }
+        override suspend fun deleteStepsFor(deviceId: String) { deletedTables += "stepSample" to deviceId }
+        override suspend fun deletePpgHrFor(deviceId: String) { deletedTables += "ppgHrSample" to deviceId }
+        override suspend fun deleteEventsFor(deviceId: String) { deletedTables += "event" to deviceId }
+        override suspend fun deleteBatteryFor(deviceId: String) { deletedTables += "battery" to deviceId }
+        override suspend fun deleteDailyMetricsFor(deviceId: String) { deletedTables += "dailyMetric" to deviceId }
+        override suspend fun deleteSleepSessionsFor(deviceId: String) { deletedTables += "sleepSession" to deviceId }
+        override suspend fun deleteJournalFor(deviceId: String) { deletedTables += "journal" to deviceId }
+        override suspend fun deleteWorkoutsFor(deviceId: String) { deletedTables += "workout" to deviceId }
+        override suspend fun deleteAppleDailyFor(deviceId: String) { deletedTables += "appleDaily" to deviceId }
+        override suspend fun deleteMetricSeriesFor(deviceId: String) { deletedTables += "metricSeries" to deviceId }
         override suspend fun deleteDayOwnershipFor(deviceId: String) {
+            deletedTables += "dayOwnership" to deviceId
             owners.entries.removeIf { it.value.deviceId == deviceId }
         }
     }
@@ -178,6 +181,31 @@ class DeviceRegistryTest {
         assertEquals("my-whoop", reg.all().first().id)
         // dayOwnership rows for the device are cleared (the one table the JVM fake models).
         assertNull(reg.dayOwner("2026-06-15"))
+    }
+
+    @Test
+    fun deleteDeviceDataForAppleHealthFansOutToEveryDeviceScopedTableAndKeepsRegistry() = runBlocking {
+        // ah-delete (#616): "Remove Apple Health imported data" calls deleteDeviceData("apple-health").
+        // It must clear every deviceId-keyed table for THAT source (not my-whoop) and never touch the
+        // pairedDevice registry row. This mirrors the Swift store's deviceScopedTables fan-out.
+        val dao = seededDao()
+        val reg = registryWith(dao)
+
+        reg.deleteDeviceData("apple-health")
+
+        // The same 17 device-scoped tables the Swift store clears, each targeted with "apple-health".
+        val expectedTables = setOf(
+            "hrSample", "rrInterval", "spo2Sample", "skinTempSample", "respSample", "gravitySample",
+            "stepSample", "ppgHrSample", "event", "battery", "dailyMetric", "sleepSession",
+            "journal", "workout", "appleDaily", "metricSeries", "dayOwnership",
+        )
+        assertEquals(expectedTables, dao.deletedTables.map { it.first }.toSet())
+        // Every delete was scoped to the requested device, not the seeded my-whoop.
+        assertEquals(setOf("apple-health"), dao.deletedTables.map { it.second }.toSet())
+        // I4: the pairedDevice registry row is left intact (apple-health is a source, not a device row).
+        assertEquals(1, reg.all().size)
+        assertEquals("my-whoop", reg.all().first().id)
+        assertEquals("my-whoop", reg.activeDeviceId())
     }
 
     @Test

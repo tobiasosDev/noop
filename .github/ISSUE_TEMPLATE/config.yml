@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: 💬 NOOP Discord — questions, setup help & chat
+    url: https://discord.com/invite/nHK9FHczu
+    about: "Got a question, stuck on setup, or not sure something's a bug? Discord is the fastest place for a quick answer. (Confirmed bugs still go to a GitHub issue, with a strap log.)"
   - name: ❓ FAQ — start here (most questions are answered)
     url: https://github.com/NoopApp/noop/wiki/FAQ
     about: "Live HR, recovery/sleep, steps, importing data, privacy, updates — the common questions are answered here. Please check before filing."
@@ -12,6 +15,6 @@ contact_links:
   - name: 💡 Feature ideas & questions — Discussions
     url: https://github.com/NoopApp/noop/discussions
     about: "Got an idea, or not sure if something's a bug? Open a Discussion. Issues are for confirmed bugs with a strap log."
-  - name: 💬 Community, tips & release news — r/NOOPApp
+  - name: 👽 Community, tips & release news — r/NOOPApp
     url: https://www.reddit.com/r/NOOPApp/
     about: "Setup help, tips and release news on the subreddit. (Please still file confirmed bugs as a GitHub issue, with a strap log.)"

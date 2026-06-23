@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -646,7 +647,12 @@ private fun ConsoleHeader(live: LiveState, activeConnection: Boolean) {
             }
             // Stats row — battery / worn / last-sync. Worn is only trustworthy on a live link.
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-                HeaderStat("Battery", live.batteryPct?.let { "${it.toInt()}%" } ?: "—")
+                // Charging bolt next to the battery % when the strap reports it's charging (PR #568 reimpl).
+                HeaderStat(
+                    "Battery",
+                    live.batteryPct?.let { "${it.toInt()}%" } ?: "—",
+                    charging = live.charging == true,
+                )
                 HeaderStat("Worn", if (activeConnection) (if (live.worn) "Yes" else "No") else "—")
                 HeaderStat("Last sync", lastSyncLabel(live))
             }
@@ -655,13 +661,23 @@ private fun ConsoleHeader(live: LiveState, activeConnection: Boolean) {
 }
 
 @Composable
-private fun HeaderStat(title: String, value: String) {
+private fun HeaderStat(title: String, value: String, charging: Boolean = false) {
     Column(horizontalAlignment = Alignment.Start) {
         Text(title.uppercase(), style = NoopType.footnote, color = Palette.textTertiary)
-        Text(
-            value, style = NoopType.captionNumber, color = Palette.textSecondary,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                value, style = NoopType.captionNumber, color = Palette.textSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (charging) {
+                Icon(
+                    Icons.Filled.Bolt,
+                    contentDescription = "Charging",
+                    tint = Palette.statusPositive,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
     }
 }
 

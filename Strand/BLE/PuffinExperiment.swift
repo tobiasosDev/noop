@@ -38,4 +38,23 @@ enum PuffinExperiment {
     static let keepRealtimeForDataKey = "noopContinuousHrv"
 
     static var keepRealtimeForDataEnabled: Bool { UserDefaults.standard.bool(forKey: keepRealtimeForDataKey) }
+
+    /// Opt-in "Experimental sleep staging (V2)": re-stage each detected night with `SleepStagerV2` — a
+    /// transparent cardiorespiratory recipe (reimplemented from contributor PR #600) that recovers deep/REM
+    /// better than the shipped V1 stager on its author's n=1 validation. Pure analysis switch: it changes
+    /// ONLY which staging engine runs over an already-detected sleep window; sleep DETECTION, scoring and the
+    /// default V1 path are all untouched. Default OFF. Read at the staging call site (Repository) to pick
+    /// V1 vs V2. Mirrors the Android `PuffinExperiment.KEY_EXPERIMENTAL_SLEEP_V2`.
+    static let experimentalSleepV2Key = "noopExperimentalSleepV2"
+
+    static var experimentalSleepV2Enabled: Bool { UserDefaults.standard.bool(forKey: experimentalSleepV2Key) }
+
+    /// Opt-in "Auto-detect workouts": after a sync / on Today appear, scan the last day or two of HR for a
+    /// SUSTAINED-ELEVATED window (resting HR + 30 bpm held ≥ 12 min) that doesn't overlap a saved workout,
+    /// and surface ONE dismissible Today card offering to save it as a manual-style workout. Pure read +
+    /// suggestion: nothing is ever created without the user tapping Save, and turning this OFF stops all
+    /// detection and hides the card. Default OFF. Mirrors the Android `NoopPrefs.KEY_AUTO_DETECT_WORKOUTS`.
+    static let autoDetectWorkoutsKey = "noopAutoDetectWorkouts"
+
+    static var autoDetectWorkoutsEnabled: Bool { UserDefaults.standard.bool(forKey: autoDetectWorkoutsKey) }
 }

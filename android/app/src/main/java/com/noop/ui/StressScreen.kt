@@ -1,7 +1,5 @@
 package com.noop.ui
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -18,8 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Air
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -54,11 +51,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.analytics.DaytimeStress
 import com.noop.data.DailyMetric
 import java.util.Locale
-import kotlin.math.cos
 import kotlin.math.exp
-import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 // MARK: - Stress Monitor (ported from Strand/Screens/StressView.swift)
@@ -150,41 +144,17 @@ private fun androidx.compose.foundation.layout.ColumnScope.StressContent(
     daytime: DaytimeStress.Result?,
     onBreathe: () -> Unit,
 ) {
-    // 1 · HERO — the layered Bevel gauge in the teal Stress world over a scenic hero.
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Metrics.cardRadius)),
-    ) {
-        ScenicHeroBackground(modifier = Modifier.matchParentSize(), domain = DomainTheme.Stress)
-        NoopCard(tint = Palette.stressColor) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Overline("Stress monitor", modifier = Modifier.weight(1f))
-                    StatePill(model.band.title, tone = model.band.tone, showsDot = true)
-                }
-                StressSemicircleGauge(
-                    score = model.score,
-                    bandTitle = model.band.title,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    model.explanation,
-                    style = NoopType.subhead,
-                    color = Palette.textSecondary,
-                )
-            }
-        }
-    }
+    // 1 · HERO — the count-up PipBar + band + one plain-English line, all in one card
+    //     (the needle/semicircle gauge is gone, matching the iOS redesign: a big WHITE
+    //     CountUpText value with "of 3" + the band word beside it, over a band-tinted
+    //     PipBar on the 0…3 scale. Flat, crisp, no needle, no gauge, no glow, no scenic).
+    StressHeroCard(model, modifier = Modifier.staggeredAppear(0))
 
     // 2 · Today's markers — uniform fixed-height tiles, two-up.
-    Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+    Column(
+        modifier = Modifier.staggeredAppear(1),
+        verticalArrangement = Arrangement.spacedBy(Metrics.gap),
+    ) {
         SectionHeader("Today", overline = "Markers", trailing = "vs 30-day baseline")
         StressTiles(model)
     }
@@ -192,21 +162,100 @@ private fun androidx.compose.foundation.layout.ColumnScope.StressContent(
     // 3 · Today's intraday timeline — when in the day stress ran high, + a passive Breathe
     //     suggestion when the recent hours stay elevated.
     if (daytime != null && daytime.scored.isNotEmpty()) {
-        StressDaytimeSection(daytime, onBreathe)
+        StressDaytimeSection(daytime, onBreathe, modifier = Modifier.staggeredAppear(2))
     }
 
     // 4 · Trend over the chosen window.
-    StressTrendSection(model)
+    StressTrendSection(model, modifier = Modifier.staggeredAppear(3))
 
     // 5 · Transparency — how the number is built.
-    StressMethodologyCard(model)
+    StressMethodologyCard(model, modifier = Modifier.staggeredAppear(4))
+}
+
+// MARK: - 1 · Hero — the NOOP count-up PipBar (the needle/speedometer is gone)
+//
+// Aaron's call mirrored from iOS: "remove the needle, it's not needed" + "straight
+// horizontal bars that almost count up separated by pips". So the hero reads as one clean
+// WHOOP-style block — a big WHITE CountUpText value with "of 3" + the band word beside it,
+// over a PipBar on the 0…3 scale tinted by the live stress band (calm blue → steady green →
+// tense amber). The SYNTHESIS number stays textPrimary (white), never the band colour.
+
+@Composable
+private fun StressHeroCard(model: StressModel, modifier: Modifier = Modifier) {
+    val bandColor = StressRamp.color(model.score)
+    NoopCard(tint = Palette.stressColor, modifier = modifier) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Overline("Stress monitor", modifier = Modifier.weight(1f))
+                StatePill(model.band.title, tone = model.band.tone, showsDot = true)
+            }
+
+            // Big count-up value + "of 3", with the band word beside it (no needle).
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    CountUpText(
+                        value = model.score,
+                        format = { String.format(Locale.US, "%.1f", it) },
+                        style = NoopType.display(52f),
+                        color = Palette.textPrimary,
+                    )
+                    Text(
+                        "of 3",
+                        style = NoopType.number(15f, FontWeight.Medium),
+                        color = Palette.textTertiary,
+                        modifier = Modifier.padding(start = 6.dp, bottom = 8.dp),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    model.band.title,
+                    style = NoopType.overline,
+                    color = bandColor,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+
+            // The NOOP signature: a count-up PipBar on the 0…3 scale, band-tinted.
+            PipBar(
+                value = model.score.toFloat(),
+                range = 0f..3f,
+                segments = 21,
+                tint = bandColor,
+                height = 12.dp,
+                modifier = Modifier.semantics {
+                    contentDescription =
+                        "Stress ${String.format(Locale.US, "%.1f", model.score)} of 3, ${model.band.title}"
+                },
+            )
+
+            // One plain-English line, full width under the bar.
+            Text(
+                model.explanation,
+                style = NoopType.subhead,
+                color = Palette.textSecondary,
+            )
+        }
+    }
 }
 
 // MARK: - 3 · Daytime timeline (intraday, same 0–3 proxy)
 
 @Composable
-private fun StressDaytimeSection(day: DaytimeStress.Result, onBreathe: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+private fun StressDaytimeSection(
+    day: DaytimeStress.Result,
+    onBreathe: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Today's Timeline", overline = "Intraday", trailing = timelineTrailing(day))
 
         NoopCard(tint = Palette.stressColor) {
@@ -227,8 +276,8 @@ private fun StressDaytimeSection(day: DaytimeStress.Result, onBreathe: () -> Uni
                     }
                 }
 
-                // Autonomic-load LINE for the day, drawn in the same blue→gold→orange
-                // gradient as the gauge (README screen 9 "day autonomic-load line").
+                // Autonomic-load LINE for the day, drawn in the same blue→green→amber WHOOP
+                // ramp as the hero PipBar (README screen 9 "day autonomic-load line").
                 DaytimeStressLine(day.hours)
 
                 // Hour ruler under the line (first / midday / last covered hour).
@@ -255,8 +304,8 @@ private fun StressDaytimeSection(day: DaytimeStress.Result, onBreathe: () -> Uni
             }
         }
 
-        // Totals bar — how the scored hours split across Calm (blue) / Moderate (gold) /
-        // High (burnt-orange), mirroring the README screen-9 split.
+        // Totals bar — how the scored hours split across Calm (blue) / Moderate (green) /
+        // High (amber), mirroring the README screen-9 split.
         StressTotalsBar(day)
 
         // Sustained-high suggestion — only when the recent run stays in the HIGH band.
@@ -279,7 +328,8 @@ private fun DaytimeStressLine(hours: List<DaytimeStress.HourPoint>) {
     if (levels.size < 2) return
 
     var scrubFrac by remember { mutableStateOf<Float?>(null) }
-    val gradient = remember { Brush.horizontalGradient(*Palette.stressGradientStops.toTypedArray()) }
+    // Same blue→green→amber WHOOP ramp as the hero PipBar / totals bar (no gold).
+    val gradient = remember { Brush.horizontalGradient(*StressRamp.stops.toTypedArray()) }
 
     // Capture Compose colors at composition time — DrawScope lambdas run on the render thread.
     val hairline = Palette.hairline
@@ -429,7 +479,7 @@ private fun daytimeLineDescription(hours: List<DaytimeStress.HourPoint>): String
 // MARK: - Totals bar — Calm / Moderate / High split of the scored waking hours
 //
 // A single proportional bar that splits the day's SCORED hours into the three bands
-// (Calm 0–1 = blue, Moderate 1–2 = gold, High 2–3 = burnt-orange), each segment widthed
+// (Calm 0–1 = blue, Moderate 1–2 = green, High 2–3 = amber), each segment widthed
 // by its share of the scored hours, with a small legend reading "Calm 6h · Moderate 4h ·
 // High 3h". Flat segments, hairline-separated — README screen-9 totals bar.
 
@@ -495,9 +545,9 @@ private fun StressTotalsBar(day: DaytimeStress.Result) {
 }
 
 private enum class StressTotalsBand(val title: String, val color: Color) {
-    Calm("Calm", Palette.restColor),       // blue — low stress
-    Moderate("Moderate", Palette.gold),    // gold — balanced
-    High("High", Palette.statusCritical),  // burnt orange — high
+    Calm("Calm", StressRamp.CALM),         // blue — low stress
+    Moderate("Moderate", StressRamp.STEADY), // green — balanced
+    High("High", StressRamp.TENSE),        // amber — high
 }
 
 @Composable
@@ -549,13 +599,13 @@ private fun SustainedBreatheCard(day: DaytimeStress.Result, onBreathe: () -> Uni
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )
-            Button(
+            NoopButton(
+                text = "Start a Breathe session",
+                leadingIcon = Icons.Filled.Air,
+                kind = NoopButtonKind.Primary,
+                fullWidth = true,
                 onClick = onBreathe,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Palette.accent),
-            ) {
-                Text("Start a Breathe session", style = NoopType.headline, color = Palette.surfaceBase)
-            }
+            )
         }
     }
 }
@@ -664,11 +714,11 @@ private fun MarkerTile(
 // MARK: - 3 · Trend (range-controlled)
 
 @Composable
-private fun StressTrendSection(model: StressModel) {
+private fun StressTrendSection(model: StressModel, modifier: Modifier = Modifier) {
     var range by remember { mutableStateOf(StressRange.Month) }
     val points = remember(model, range) { model.windowedTrend(range) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Stress Trend", overline = "History", trailing = range.label)
         if (points.size >= 2) {
             val avg = points.average()
@@ -748,8 +798,8 @@ private fun androidx.compose.foundation.layout.RowScope.TrendFooterItem(label: S
 // MARK: - 4 · Methodology (transparency)
 
 @Composable
-private fun StressMethodologyCard(model: StressModel) {
-    NoopCard(tint = Palette.stressColor) {
+private fun StressMethodologyCard(model: StressModel, modifier: Modifier = Modifier) {
+    NoopCard(tint = Palette.stressColor, modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Overline("How this is computed")
             Text(
@@ -829,137 +879,6 @@ private fun androidx.compose.foundation.layout.ColumnScope.StressEmpty() {
     )
 }
 
-// MARK: - Stress semicircle gauge — the Titanium & Gold instrument (README screen 9)
-//
-// The 0–3 score reads as a 180° SEMICIRCLE gauge (track Palette.surfaceInset, value arc =
-// the 3-stop stress gradient calm-blue → gold → burnt-orange, round caps) with a NEEDLE
-// swung to the value and a centred read-out (the 0–3 number + "of 3" caption + the band
-// word in gold). Clean and flat — a thin Material arc and a slim needle, no bloom/halo —
-// matching the maintainer's "less glow" note. Mirrors the macOS Stress semicircle so the two
-// platforms read identically; the StressRamp stays the semantic scale on the data
-// surfaces (strip / day line / totals / tiles) below.
-
-@Composable
-private fun StressSemicircleGauge(
-    score: Double,
-    bandTitle: String,
-    modifier: Modifier = Modifier,
-) {
-    val fraction = (score / 3.0).coerceIn(0.0, 1.0)
-    val animated by animateFloatAsState(
-        targetValue = fraction.toFloat(),
-        animationSpec = tween(Motion.durationSlow, easing = Motion.drawIn),
-        label = "stressGaugeFill",
-    )
-    // A horizontal calm→tense sweep so the arc reads as a left-to-right scale (the needle's
-    // angle maps directly to its colour position), matching the day line's gradient.
-    val sweep = remember {
-        Brush.horizontalGradient(*Palette.stressGradientStops.toTypedArray())
-    }
-
-    Box(
-        modifier = modifier
-            .semantics {
-                contentDescription =
-                    "Stress ${String.format(Locale.US, "%.1f", score)} of 3, $bandTitle"
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .drawBehind {
-                    val stroke = 16.dp.toPx()
-                    // Centre the dial on the baseline of a 180° arc; radius leaves room for
-                    // the stroke plus a small needle-hub margin.
-                    val pad = stroke / 2f + 6.dp.toPx()
-                    val radius = ((min(size.width, size.height * 2f)) - stroke) / 2f - pad
-                    val center = Offset(size.width / 2f, size.height - 8.dp.toPx())
-                    val topLeft = Offset(center.x - radius, center.y - radius)
-                    val arcSize = Size(radius * 2f, radius * 2f)
-                    val cap = Stroke(width = stroke, cap = StrokeCap.Round)
-
-                    // Track — a faint inset half-ring behind the value arc.
-                    drawArc(
-                        color = Palette.surfaceInset,
-                        startAngle = 180f,
-                        sweepAngle = 180f,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = cap,
-                    )
-
-                    // Value arc — the 3-stop stress gradient, round caps, swept to the score.
-                    if (animated > 0.001f) {
-                        drawArc(
-                            brush = sweep,
-                            startAngle = 180f,
-                            sweepAngle = 180f * animated,
-                            useCenter = false,
-                            topLeft = topLeft,
-                            size = arcSize,
-                            style = cap,
-                        )
-                    }
-
-                    // Needle — a slim tapered pointer from the hub to the value angle, tinted
-                    // to the sampled gradient colour at that position. Flat: a thin triangle +
-                    // a small hub dot, no glow.
-                    val needleColor = Palette.sample(Palette.stressGradientStops, animated)
-                    val angle = Math.toRadians((180f + 180f * animated).toDouble())
-                    val tipR = radius - stroke * 0.15f
-                    val tip = Offset(
-                        center.x + (tipR * cos(angle)).toFloat(),
-                        center.y + (tipR * sin(angle)).toFloat(),
-                    )
-                    // Two base points either side of the hub, perpendicular to the needle, so
-                    // the pointer tapers from a small base to the tip.
-                    val perp = angle + Math.PI / 2.0
-                    val baseHalf = 5.dp.toPx()
-                    val b1 = Offset(
-                        center.x + (baseHalf * cos(perp)).toFloat(),
-                        center.y + (baseHalf * sin(perp)).toFloat(),
-                    )
-                    val b2 = Offset(
-                        center.x - (baseHalf * cos(perp)).toFloat(),
-                        center.y - (baseHalf * sin(perp)).toFloat(),
-                    )
-                    val needle = Path().apply {
-                        moveTo(b1.x, b1.y)
-                        lineTo(tip.x, tip.y)
-                        lineTo(b2.x, b2.y)
-                        close()
-                    }
-                    drawPath(needle, color = needleColor)
-                    // Hub — a flat textPrimary core dot with an inset ring, anchoring the needle.
-                    drawCircle(color = Palette.surfaceInset, radius = 9.dp.toPx(), center = center)
-                    drawCircle(color = needleColor, radius = 5.dp.toPx(), center = center)
-                },
-        )
-
-        // Centred read-out sits inside the dial: the 0–3 value, "of 3", and the band word.
-        Column(
-            modifier = Modifier.padding(bottom = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = String.format(Locale.US, "%.1f", score),
-                style = NoopType.display(46f).copy(fontWeight = FontWeight.Bold),
-                color = Palette.textPrimary,
-            )
-            Text("of 3", style = NoopType.footnote, color = Palette.textTertiary)
-            Text(
-                text = bandTitle,
-                style = NoopType.overline,
-                color = Palette.accent,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-    }
-}
-
 // MARK: - Stress band
 
 private enum class StressBand(val title: String, val tone: StrandTone) {
@@ -976,18 +895,21 @@ private enum class StressBand(val title: String, val tone: StrandTone) {
     }
 }
 
-// MARK: - Stress ramp (its own scale: calm blue → balanced gold → tense burnt-orange)
+// MARK: - Stress ramp (the WHOOP Stress sweep: blue → green → amber)
 //
-// Deliberately distinct from the recovery ramp — low stress reads cool/blue, rising
-// stress warms through gold toward burnt orange. The 3-stop blue→gold→orange ramp matches
-// the Apple StressRamp and the gauge's Palette.stressGradientStops. No green anywhere.
+// The Stress screen's one ramp, matching the iOS StressRamp exactly. WHOOP has NO gold:
+// calm reads as the link blue, a balanced day as positive green, and a high-stress day as
+// warning amber. The PipBar tint, the day autonomic-load line, the Calm/Moderate/High totals
+// bar and the trend all sample this SAME ramp, so the colour language is identical across the
+// screen. Never the gold or red→green recovery ramp.
 
 private object StressRamp {
-    val CALM = Palette.sleepLight       // blue — low
-    val STEADY = Palette.gold           // gold — balanced
-    val TENSE = Palette.statusCritical  // burnt orange — high
+    val CALM = Palette.accent           // calm WHOOP blue — low
+    val STEADY = Palette.statusPositive // balanced WHOOP green — baseline
+    val TENSE = Palette.statusWarning   // high WHOOP amber — high
 
-    private val stops: List<Pair<Float, Color>> = listOf(
+    /** The 3-stop ramp, evenly spaced (blue → green → amber). */
+    val stops: List<Pair<Float, Color>> = listOf(
         0.00f to CALM,
         0.50f to STEADY,
         1.00f to TENSE,

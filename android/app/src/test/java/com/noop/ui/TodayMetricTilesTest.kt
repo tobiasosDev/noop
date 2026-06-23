@@ -3,7 +3,9 @@ package com.noop.ui
 import com.noop.data.AppleDaily
 import com.noop.data.DailyMetric
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -142,20 +144,107 @@ class TodayMetricTilesTest {
         assertNull(buildingHint(KeyMetric.EFFORT, isToday = false))
     }
 
+    // MARK: buildingHint — H10 extension to Charge / Blood Oxygen / Steps cold-start captions
+
     @Test
-    fun buildingHint_otherMetrics_null_onlyEffortAndRestGetTheHint() {
-        // Charge owns its own "Calibrating N of 4" treatment; other tiles never show this hint.
-        assertNull(buildingHint(KeyMetric.CHARGE, isToday = true))
-        assertNull(buildingHint(KeyMetric.HRV, isToday = true))
+    fun buildingHint_charge_today_isTheWearItTonightCopy() {
+        // H10: a cold-start Charge (no score, not calibrating, nothing carried) reads "building", not blank.
+        assertEquals("Building, wear it tonight", buildingHint(KeyMetric.CHARGE, isToday = true))
+    }
+
+    @Test
+    fun buildingHint_bloodOxygen_today_buildsLikeTheOtherOvernightVitals() {
+        // H10: the overnight SpO₂ fills in from sleep, like Rest.
+        assertEquals("Building, wear it tonight", buildingHint(KeyMetric.BLOOD_OXYGEN, isToday = true))
+    }
+
+    @Test
+    fun buildingHint_steps_today_movesAsYouDo() {
+        // H10: on-device steps accrue across the day, like Effort.
+        assertEquals("Building, moves as you do", buildingHint(KeyMetric.STEPS, isToday = true))
+    }
+
+    @Test
+    fun buildingHint_h10Metrics_pastDay_isNull_soAnUnscoredOldDayStaysABareDash() {
+        // Honesty: a navigated past day with no value is missing data, not mid-calibration.
+        for (m in listOf(KeyMetric.CHARGE, KeyMetric.BLOOD_OXYGEN, KeyMetric.STEPS)) {
+            assertNull(buildingHint(m, isToday = false))
+        }
+    }
+
+    @Test
+    fun buildingHint_stillNull_forMetricsWithNoHonestColdStartCopy() {
+        // HRV / Resting HR / Respiratory / Weight / Calories carry their own treatment; no generic hint.
+        for (m in listOf(KeyMetric.HRV, KeyMetric.RESTING_HR, KeyMetric.RESPIRATORY, KeyMetric.WEIGHT, KeyMetric.CALORIES)) {
+            assertNull(buildingHint(m, isToday = true))
+        }
     }
 
     @Test
     fun buildingHint_copy_hasNoEmDash() {
-        // House style: user-facing strings carry no em-dashes.
-        for (m in listOf(KeyMetric.REST, KeyMetric.EFFORT)) {
+        // House style: user-facing strings carry no em-dashes (the #1 AI tell).
+        for (m in listOf(KeyMetric.REST, KeyMetric.EFFORT, KeyMetric.CHARGE, KeyMetric.BLOOD_OXYGEN, KeyMetric.STEPS)) {
             val hint = buildingHint(m, isToday = true)!!
             assert(!hint.contains('—')) { "buildingHint($m) must not contain an em-dash: $hint" }
         }
+    }
+
+    // MARK: restStageLowConfidence — H9. Surfaces the core ScoreConfidence rule: a high-efficiency night
+    // whose deep+REM share is implausibly low is flagged low-confidence STAGING (a likely staging miss),
+    // shown as a small "Estimated" badge on the Rest tile rather than faked stages. efficiency is the
+    // engine's 0..1 fraction; restorative = deep+REM minutes. Never fabricated — reads only banked figures.
+
+    private fun sleepDay(
+        day: String = "2026-06-19",
+        totalSleepMin: Double?,
+        efficiency: Double?,
+        deepMin: Double?,
+        remMin: Double?,
+    ) = DailyMetric(
+        deviceId = "my-whoop", day = day,
+        totalSleepMin = totalSleepMin, efficiency = efficiency, deepMin = deepMin, remMin = remMin,
+    )
+
+    @Test
+    fun restStageLowConfidence_false_whenDayIsNull() {
+        assertFalse(restStageLowConfidence(null))
+    }
+
+    @Test
+    fun restStageLowConfidence_false_whenNoEfficiencyOrDuration() {
+        // No banked sleep figures → nothing to judge; the badge must stand down (not assume low-confidence).
+        assertFalse(restStageLowConfidence(sleepDay(totalSleepMin = null, efficiency = 0.9, deepMin = 30.0, remMin = 30.0)))
+        assertFalse(restStageLowConfidence(sleepDay(totalSleepMin = 480.0, efficiency = null, deepMin = 30.0, remMin = 30.0)))
+    }
+
+    @Test
+    fun restStageLowConfidence_false_forAHealthyWellStructuredNight() {
+        // ~45% deep+REM on a high-efficiency night is a normal adult night — SOLID, no badge.
+        val d = sleepDay(totalSleepMin = 480.0, efficiency = 0.92, deepMin = 110.0, remMin = 105.0)
+        assertFalse(restStageLowConfidence(d))
+    }
+
+    @Test
+    fun restStageLowConfidence_true_forHighEfficiencyButNearZeroRestorative() {
+        // 0.95 efficiency (>= 0.85) yet only ~4% deep+REM (< 10%) → the H9 staging-miss flag fires.
+        val d = sleepDay(totalSleepMin = 480.0, efficiency = 0.95, deepMin = 10.0, remMin = 10.0)
+        assertTrue(restStageLowConfidence(d))
+    }
+
+    @Test
+    fun restStageLowConfidence_false_forLowEfficiencyNightWithLowRestorative() {
+        // A fragmented (low-efficiency) night legitimately carries less deep/REM, so the floor does NOT
+        // apply — we don't flag a genuinely poor night as a staging miss.
+        val d = sleepDay(totalSleepMin = 360.0, efficiency = 0.70, deepMin = 8.0, remMin = 8.0)
+        assertFalse(restStageLowConfidence(d))
+    }
+
+    @Test
+    fun restStageLowConfidence_false_whenNoStagedSleepAtAll() {
+        // No deep AND no REM → the base tier isn't SOLID (it's a sparse, unstaged night with its own
+        // honest treatment), so the H9 "stages estimated" badge must not appear.
+        val d = sleepDay(totalSleepMin = 420.0, efficiency = 0.95, deepMin = 0.0, remMin = 0.0)
+        assertFalse(restStageLowConfidence(d))
     }
 
     // MARK: lastScoredRecoveryDay — the #543 carry-over selector that keeps the WHOLE recovery side

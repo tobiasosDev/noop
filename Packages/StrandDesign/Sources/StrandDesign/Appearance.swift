@@ -17,7 +17,7 @@ public enum ChartStyle: String, CaseIterable, Identifiable, Sendable {
 
     public var label: String {
         switch self {
-        case .titanium: return "Titanium"
+        case .titanium: return "Default"
         case .classic:  return "Classic"
         }
     }

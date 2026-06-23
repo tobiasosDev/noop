@@ -47,7 +47,8 @@ private val donations = listOf(
     CryptoAddress("BTC", "Bitcoin", "bc1qn2gkl7wslwpws06mvazjn2uu689zlkv7kg3kf5"),
     CryptoAddress("ADA", "Cardano", "addr1qxsju3y0mlke2h6h2g6qgnq4r3jstngtyjxs0nnp5zrv28zv8p5rgzruxyjz33j9k23pffta8z639e2snjdd4vcetfqsn4vwr3"),
     CryptoAddress("ETH", "Ethereum", "0xd64D508b531c4b1297Ca4023C774e0E97aA67B7F"),
-    CryptoAddress("XRP", "XRP", "rpvijHi2nVY9WWAJhojsAX5tJmHdmLtFhq"),
+    // XRP intentionally NOT offered in-app: exchange-hosted address needs a destination
+    // tag that a scan-to-donate QR can't carry reliably. XRP stays in docs only.
 )
 
 private data class Attribution(val repo: String, val note: String)

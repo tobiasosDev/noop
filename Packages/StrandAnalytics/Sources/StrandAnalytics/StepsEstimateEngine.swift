@@ -14,9 +14,12 @@ import WhoopProtocol
 /// THE MODEL. `steps ≈ k · motionIntensity`, a through-origin fit (no steps ⇒ no motion). `k` (steps per
 /// unit of motion) is the only free parameter, and it is PERSONAL — it depends on wrist vs hip placement,
 /// gait, and how the strap rides — which is exactly why it's calibrated to each user rather than a global
-/// constant. We fit `k` robustly (the median of per-day `steps/motion` ratios) so a single odd day (a drive,
-/// a workout that's all arms, a phone left at home) can't drag the whole calibration. A user with no phone
-/// step history to fit against can set `k` manually with the calibration slider.
+/// constant. We fit `k` robustly (a MOTION-WEIGHTED median of per-day `steps/motion` ratios) so a single odd
+/// day (a drive, a workout that's all arms, a phone left at home) can't drag the whole calibration. The
+/// weighting is the point of #682: a busy 15,000-step day pins the ratio far more reliably than a near-still
+/// 500-step day (more footfalls ⇒ less ratio noise), so we let motion VOLUME drive the fit instead of letting
+/// every day count equally. A user with no phone step history to fit against can set `k` manually with the
+/// calibration slider.
 ///
 /// Pure value type — no I/O, fully unit-tested. The Kotlin twin is StepsEstimateEngine.kt (kept byte-for-byte
 /// equivalent: same motion sum, same median fit, same confidence curve, same clamps).
@@ -60,6 +63,57 @@ public enum StepsEstimateEngine {
         }
     }
 
+    /// A readable read-out of the calibration state, for the Today steps tile and the Settings section.
+    /// Pure value type (no UI strings beyond a single short status line) so both surfaces stay in step.
+    public enum CalibrationStatus: Equatable {
+        /// A manual `k` is in force (the user set it by hand). `sampleDays` = the auto-fit days that exist
+        /// alongside it (informational; the manual value still wins).
+        case manual(coefficient: Double, sampleDays: Int)
+        /// Enough overlapping days fit an auto coefficient. Carries the fit and its 0–1 confidence.
+        case calibrated(coefficient: Double, sampleDays: Int, confidence: Double)
+        /// Not yet calibrated: `have` overlapping phone-counted days out of `need`, so `need - have` more
+        /// are required before an estimate appears (and no manual override is set to fill the gap).
+        case needsMoreDays(have: Int, need: Int)
+
+        /// True when an estimate can be produced right now (manual or a usable auto-fit).
+        public var canEstimate: Bool {
+            switch self {
+            case .manual, .calibrated: return true
+            case .needsMoreDays: return false
+            }
+        }
+
+        /// A short, honest one-liner for the tile/Settings. US-neutral, no em-dashes. The caller may also
+        /// render a confidence badge from `.calibrated`'s confidence; this is the headline only.
+        public var headline: String {
+            switch self {
+            case .manual:
+                return "Calibrated by hand"
+            case let .calibrated(_, sampleDays, _):
+                return "Estimated from \(sampleDays) day\(sampleDays == 1 ? "" : "s") your phone also counted"
+            case let .needsMoreDays(have, need):
+                let more = Swift.max(0, need - have)
+                return "Need \(more) more day\(more == 1 ? "" : "s") where your phone also counted steps"
+            }
+        }
+    }
+
+    /// Classify the current calibration state from the same inputs `calibrate(_:manualOverride:)` sees,
+    /// so the UI can explain WHY the steps tile is (or isn't) showing an estimate without re-deriving the
+    /// fit. A positive `manualOverride` always reports `.manual`. Otherwise we count the usable overlapping
+    /// days (same filter the fit uses) and report `.calibrated` once `minCalibrationDays` are met, else
+    /// `.needsMoreDays`. Mirror of the Kotlin `status(...)`.
+    public static func status(_ points: [CalibrationPoint], manualOverride: Double? = nil) -> CalibrationStatus {
+        let usableDays = points.filter { $0.motion >= minMotionForFit && $0.steps > 0 }.count
+        if let k = manualOverride, k > 0 {
+            return .manual(coefficient: k, sampleDays: usableDays)
+        }
+        guard let cal = calibrate(points), usableDays >= minCalibrationDays else {
+            return .needsMoreDays(have: usableDays, need: minCalibrationDays)
+        }
+        return .calibrated(coefficient: cal.coefficient, sampleDays: cal.sampleDays, confidence: cal.confidence)
+    }
+
     // MARK: - Motion feature
 
     /// Total daily MOTION INTENSITY = the sum of per-record gravity-vector deltas (L2 magnitude of the change
@@ -81,28 +135,33 @@ public enum StepsEstimateEngine {
     // MARK: - Calibration
 
     /// Fit the personal coefficient from days that have BOTH a motion volume and a reference step count.
-    /// Robust: take the median of each day's `steps / motion` ratio (days below `minMotionForFit` are skipped),
-    /// so outliers don't pull `k`. Returns nil when there aren't enough usable days AND no manual override is
-    /// supplied. A non-nil `manualOverride` always wins (confidence 1.0) — for users with no phone step data.
+    /// Robust: take the MOTION-WEIGHTED median of each day's `steps / motion` ratio (days below `minMotionForFit`
+    /// are skipped), so outliers don't pull `k` AND high-activity days — which pin the ratio far more reliably —
+    /// drive the fit instead of every day counting equally (#682). Each day's ratio carries weight = its motion
+    /// volume. Returns nil when there aren't enough usable days AND no manual override is supplied. A non-nil
+    /// `manualOverride` always wins (confidence 1.0) — for users with no phone step data.
     public static func calibrate(_ points: [CalibrationPoint], manualOverride: Double? = nil) -> Calibration? {
         if let k = manualOverride, k > 0 {
             return Calibration(coefficient: k, sampleDays: points.count, confidence: 1.0, manual: true)
         }
-        let ratios = points
+        // Usable days carry (ratio, weight) where weight = motion volume: a busier day votes harder.
+        let weighted = points
             .filter { $0.motion >= minMotionForFit && $0.steps > 0 }
-            .map { $0.steps / $0.motion }
-            .sorted()
-        guard ratios.count >= minCalibrationDays else { return nil }
-        let k = median(ratios)
+            .map { (ratio: $0.steps / $0.motion, weight: $0.motion) }
+        guard weighted.count >= minCalibrationDays else { return nil }
+        let ratios = weighted.map { $0.ratio }
+        let weights = weighted.map { $0.weight }
+        let k = weightedMedian(ratios, weights: weights)
         guard k > 0 else { return nil }
         // Confidence: grows with sample size toward goodCalibrationDays, discounted by relative spread
-        // (MAD / median) so a noisy fit is honestly less trusted than a tight one.
-        let sizeTerm = min(1.0, Double(ratios.count) / Double(goodCalibrationDays))
-        let mad = median(ratios.map { abs($0 - k) })
+        // (weighted MAD / weighted median) so a noisy fit is honestly less trusted than a tight one. The MAD is
+        // also motion-weighted so spread is measured against the same days that drove `k`.
+        let sizeTerm = min(1.0, Double(weighted.count) / Double(goodCalibrationDays))
+        let mad = weightedMedian(ratios.map { abs($0 - k) }, weights: weights)
         let spread = k > 0 ? mad / k : 1.0
         let tightness = max(0.0, 1.0 - spread)              // 1 = all ratios equal, 0 = wildly scattered
         let confidence = (0.5 * sizeTerm + 0.5 * tightness).clampedUnit
-        return Calibration(coefficient: k, sampleDays: ratios.count, confidence: confidence, manual: false)
+        return Calibration(coefficient: k, sampleDays: weighted.count, confidence: confidence, manual: false)
     }
 
     // MARK: - Estimate
@@ -121,6 +180,32 @@ public enum StepsEstimateEngine {
         guard !xs.isEmpty else { return 0 }
         let s = xs.sorted(); let n = s.count
         return n % 2 == 1 ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2
+    }
+
+    /// Weighted median of `xs` with per-element `weights` (#682). Sort by value, walk the cumulative weight,
+    /// and return the value at which it first reaches half the total weight. When the cumulative weight lands
+    /// EXACTLY on the half-mass boundary, average the two straddling values — so with equal weights this
+    /// reduces to the plain even-count midpoint average and the unweighted fits stay byte-identical. Falls back
+    /// to the plain median if weights are absent/degenerate (empty, mismatched, or non-positive total).
+    static func weightedMedian(_ xs: [Double], weights: [Double]) -> Double {
+        guard !xs.isEmpty else { return 0 }
+        guard weights.count == xs.count else { return median(xs) }
+        let order = xs.indices.sorted { xs[$0] < xs[$1] }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return median(xs) }
+        let half = total / 2
+        var cum = 0.0
+        for (pos, idx) in order.enumerated() {
+            let w = max(0.0, weights[idx])
+            cum += w
+            if cum > half { return xs[idx] }
+            if cum == half {
+                // Half-mass falls on a boundary: average this value with the next distinct one (if any).
+                let next = pos + 1 < order.count ? order[pos + 1] : idx
+                return (xs[idx] + xs[next]) / 2
+            }
+        }
+        return xs[order[order.count - 1]]
     }
 }
 

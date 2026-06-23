@@ -6,15 +6,56 @@ import SwiftUI
 // the uniform, instrument-grade look from the reference. Do not invent ad-hoc cards.
 
 public enum NoopMetrics {
-    public static let cardRadius: CGFloat = 18   // Bevel continuous radius (18–22pt)
-    public static let cardPadding: CGFloat = 16
+    public static let cardRadius: CGFloat = 20   // Apple x WHOOP: rounded cards
+    public static let cardPadding: CGFloat = 16  // Apple x WHOOP: roomier card interior
     public static let gap: CGFloat = 12          // gap between cards
-    public static let sectionGap: CGFloat = 28   // gap between sections
-    public static let screenPadding: CGFloat = 24
-    public static let tileHeight: CGFloat = 108  // every metric tile is this tall
+    public static let sectionGap: CGFloat = 22   // Apple x WHOOP: breathing room (not cramped)
+    public static let screenPadding: CGFloat = 18
+    public static let tileHeight: CGFloat = 96   // Design Reset: tighter metric tile
     public static let chartHeight: CGFloat = 220
     public static let hypnogramBandMinThickness: CGFloat = 14  // floor so short stages read as bars, not ticks
     public static let tabBarClearance: CGFloat = 76  // iOS: extra bottom scroll room so the last card clears the floating tab bar
+
+    // MARK: Standardised spacing scale (the ONE source of truth for margins)
+    //
+    // A 4pt-based ramp. Reach for these instead of literal numbers so every gap,
+    // inset and margin lines up to the same grid. Note `cardPadding` (16) above is
+    // the same value as `space4` — kept as a named alias for the existing call sites.
+    public static let space1:  CGFloat = 4
+    public static let space2:  CGFloat = 8
+    public static let space3:  CGFloat = 12
+    public static let space4:  CGFloat = 16
+    public static let space5:  CGFloat = 20
+    public static let space6:  CGFloat = 24
+    public static let space8:  CGFloat = 32
+    public static let space10: CGFloat = 40
+
+    // MARK: Named layout constants — the canonical margins/heights screens compose with.
+    /// Horizontal page margin (the gutter on the left/right edge of a screen). Use via `.screenPadding()`.
+    public static let screenHPadding: CGFloat = 20
+    /// Vertical gap between top-level page sections.
+    public static let sectionSpacing: CGFloat = 24
+    /// Interior padding inside a card's content (matches `cardPadding`).
+    public static let cardInnerPadding: CGFloat = 16
+    /// Vertical gap between stacked elements INSIDE a card.
+    public static let cardInnerSpacing: CGFloat = 12
+    /// Vertical gap between rows in a list-style card.
+    public static let rowSpacing: CGFloat = 10
+    /// Standard interactive-control height (buttons, fields, segmented controls).
+    public static let controlHeight: CGFloat = 48
+    /// Fully-rounded corner radius — pills, chips, capsule buttons.
+    public static let pillRadius: CGFloat = 999
+}
+
+// MARK: - Screen padding
+
+public extension View {
+    /// Apply the canonical horizontal page gutter (`NoopMetrics.screenHPadding`). The single
+    /// source of truth for left/right screen margins — use this instead of a literal padding so
+    /// every screen lines up to the same edge.
+    func screenPadding() -> some View {
+        self.padding(.horizontal, NoopMetrics.screenHPadding)
+    }
 }
 
 // MARK: - iOS sheet presentation idiom
@@ -103,7 +144,7 @@ public struct SectionHeader: View {
 
 // MARK: - Metric tile (UNIFORM fixed height)
 
-public struct StatTile: View {
+public struct StatTile<Accessory: View>: View {
     let label: LocalizedStringKey, value: String
     var caption: String? = nil
     var accent: Color = StrandPalette.textPrimary
@@ -111,13 +152,19 @@ public struct StatTile: View {
     var deltaColor: Color = StrandPalette.textTertiary
     var sparkline: [Double]? = nil
     var sparkColor: Color = StrandPalette.accent
+    /// An optional trailing accessory laid out INLINE in the header row beside the label (e.g. a small
+    /// ⓘ that opens a scoring guide). Inline placement — not a corner overlay — so it can never sit on
+    /// top of the value, sparkline or trend chip on a narrow tile (#495). Defaults to nothing.
+    @ViewBuilder var accessory: () -> Accessory
 
     public init(label: LocalizedStringKey, value: String, caption: String? = nil,
                 accent: Color = StrandPalette.textPrimary, delta: String? = nil,
                 deltaColor: Color = StrandPalette.textTertiary,
-                sparkline: [Double]? = nil, sparkColor: Color = StrandPalette.accent) {
+                sparkline: [Double]? = nil, sparkColor: Color = StrandPalette.accent,
+                @ViewBuilder accessory: @escaping () -> Accessory) {
         self.label = label; self.value = value; self.caption = caption; self.accent = accent
         self.delta = delta; self.deltaColor = deltaColor; self.sparkline = sparkline; self.sparkColor = sparkColor
+        self.accessory = accessory
     }
 
     public var body: some View {
@@ -125,7 +172,13 @@ public struct StatTile: View {
         // part of its colour world while staying legible on the deep blue-black.
         NoopCard(padding: 14, tint: accent) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(label).strandOverline()
+                // Header row: the metric label, and (right-aligned) the optional accessory laid out in
+                // flow so it reserves its own space rather than floating over the value below (#495).
+                HStack(alignment: .top, spacing: 4) {
+                    Text(label).strandOverline()
+                    Spacer(minLength: 0)
+                    accessory()
+                }
                 Spacer(minLength: 4)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(value).font(StrandFont.number(26)).foregroundStyle(accent).lineLimit(1).minimumScaleFactor(0.6)
@@ -148,6 +201,19 @@ public struct StatTile: View {
         // One VoiceOver stop per tile (label, value, caption, delta) instead of up
         // to four fragmented stops; the decorative sparkline is hidden above.
         .accessibilityElement(children: .combine)
+    }
+}
+
+// Backward-compatible convenience: a StatTile with NO accessory (the common case) — every existing
+// call site keeps working unchanged, and the type defaults `Accessory` to `EmptyView`.
+public extension StatTile where Accessory == EmptyView {
+    init(label: LocalizedStringKey, value: String, caption: String? = nil,
+         accent: Color = StrandPalette.textPrimary, delta: String? = nil,
+         deltaColor: Color = StrandPalette.textTertiary,
+         sparkline: [Double]? = nil, sparkColor: Color = StrandPalette.accent) {
+        self.init(label: label, value: value, caption: caption, accent: accent, delta: delta,
+                  deltaColor: deltaColor, sparkline: sparkline, sparkColor: sparkColor,
+                  accessory: { EmptyView() })
     }
 }
 
@@ -259,11 +325,10 @@ public struct InsightCard: View {
         // insight card reads a touch stronger than a tile: an explicit hue wash
         // (.14 → .04) + a matching .22 hue border on top of the frosted surface.
         let hue = tint ?? statusColor
-        let shape = RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
+        // Apple-flat: a plain flat card. Identity comes from the COLOURED status headline alone — no extra
+        // hue-gradient wash, no border (so it reads identical to every other card on the page).
         return NoopCard(padding: 18, tint: hue) {
             VStack(alignment: .leading, spacing: 8) {
-                // The overline + large status share a row with any top-trailing overlay, so they
-                // carry the trailing inset; the detail paragraph runs full width below the pill.
                 Text(category).strandOverline()
                     .padding(.trailing, titleTrailingInset)
                 Text(status).font(StrandFont.rounded(28, weight: .bold)).foregroundStyle(statusColor)
@@ -273,15 +338,6 @@ public struct InsightCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .background(
-            shape.fill(
-                LinearGradient(
-                    colors: [hue.opacity(0.14), hue.opacity(0.04)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            )
-        )
-        .overlay(shape.strokeBorder(hue.opacity(0.22), lineWidth: 1))
     }
 }
 
@@ -309,7 +365,7 @@ public struct SegmentedPillControl<T: Hashable>: View {
                         // Active segment is SELECTION CHROME, so it follows the accent: on dark a
                         // gold-gradient pill with gold-deep ink; on light a flat blue accent pill with
                         // white ink (so the light theme's selection matches its blue chrome, not gold).
-                        .foregroundStyle(sel ? (scheme == .light ? Color.white : StrandPalette.goldDeepText)
+                        .foregroundStyle(sel ? (scheme == .light ? Color.white : StrandPalette.textPrimary)
                                              : StrandPalette.textTertiary)
                         // Fill the segment height so the selected pill has EQUAL margins to the track
                         // on every side. (The old compact pill inside a taller 44pt touch frame left
@@ -317,10 +373,12 @@ public struct SegmentedPillControl<T: Hashable>: View {
                         .frame(minWidth: 32, maxHeight: .infinity)
                         .padding(.horizontal, 12)
                         .background(
+                            // WHOOP selection chrome: a flat LIGHTER-grey pill on dark (white ink), a flat
+                            // blue accent pill on light — no gold, no gradient.
                             Capsule(style: .continuous)
                                 .fill(sel ? (scheme == .light
                                              ? AnyShapeStyle(StrandPalette.accent)
-                                             : AnyShapeStyle(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .top, endPoint: .bottom)))
+                                             : AnyShapeStyle(Color(hex: "#363B41")))
                                           : AnyShapeStyle(Color.clear))
                         )
                         .contentShape(Capsule(style: .continuous))
@@ -483,7 +541,8 @@ public enum ScoreState: Sendable {
     /// The chip's hue, drawn from the re-pointed palette (gold / blue / slate).
     public var color: Color {
         switch self {
-        case .solid, .live: return StrandPalette.gold
+        case .solid:        return StrandPalette.statusPositive // settled / trustworthy — WHOOP green
+        case .live:         return StrandPalette.accent          // streaming now — WHOOP blue
         case .building:     return StrandPalette.sleepLight   // #4A90E2 blue
         case .calibrating:  return StrandPalette.textTertiary // #8A94A4 slate
         }

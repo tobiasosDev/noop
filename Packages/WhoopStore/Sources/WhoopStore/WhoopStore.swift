@@ -6,7 +6,7 @@ import WhoopProtocol
 /// transient, compressed, prunable outbox. Built on GRDB/SQLite.
 public enum WhoopStoreInfo {
     /// Bumped whenever the migrator gains a new migration.
-    public static let schemaVersion = 17
+    public static let schemaVersion = 18
 }
 
 /// WhoopStore is an `actor`: its public API is `async`, and all GRDB work runs on the
@@ -119,6 +119,25 @@ public actor WhoopStore {
         try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         }
+    }
+
+    /// Total on-disk size of the database — the main file plus its `-wal`/`-shm` siblings — in bytes.
+    /// Drives the iOS Storage diagnostics screen (#590). `nil` for an in-memory store (no path). Runs
+    /// on the actor's executor, off the main thread.
+    public func databaseFileSizeBytes() async -> Int64? {
+        let base = dbQueue.path
+        guard base != ":memory:", !base.isEmpty else { return nil }
+        let fm = FileManager.default
+        var total: Int64 = 0
+        var found = false
+        for suffix in ["", "-wal", "-shm"] {
+            let path = base + suffix
+            if let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? NSNumber {
+                total += size.int64Value
+                found = true
+            }
+        }
+        return found ? total : nil
     }
 
     // MARK: - Introspection (used by tests)

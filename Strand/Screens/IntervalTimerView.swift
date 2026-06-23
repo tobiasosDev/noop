@@ -37,10 +37,6 @@ struct IntervalTimerView: View {
     @State private var running: Bool = false
     @State private var elapsed: Int = 0             // total elapsed seconds across the session
 
-    /// Draw-in fraction for the hero progress gauge — eased toward `intervalProgress` so the ring
-    /// fills smoothly each tick (the BevelGauge owns its own bloom; the caller owns this animation).
-    @State private var animatedProgress: Double = 0
-
     // MARK: iPhone haptics (iOS only)
     //
     // The strap buzz (`buzz`) only fires when a strap is bonded; on iPhone the device in
@@ -80,25 +76,13 @@ struct IntervalTimerView: View {
         return workSeconds * rounds + restSeconds * max(0, rounds - 1)
     }
 
-    /// The active phase's colour world: WORK lives in the Effort (amber) world, REST in the Rest
-    /// (periwinkle) world, DONE in positive green. Drives the gauge stroke, glow and read-out.
+    /// The active phase's reset token: WORK uses the Effort blue, REST the Rest blue-grey, DONE the
+    /// positive green. Tints the flat ring arc + the phase chip only (no glow).
     private var phaseColor: Color {
         switch phase {
         case .work: return StrandPalette.effortColor
         case .rest: return StrandPalette.restColor
         case .done: return StrandPalette.statusPositive
-        }
-    }
-
-    /// Deep→bright ramp for the active phase, fed to the progress `BevelGauge`'s arc.
-    private var phaseStops: [Gradient.Stop] {
-        switch phase {
-        case .work: return [.init(color: StrandPalette.effortDeep, location: 0),
-                            .init(color: StrandPalette.effortBright, location: 1)]
-        case .rest: return [.init(color: StrandPalette.restDeep, location: 0),
-                            .init(color: StrandPalette.restBright, location: 1)]
-        case .done: return [.init(color: StrandPalette.statusPositive.opacity(0.6), location: 0),
-                            .init(color: StrandPalette.statusPositive, location: 1)]
         }
     }
 
@@ -117,11 +101,16 @@ struct IntervalTimerView: View {
     var body: some View {
         ScreenScaffold(title: "Interval Timer",
                        subtitle: "Silent haptic HIIT — the strap buzzes the transitions") {
-            VStack(alignment: .leading, spacing: 20) {
-                statusRow
-                stageCard
-                overviewCard
-                configCard
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+                let cards: [AnyView] = [
+                    AnyView(statusRow),
+                    AnyView(stageCard),
+                    AnyView(overviewCard),
+                    AnyView(configCard),
+                ]
+                ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
+                    card.staggeredAppear(index: index)
+                }
             }
         }
         .onReceive(ticker) { _ in tick() }
@@ -172,57 +161,77 @@ struct IntervalTimerView: View {
         }
     }
 
-    // MARK: Stage card — the immersive hero face over a scenic Effort backdrop
+    // MARK: Stage card — the countdown hero on a flat opaque surface
 
-    /// The running timer is the hero: a layered-ring `BevelGauge` of the phase progress, glowing in
-    /// the active phase's world (WORK → effort amber, REST → rest periwinkle), floated on a frosted
-    /// Effort-tinted card over a scenic starfield. The countdown is the gauge's centred numeral.
+    /// The running timer is the hero: a clean flat phase-progress ring (GlowRing-style — visible
+    /// track, solid arc, NO glow/bloom) with the countdown at its centre, on a flat opaque
+    /// surfaceRaised card. Design Reset: no scenic backdrop, no tinted frost, no gauge gradient —
+    /// the active phase's reset token tints only the arc + chip, the card stays WHOOP-grey.
     private var stageCard: some View {
-        ZStack {
-            ScenicHeroBackground(domain: .effort)
-                .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-            StrandCard(padding: 24, tint: phaseColor) {
-                VStack(spacing: 18) {
-                    // Phase chip + round chip line — both frosted.
-                    HStack {
-                        phaseChip
-                        Spacer()
-                        roundChip
-                    }
+        StrandCard(padding: 24) {
+            VStack(spacing: 18) {
+                // Phase chip + round chip line.
+                HStack {
+                    phaseChip
+                    Spacer()
+                    roundChip
+                }
 
-                    // The hero progress gauge with the countdown at its centre.
-                    BevelGauge(
-                        fraction: isFinished ? 1 : intervalProgress,
-                        stops: phaseStops,
-                        tipColor: phaseColor,
-                        numberText: isFinished ? "✓" : "\(remaining)",
-                        captionText: isFinished ? "SESSION DONE" : "SECONDS",
-                        stateText: nil,
-                        diameter: 240,
-                        lineWidth: 18,
-                        showsLabel: true,
-                        animatedFraction: isFinished ? 1 : animatedProgress
-                    )
+                // The flat hero progress ring with the countdown at its centre.
+                heroRing
                     .frame(maxWidth: .infinity)
                     .animation(.snappy, value: remaining)
 
-                    controls
+                controls
 
-                    if !live.bonded {
-                        Label("Bond your strap on the Live screen to feel the transitions hands-free.",
-                              systemImage: "wave.3.right")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
+                if !live.bonded {
+                    Label("Bond your strap on the Live screen to feel the transitions hands-free.",
+                          systemImage: "wave.3.right")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
         }
-        // Drive the gauge's draw-in toward the live interval progress, eased per tick.
-        .onChangeCompat(of: intervalProgress) { newValue in
-            withAnimation(.linear(duration: 0.9)) { animatedProgress = newValue }
+    }
+
+    /// Flat phase-progress ring (GlowRing look — visible track + solid reset-token arc, no bloom)
+    /// with the countdown number + caption centred. The arc springs to the live fraction; no
+    /// separate bloom driver.
+    private var heroRing: some View {
+        let diameter: CGFloat = 240
+        let lineWidth: CGFloat = 18
+        let fraction = isFinished ? 1 : intervalProgress
+        return ZStack {
+            // Visible full-circle track, so the arc reads as a fraction of a circle (WHOOP-style).
+            Circle()
+                .stroke(StrandPalette.textPrimary.opacity(0.10),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            // Flat, crisp solid arc — no glow.
+            Circle()
+                .trim(from: 0, to: max(0.0001, CGFloat(min(max(fraction, 0), 1))))
+                .rotation(.degrees(-90))
+                .stroke(phaseColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .animation(.snappy, value: fraction)
+            // Centred countdown number + caption.
+            VStack(spacing: 4) {
+                Text(isFinished ? "✓" : "\(remaining)")
+                    .font(GlowRing.centerFont(diameter: diameter))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .contentTransition(.numericText())
+                Text(isFinished ? "SESSION DONE" : "SECONDS")
+                    .font(StrandFont.footnote)
+                    .tracking(1.5)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            .padding(.horizontal, lineWidth + 4)
         }
-        .onAppear { animatedProgress = intervalProgress }
+        .frame(width: diameter, height: diameter)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isFinished ? "Session done" : "\(remaining) seconds remaining in \(phase.label)")
     }
 
     /// Frosted phase pill (WORK / REST / DONE) tinted to the active world.
@@ -255,30 +264,18 @@ struct IntervalTimerView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            Button {
+        HStack(spacing: NoopMetrics.space3) {
+            NoopButton(running ? "Pause" : (isFinished ? "Restart" : "Start"),
+                       systemImage: running ? "pause.fill" : "play.fill",
+                       kind: .primary, fullWidth: true) {
                 if isFinished { resetToStart() }
                 toggleRunning()
-            } label: {
-                Label(running ? "Pause" : (isFinished ? "Restart" : "Start"),
-                      systemImage: running ? "pause.fill" : "play.fill")
-                    .font(StrandFont.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(StrandPalette.accent)
 
-            Button {
+            NoopButton("Reset", systemImage: "arrow.counterclockwise",
+                       kind: .secondary, fullWidth: true) {
                 stopAndReset()
-            } label: {
-                Label("Reset", systemImage: "arrow.counterclockwise")
-                    .font(StrandFont.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
             }
-            .buttonStyle(.bordered)
-            .tint(StrandPalette.textSecondary)
             .disabled(!running && remaining == phaseDuration && currentRound == 1 && phase == .work && elapsed == 0)
         }
     }
@@ -296,19 +293,12 @@ struct IntervalTimerView: View {
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
 
-                // Slim total-session progress bar — filled with the Effort world gradient.
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(StrandPalette.surfaceInset)
-                        Capsule()
-                            .fill(LinearGradient(gradient: StrandPalette.effortGradient,
-                                                 startPoint: .leading, endPoint: .trailing))
-                            .frame(width: geo.size.width * sessionProgress)
-                            .animation(.linear(duration: 0.9), value: sessionProgress)
-                    }
-                }
-                .frame(height: 8)
+                // Slim total-session progress as the NOOP signature segmented bar — it cascades up as the
+                // session advances, tinted to the Effort world. Flat, crisp, no glow.
+                PipBar(value: sessionProgress, range: 0...1, segments: 28,
+                       tint: StrandPalette.effortColor, height: 10)
+                    .accessibilityLabel("Session progress")
+                    .accessibilityValue("\(Int((sessionProgress * 100).rounded())) percent")
 
                 HStack(spacing: 0) {
                     overviewStat("Work", "\(workSeconds)s", StrandPalette.effortColor)

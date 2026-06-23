@@ -19,14 +19,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -474,8 +475,10 @@ private fun WhatMovesYouLink(onOpen: () -> Unit) {
                     modifier = Modifier.size(16.dp),
                 )
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("What moves you", style = NoopType.headline, color = Palette.textPrimary)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                // WHOOP tappable-card title: UPPERCASE tracked WHITE label + a trailing "›" chevron
+                // glyph (mirrors the iOS "WHAT MOVES YOU ›" overline). The descriptive line sits beneath.
+                Overline("What moves you ›", color = Palette.textPrimary)
                 Text(
                     "Ranked, lag-aware: which of your habits actually move your Charge — plus your " +
                         "personal alcohol/caffeine dose-response.",
@@ -486,8 +489,8 @@ private fun WhatMovesYouLink(onOpen: () -> Unit) {
             Icon(
                 Icons.Filled.ChevronRight,
                 contentDescription = null,
-                tint = Palette.textTertiary,
-                modifier = Modifier.size(18.dp),
+                tint = Palette.accent,
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -547,7 +550,10 @@ private fun ActivityCostSection(costs: List<com.noop.analytics.ActivityCost>) {
                 )
             }
         } else {
-            costs.forEach { ActivityCostCard(it) }
+            // Fade + rise the ranked cost cards in sequence (mirrors iOS .staggeredAppear(index:)).
+            costs.forEachIndexed { i, cost ->
+                Box(modifier = Modifier.staggeredAppear(i)) { ActivityCostCard(cost) }
+            }
         }
     }
 }
@@ -667,7 +673,10 @@ private fun BehaviourSection(
                 )
             }
         } else {
-            ranked.forEach { EffectCard(it, outcome) }
+            // Fade + rise the ranked cards in sequence (mirrors iOS .staggeredAppear(index:)).
+            ranked.forEachIndexed { i, e ->
+                Box(modifier = Modifier.staggeredAppear(i)) { EffectCard(e, outcome) }
+            }
         }
     }
 }
@@ -928,21 +937,16 @@ private fun ExperimentSetupCard(
                 )
             }
 
-            Button(
-                onClick = onStart,
+            // Unified button system (mirrors iOS NoopButton("Start experiment", flask, .primary, fullWidth)).
+            NoopButton(
+                text = "Start experiment",
+                leadingIcon = Icons.Filled.Science,
+                kind = NoopButtonKind.Primary,
+                fullWidth = true,
                 enabled = resolvedBehaviour != null,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Palette.accent,
-                    contentColor = Palette.surfaceBase,
-                    disabledContainerColor = Palette.surfaceInset,
-                    disabledContentColor = Palette.textTertiary,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { contentDescription = "Start experiment" },
-            ) {
-                Text("Start experiment", style = NoopType.headline)
-            }
+                onClick = onStart,
+                modifier = Modifier.semantics { contentDescription = "Start experiment" },
+            )
         }
     }
 }
@@ -1056,43 +1060,39 @@ private fun ActiveExperimentCard(
             }
         }
 
-        // Mark done / Skip / End.
+        // Mark done / Skip / End — all routed through the unified NoopButton (mirrors iOS
+        // NoopButtonStyle(.primary / .secondary / .destructive) with leading icons).
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(
-                onClick = { onMark(true) },
+            NoopButton(
+                text = "Mark done",
+                leadingIcon = Icons.Filled.CheckCircle,
+                kind = NoopButtonKind.Primary,
                 enabled = !snapshot.loggedToday,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Palette.accent,
-                    contentColor = Palette.surfaceBase,
-                    disabledContainerColor = Palette.surfaceInset,
-                    disabledContentColor = Palette.textTertiary,
-                ),
+                onClick = { onMark(true) },
                 modifier = Modifier
                     .weight(1f)
                     .semantics { contentDescription = "Mark done today" },
-            ) {
-                Text("Mark done", style = NoopType.subhead, maxLines = 1)
-            }
-            OutlinedButton(
+            )
+            NoopButton(
+                text = "Skip",
+                leadingIcon = Icons.Filled.Close,
+                kind = NoopButtonKind.Secondary,
                 onClick = { onMark(false) },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.textPrimary),
                 modifier = Modifier
                     .weight(1f)
                     .semantics { contentDescription = "Skip today" },
-            ) {
-                Text("Skip", style = NoopType.subhead, maxLines = 1)
-            }
-            OutlinedButton(
+            )
+            NoopButton(
+                text = "End",
+                leadingIcon = Icons.Filled.Stop,
+                kind = NoopButtonKind.Destructive,
                 onClick = onEnd,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.statusCritical),
                 modifier = Modifier.semantics { contentDescription = "End experiment" },
-            ) {
-                Text("End", style = NoopType.subhead, maxLines = 1)
-            }
+            )
         }
     }
 }

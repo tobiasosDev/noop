@@ -5,13 +5,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        ### ⛔ First — is this already answered?
+        ### 💬 Just have a question, or "how do I…"?
+        **Stop — this form is only for confirmed bugs.** If you want help, want to know how something works, or you're not sure it's a bug, you'll get a faster answer here:
+        - **[Discussions](https://github.com/NoopApp/noop/discussions)** — questions, ideas, "is this normal?", feature requests.
+        - **[Discord](https://discord.com/invite/nHK9FHczu)** — the quickest place for a quick question or setup help.
+
+        Please use those instead of opening an issue. A question filed as a bug just gets pointed back here, so you'll get sorted faster by starting in the right place. 🙏
+
+        ### ⛔ Next — is this already answered?
         Many "bugs" are expected behaviour or a known limit. **Please check these before filing — it's the fastest way to an answer:**
         - **[FAQ](https://github.com/NoopApp/noop/wiki/FAQ)** — live HR, recovery/sleep, steps, importing, privacy, updates.
         - **[WHOOP 5.0 / MG status](https://github.com/NoopApp/noop/wiki/WHOOP-5.0-and-MG-Status)** — SpO₂, steps, recovery/sleep on the newer straps (the most common topic).
         - **[Troubleshooting](https://github.com/NoopApp/noop/wiki/Troubleshooting)** — pairing, "syncs but no data", generic HR straps.
-
-        Not sure it's a bug, or it's a feature idea? Please use **[Discussions](https://github.com/NoopApp/noop/discussions)** instead. 🙏
 
         ---
 
