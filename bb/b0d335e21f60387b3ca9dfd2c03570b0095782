@@ -1,0 +1,22 @@
+Strand/Resources/Info.plist
+  s_fe6eff27ac48a1::t_fd1ad249e8bee6 22
+project.yml
+  s_fe6eff27ac48a1::t_f1ad9dedcef5d4 306
+  s_fe6eff27ac48a1::t_1eb2cd61bf1c74 247-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "bbb0d335e21f60387b3ca9dfd2c03570b0095782",
+  "prompts": {},
+  "sessions": {
+    "s_fe6eff27ac48a1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a956731-06bb-4ac0-a478-b4bcb29d84f6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
