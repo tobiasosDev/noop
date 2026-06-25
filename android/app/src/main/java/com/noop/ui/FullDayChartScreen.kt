@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import java.util.Calendar
 import java.util.Locale
 
@@ -88,6 +89,16 @@ fun FullDayChartScreen(vm: AppViewModel, onBack: () -> Unit) {
 
     // Re-read on metric / source / settled-window / fresh-data change. The DB read picks raw vs buckets.
     LaunchedEffect(metric, ownedOnly, visible.first, visible.last, recentDays) {
+        // PERF (#scroll-jank): a pinch/pan reports a NEW window on every gesture frame, each of which
+        // re-keys this effect and previously fired a fresh Room query mid-gesture (heavy, on every
+        // frame). Debounce by sleeping first: while the window is still moving, the next frame re-keys
+        // the effect and cancels this one before the query runs, so ONLY the settled window (after the
+        // gesture pauses ~130ms) actually hits the DB. The sleep is before `loading = true`, so during
+        // a live gesture the existing chart stays put instead of flashing the "Loading the day…" state.
+        // A metric/source/day switch re-keys too and waits the same ~130ms before loading — imperceptible,
+        // and it keeps the chart showing the prior data until the new read lands. Behaviour-preserving:
+        // the settled window still issues exactly the same query and renders identically.
+        delay(130)
         loading = true
         val from = visible.first
         val to = visible.last

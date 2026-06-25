@@ -94,25 +94,31 @@ fun InsightsHubScreen(vm: AppViewModel) {
     var outcome by remember { mutableStateOf(InsightsOutcome.Recovery) }
     val ranked = remember(state, outcome) { hub.rankFor(state, outcome) }
 
-    ScreenScaffold(title = "Insights", subtitle = "Patterns in your own data — association, not cause.") {
+    // PERF (#707): lazy scaffold — each section (and its standalone Spacer, a real child of the eager
+    // `spacedBy(20.dp)` Column) becomes one `item { }`, so the LazyColumn's matching `spacedBy(20.dp)`
+    // reproduces identical spacing and only on-screen sections compose + are semantics-walked.
+    LazyScreenScaffold(title = "Insights", subtitle = "Patterns in your own data — association, not cause.") {
         if (!state.loaded) {
+            item {
             NoopCard {
                 Text("Reading your journal and outcomes…", style = NoopType.subhead, color = Palette.textTertiary)
             }
-            return@ScreenScaffold
+            }
+            return@LazyScreenScaffold
         }
 
         // --- What moves your Charge -------------------------------------------
-        MoversSection(outcome = outcome, onOutcome = { outcome = it }, ranked = ranked)
+        item { MoversSection(outcome = outcome, onOutcome = { outcome = it }, ranked = ranked) }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Dose-response (alcohol / caffeine) -------------------------------
-        DoseSection(state.doseCards)
+        item { DoseSection(state.doseCards) }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Method / honesty note --------------------------------------------
+        item {
         NoopCard {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Overline("How to read this", color = Palette.textTertiary)
@@ -125,6 +131,7 @@ fun InsightsHubScreen(vm: AppViewModel) {
                     color = Palette.textTertiary,
                 )
             }
+        }
         }
     }
 }

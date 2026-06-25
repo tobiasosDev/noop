@@ -68,6 +68,9 @@ struct SettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
     // Chart colour style: Titanium (brand) or Classic (throwback red→green). Re-colours gauges + charts.
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
+    // Day-cycle scene backdrop behind Today (#698). Default ON. Off swaps the scene for a plain dark
+    // canvas. TodayView reads the same key to gate its SceneScreenBackground.
+    @AppStorage(SceneBackgroundPrefs.enabledKey) private var showDayCycleBackground = true
     // Hydration tracker (opt-in, MVP). Default OFF — when off the hydration dashboard card + detail are
     // hidden. Mirrors the Android pref so the toggle reads the same on both platforms.
     @AppStorage(HydrationStore.enabledKey) private var hydrationEnabled = false
@@ -76,6 +79,12 @@ struct SettingsView: View {
     /// sustained-elevated window and offers — via a single dismissible card — to save it as a workout.
     /// Nothing is ever created automatically. Mirrors the Android `NoopPrefs.KEY_AUTO_DETECT_WORKOUTS`.
     @AppStorage(PuffinExperiment.autoDetectWorkoutsKey) private var autoDetectWorkoutsEnabled = false
+
+    /// Opt-in "Keep screen on during a workout" (default OFF, #703). When ON, the live-workout view
+    /// holds the screen awake while a manual recording is running so you can glance at your live HR
+    /// without the device dimming. The live-workout view reads this same key. The string is shared
+    /// verbatim with the Android twin (SharedPreferences "workoutKeepScreenOn").
+    @AppStorage("workoutKeepScreenOn") private var workoutKeepScreenOn = false
 
     /// The strap model the user last picked (same key the scan pickers write). Gates the WHOOP 4.0-only
     /// rename control in the strap card — renaming uses the Harvard command set, which a 5/MG doesn't share.
@@ -124,6 +133,11 @@ struct SettingsView: View {
     /// time from About — covers how sleep is sorted, how scores + calibration work, what
     /// recording means, and where the provenance badges come from.
     @State private var showHowNoopWorks = false
+
+    /// "Set up Apple Watch" sheet: the honest watch onboarding flow (what it's great at, where
+    /// it's lighter, then the Health permission request). Presented from the About page's primary
+    /// action. iOS does the real HealthKit request; macOS reads as an iPhone-only step.
+    @State private var showAppleWatchSetup = false
 
     /// Steps-estimate calibration sheet (WHOOP 4.0). Reached from the Profile card's "Steps estimate"
     /// tap-through; explains the estimate, shows the current fit + a recent estimated-vs-phone table,
@@ -174,6 +188,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showHowNoopWorks) {
             HowNoopWorksView(onClose: { showHowNoopWorks = false })
+        }
+        .sheet(isPresented: $showAppleWatchSetup) {
+            AppleWatchSetupView(onClose: { showAppleWatchSetup = false })
         }
         .sheet(isPresented: $showStepsCalibration) {
             StepsCalibrationSheet(repo: model.repo, onClose: { showStepsCalibration = false })
@@ -623,6 +640,22 @@ struct SettingsView: View {
                     .onChangeCompat(of: useNavyIcon) { applyAppIcon($0) }
                 }
                 #endif
+
+                Divider().overlay(StrandPalette.hairline).padding(.vertical, 4)
+                // MARK: Day-cycle background — the time-of-day scene behind Today (#698). On by default.
+                // Off swaps it for the plain dark canvas for people who find the moving scene distracting.
+                Toggle(isOn: $showDayCycleBackground) {
+                    Text("Day-cycle background")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("Shows a soft sunrise, day, dusk and night scene behind the Today screen. Turn it off for a plain dark canvas — your cards stay exactly as readable.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -886,6 +919,22 @@ struct SettingsView: View {
                 .accessibilityHint("Offers to save a workout when it spots sustained elevated heart rate")
 
                 Text("After a sync, NOOP looks over your recent heart rate for a sustained, raised stretch that looks like exercise and offers to save it. It only ever suggests — nothing is saved until you tap Save, and you can dismiss any suggestion. Deliberately conservative, so the odd workout may be missed. On \(Platform.deviceNounPhrase) only.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider().overlay(StrandPalette.hairline)
+
+                Toggle(isOn: $workoutKeepScreenOn) {
+                    Text("Keep screen on during a workout")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                .accessibilityHint("Stops the screen dimming while a workout is recording")
+
+                Text("Holds the screen awake while you're recording a workout, so your live heart rate stays visible without the device dimming. Only applies during a recording — the screen sleeps normally the rest of the time. Leaving it on does use a bit more battery, and means your unlocked screen stays visible for the whole workout, so flip it off if that's a concern.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1557,6 +1606,38 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("How your scores work")
 
+                // About Apple Watch data: the honest capability/confidence page for running NOOP off
+                // just an Apple Watch (what it's great at, where it's lighter than a strap, why recovery
+                // calibrates, the SpO₂ caveat). Its primary action opens the watch setup + Health
+                // permission flow. Renders the same on macOS and iOS (pure reference content); the setup
+                // sheet itself does the iOS-only HealthKit request.
+                NavigationLink {
+                    AppleWatchAboutView(onStartSetup: { showAppleWatchSetup = true })
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "applewatch")
+                            .foregroundStyle(StrandPalette.accent)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("About Apple Watch data")
+                                .font(StrandFont.body)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                            Text("Use NOOP with just an Apple Watch. What it's great at, and where it's lighter than a strap.")
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("About Apple Watch data")
+
                 // Storage (#590) — on-device space breakdown (database, leftover import Inbox, stranded
                 // temp files) plus a one-tap clean-up. iOS is where "Documents & Data" can balloon after
                 // an Apple Health import; it compiles + reads fine on macOS too, so the link is unconditional.
@@ -1690,7 +1771,33 @@ struct SettingsView: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Project home and source code at noop dot fans")
+                .accessibilityLabel("Project home and source code on GitHub")
+
+                // Mirror — noop.fans carries every release alongside GitHub, so users have a
+                // fallback if GitHub is ever unreachable (#606). Same downloads, release for release.
+                Link(destination: URL(string: "https://noop.fans")!) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(StrandPalette.accent)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Mirror — noop.fans")
+                                .font(StrandFont.body)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                            Text("Every release, mirrored. A fallback if GitHub is ever down.")
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Mirror at noop dot fans, a fallback if GitHub is down")
 
                 Text("A standalone companion for your WHOOP. Everything stays on this device — your history, your live stream, your numbers. Nothing is uploaded. NOOP is an independent, experimental project, not the WHOOP app.")
                     .font(StrandFont.subhead)

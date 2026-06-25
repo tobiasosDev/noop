@@ -165,7 +165,12 @@ struct MetricExplorerView: View {
     }
 
     private var exploreScaffold: some View {
-        ScreenScaffold(title: "Explore", subtitle: "Every signal, one tap deep.") {
+        // PERF (scroll): lazy column. Unlike most screens, Explore's content is a flat list of sibling
+        // sections (the probe hint, the Deep Timeline row, then a long per-category ForEach of metric
+        // cards), so LazyVStack genuinely builds the off-screen category cards on demand. No
+        // `staggeredAppear` here and identical column alignment/spacing (20) + per-child bottom padding,
+        // so the layout is byte-identical to the eager VStack.
+        ScreenScaffold(title: "Explore", subtitle: "Every signal, one tap deep.", lazy: true) {
             // A quiet, non-blocking hint while the empty-dot probe runs its first pass. The rows below
             // render in full immediately regardless — this only reassures during the scan, and never
             // leaves the screen reading as a bare/empty list before the probe lands (#199).

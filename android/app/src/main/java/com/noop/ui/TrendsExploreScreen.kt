@@ -321,32 +321,41 @@ fun TrendsExploreScreen(vm: AppViewModel) {
     val windowed = remember(series, effectiveRange) { series.windowFor(effectiveRange) }
     val fellBack = effectiveRange != range
 
-    ScreenScaffold(title = "Explore", subtitle = "Every signal, one tap deep.") {
+    // PERF (#707): lazy scaffold so only the on-screen rows (the hero chart card especially) compose +
+    // are accessibility-walked on scroll. Each top-level child is one `item { }` in the same order; the
+    // conditional empty-state note uses `if (cond) { item {} }` so it adds no row when hidden. No standalone
+    // Spacers here — the LazyColumn's `spacedBy(20.dp)` reproduces the eager column's row spacing exactly.
+    LazyScreenScaffold(title = "Explore", subtitle = "Every signal, one tap deep.") {
 
         // The headline tap-through (#575): a full-day, full-resolution, zoomable timeline. Sits above the
         // per-metric catalog because it's a different kind of view — every second of one day, not one
         // number per day. Mirrors the macOS MetricExplorerView "Deep Timeline" hero row.
-        DeepTimelineEntry(onClick = { showDeepTimeline = true })
+        item { DeepTimelineEntry(onClick = { showDeepTimeline = true }) }
 
         // Nothing to explore until history is imported — lead with the verbatim note so
         // the empty picker/chart below is explained.
         if (series.isEmpty()) {
+            item {
             DataPendingNote(
                 title = "Import your history first",
                 body = "Import your history first. A WHOOP export in Data Sources fills " +
                     "every metric you can explore here in about a minute.",
             )
+            }
         }
 
         // METRIC PICKER — a dropdown replacing the old horizontal chip row.
+        item {
         MetricDropdown(
             metrics = metrics,
             selected = selected,
             onSelect = { selectedKey = it },
         )
+        }
 
         // RANGE BAR — overline + title + the one segmented window control, with a caption
         // that flags a sparse auto-widen.
+        item {
         Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
                 Overline(selected.category)
@@ -369,13 +378,17 @@ fun TrendsExploreScreen(vm: AppViewModel) {
                 onSelect = { range = it },
             )
         }
+        }
+        item {
         Text(
             text = rangeCaption(series, windowed, range, effectiveRange, fellBack),
             style = NoopType.footnote,
             color = if (fellBack) Palette.statusWarning else Palette.textTertiary,
         )
+        }
 
         // HERO CHART — line over the window + latest "as of" read-out in the card.
+        item {
         HeroChartCard(
             metric = selected,
             windowed = windowed,
@@ -384,14 +397,17 @@ fun TrendsExploreScreen(vm: AppViewModel) {
             range = range,
             fellBack = fellBack,
         )
+        }
 
         // STAT ROW — Average / Min / Max / Latest / Δ vs previous window.
+        item {
         StatRow(
             metric = selected,
             series = series,
             windowed = windowed,
             effectiveRange = effectiveRange,
         )
+        }
     }
 }
 

@@ -34,7 +34,11 @@ else echo "  ✗ macOS build FAILED"; grep -E 'error:' /tmp/v7a-mac.log | sed 's
 # ── iOS unsigned (for AltStore/SideStore) ──────────────────────────────────────
 echo "═══ iOS (unsigned Release) ═══"
 rm -rf build/ios-dd
-xcodebuild -scheme NOOPiOS -configuration Release -sdk iphoneos \
+# Destination-driven (NOT -sdk iphoneos): the iOS app now embeds the watchOS app at
+# NOOP.app/Watch/NOOPWatch.app, and forcing the iOS SDK on the whole scheme would compile the
+# watch targets against iOS (where watch-only widget families like .accessoryCorner do not exist).
+# The destination lets each target build for its own platform; output still lands in Release-iphoneos.
+xcodebuild -scheme NOOPiOS -configuration Release -destination 'generic/platform=iOS' \
   -derivedDataPath build/ios-dd CODE_SIGNING_ALLOWED=NO build >/tmp/v7a-ios.log 2>&1
 IOSAPP="build/ios-dd/Build/Products/Release-iphoneos/NOOP.app"
 if [ -d "$IOSAPP" ]; then
@@ -44,6 +48,15 @@ if [ -d "$IOSAPP" ]; then
   if [ -n "$LEAK" ]; then echo "  ✗ LEAK in $LEAK"; else echo "  ✓ no home-path leak"; fi
   STAGE="build/ios-stage"; rm -rf "$STAGE"; mkdir -p "$STAGE/Payload"
   cp -R "$IOSAPP" "$STAGE/Payload/"
+  # Strip the embedded watchOS app from the SIDELOAD payload only. Re-signing a nested watch app + its
+  # complication under a free Apple ID is an Apple limitation that crashes AltStore / SideStore mid-install
+  # with InvalidCompanionAppBundleIdentifier (the v7.2.0 regression). Build-from-source still ships the watch
+  # ($IOSAPP, already anonymized + leak-checked, is untouched); only this staged copy is thinned. The iOS app
+  # has no runtime dependency on the watch bundle and the IPA is unsigned, so there is no signature to break.
+  if [ -d "$STAGE/Payload/NOOP.app/Watch" ]; then
+    rm -rf "$STAGE/Payload/NOOP.app/Watch"
+    echo "  ✓ stripped embedded watch app from the sideload IPA (free-Apple-ID install fix; #751 mp3geek)"
+  fi
   ( cd "$STAGE" && zip -qry "$OLDPWD/$DIST/NOOP-v$VER.ipa" Payload )
   [ -f "$DIST/NOOP-v$VER.ipa" ] && ok_ios=1 && echo "  ✓ dist/NOOP-v$VER.ipa ($(( $(stat -f '%z' "$DIST/NOOP-v$VER.ipa")/1024/1024 ))MB)"
 else echo "  ✗ iOS build FAILED"; grep -E 'error:' /tmp/v7a-ios.log | sed 's#.*Strand/##' | sort -u | head; fi

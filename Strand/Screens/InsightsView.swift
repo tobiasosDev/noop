@@ -157,7 +157,11 @@ struct InsightsView: View {
     @State private var journalDayOffset = 0
 
     var body: some View {
-        ScreenScaffold(title: "Insights", subtitle: "Interrogate what affects what.") {
+        ScreenScaffold(title: "Insights", subtitle: "Interrogate what affects what.",
+                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
+                       // alignment/spacing/header). The content is one inner eager VStack, so any nested
+                       // staggered reveals are unchanged; this only defers building that stack on scroll-in.
+                       lazy: true) {
             if !loaded {
                 ComingSoon(what: "Reading your journal and outcomes…")
             } else {

@@ -146,12 +146,24 @@ fun WorkoutsScreen(vm: AppViewModel) {
         }
     }
 
-    ScreenScaffold(title = "Workouts", subtitle = "Every session, threaded together.") {
+    // PERF (#707): migrate the eager ScreenScaffold to its lazy twin so each top-level section is its own
+    // `item { }` and only the on-screen cards compose + get semantics-walked (the Compose accessibility
+    // copy on scroll was a contributor to the OOM). Order / padding / 20dp spacing are unchanged: the
+    // hero/summary/breakdown/zones/sessions cards stay one-per-item in the SAME sequence. The per-section
+    // `val` resolves run ONCE in the content lambda (captured by each item), so this also de-dupes the
+    // range/window/group computation that the eager column re-derived inline. The dialog overlay below the
+    // scaffold is untouched. The All-Sessions list still lives inside its single enclosing card (appearance
+    // is byte-identical) — see the report note on why it isn't flattened to top-level items here.
+    LazyScreenScaffold(title = "Workouts", subtitle = "Every session, threaded together.") {
         // Start (or stop) a workout right here, not only on Live — mirrors the Live control (#115).
+        item {
         WorkoutStartSection(vm)
+        }
 
         if (allRows.isEmpty()) {
+            item {
             EmptyWorkouts(loaded, onAdd = { dialog = DialogTarget(null) })
+            }
         } else {
             // Resolve the effective range + windowed rows + per-sport groups once.
             val resolved = effectiveRange(allRows, range)
@@ -159,6 +171,7 @@ fun WorkoutsScreen(vm: AppViewModel) {
             val groups = sportGroups(windowRows)
             val fellBack = resolved != range
 
+            item {
             RangeBar(
                 range = range,
                 effectiveRange = resolved,
@@ -167,11 +180,13 @@ fun WorkoutsScreen(vm: AppViewModel) {
                 onSelect = { range = it },
                 onAdd = { dialog = DialogTarget(null) },
             )
-            postLogNote?.let { PostLogNoteBanner(it) }
-            EffortHero(rows = windowRows, effectiveRange = resolved, groups = groups)
-            SummarySection(rows = windowRows, effectiveRange = resolved, groups = groups)
-            BreakdownSection(groups = groups, rows = windowRows)
-            ZonesSection(windowRows)
+            }
+            postLogNote?.let { item { PostLogNoteBanner(it) } }
+            item { EffortHero(rows = windowRows, effectiveRange = resolved, groups = groups) }
+            item { SummarySection(rows = windowRows, effectiveRange = resolved, groups = groups) }
+            item { BreakdownSection(groups = groups, rows = windowRows) }
+            item { ZonesSection(windowRows) }
+            item {
             SessionsSection(
                 vm = vm,
                 rows = windowRows,
@@ -183,6 +198,7 @@ fun WorkoutsScreen(vm: AppViewModel) {
                 onDismiss = { vm.dismissDetected(it) },
                 onDelete = { vm.deleteWorkout(it) },
             )
+            }
         }
     }
 

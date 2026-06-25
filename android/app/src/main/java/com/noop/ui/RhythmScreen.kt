@@ -242,7 +242,10 @@ private fun RhythmVisualization(
         ?: readable.firstOrNull()
     val allPoints = windows.flatMap { it.poincare }
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each card is its own `item { }` (in the conditional branches too) so
+    // only on-screen cards compose + are accessibility-walked, with the LazyColumn's `spacedBy(20.dp)`
+    // reproducing the eager column's inter-card spacing exactly. The Poincaré PlotCard is the heavy one.
+    LazyScreenScaffold(
         title = "Rhythm",
         subtitle = "An experimental picture of your beat-to-beat timing",
         trailing = if (onClose != null) {
@@ -255,21 +258,23 @@ private fun RhythmVisualization(
             null
         },
     ) {
-        SourceBadge("Experimental", tint = Palette.restColor)
+        item { SourceBadge("Experimental", tint = Palette.restColor) }
 
         if (allPoints.isEmpty()) {
+            item {
             DataPendingNote(
                 title = "No clear reading yet",
                 body = "Rhythm only looks during quiet, still, resting windows — so it needs a calm night's worth of steady beats. Once there's a clean window, the scatter and its description show here.",
             )
+            }
         } else {
-            SummaryCard(night = night, headline = headline)
-            PlotCard(points = allPoints)
-            StatsCard(headline = headline)
+            item { SummaryCard(night = night, headline = headline) }
+            item { PlotCard(points = allPoints) }
+            item { StatsCard(headline = headline) }
         }
 
-        MethodologyCard()
-        RhythmDisclaimerNote()
+        item { MethodologyCard() }
+        item { RhythmDisclaimerNote() }
     }
 }
 

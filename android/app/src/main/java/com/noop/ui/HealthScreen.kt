@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -93,8 +94,6 @@ fun HealthScreen(
 ) {
     val context = LocalContext.current
     val profile = remember { ProfileStore.from(context.applicationContext) }
-    val live by vm.live.collectAsStateWithLifecycle()
-    val bpm by vm.bpm.collectAsStateWithLifecycle()
     val today by vm.today.collectAsStateWithLifecycle()
     // Full merged daily history — feeds the personal-baseline banding of the vitals grid.
     val days by vm.recentDays.collectAsStateWithLifecycle()
@@ -112,62 +111,76 @@ fun HealthScreen(
         onDispose { vm.releaseRealtimeHr() }
     }
 
-    val displayHr = displayHr(bpm, live)
-    val hasLiveHr = displayHr != null
+    // PERF (#scroll-jank): the BLE live state + smoothed bpm tick ~1Hz. Reading them in this body to
+    // compute the empty-state gate recomposed the WHOLE Health screen on every HR tick. The body only
+    // needs "is a live HR present" (null↔non-null), never the bpm number — so collapse the ticking
+    // value to a stable boolean via derivedStateOf: a 72→73 bpm tick produces an EQUAL boolean and the
+    // body is NOT recomposed; it only recomposes when live-HR presence actually flips. The live bpm
+    // number is rendered in HeartRateSection / SyncStatusSection, which now scope their own collection.
+    // Mirrors the shipped Today liveSnap fix. Appearance-preserving.
+    val live by vm.live.collectAsStateWithLifecycle()
+    val bpm by vm.bpm.collectAsStateWithLifecycle()
+    val hasLiveHr by remember { derivedStateOf { displayHr(bpm, live) != null } }
 
-    ScreenScaffold(
+    LazyScreenScaffold(
         title = "Health Monitor",
         subtitle = "Live vitals, streamed from the strap.",
     ) {
         if (today == null && !hasLiveHr) {
             // Even with no history yet, a freshly-connected strap can be told to sync now (#364) — the
             // manual "Sync now" + honest status sits above the empty state so it's always reachable.
-            SyncStatusSection(live = live, onSyncNow = { vm.syncNow() })
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            HealthEmptyState()
+            item { SyncStatusSection(vm = vm, onSyncNow = { vm.syncNow() }) }
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item { HealthEmptyState() }
         } else {
             // Manual "Sync now" + honest sync status (#364) — the first section so the strap-history
             // control is reachable above the live hero. Mirrors HealthView.swift's top Sync section.
-            SyncStatusSection(live = live, onSyncNow = { vm.syncNow() })
-            Spacer(Modifier.height(Metrics.selectorTopUp))
+            item { SyncStatusSection(vm = vm, onSyncNow = { vm.syncNow() }) }
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
             // ScreenScaffold applies a 20dp arrangement gap between its direct children;
             // a small top-up reaches the section gap (28dp) used between macOS sections.
-            HeartRateSection(live = live, hrMax = hrMax, bpm = bpm)
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            VitalsSection(
-                title = "Vital Signs",
-                overline = "Latest readings",
-                trailing = null,
-                vitals = latestVitals(days, UnitPrefs.temperature(LocalContext.current)),
-                onVitalClick = onVitalClick,
-                captionMode = VitalCaptionMode.AS_OF,
-            )
+            item { HeartRateSection(vm = vm, hrMax = hrMax) }
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item {
+                VitalsSection(
+                    title = "Vital Signs",
+                    overline = "Latest readings",
+                    trailing = null,
+                    vitals = latestVitals(days, UnitPrefs.temperature(LocalContext.current)),
+                    onVitalClick = onVitalClick,
+                    captionMode = VitalCaptionMode.AS_OF,
+                )
+            }
             // FITNESS AGE — the weekly Saturday number from the engine (resting HR + activity vs your
             // age), with an honest readiness checklist behind a tap. Authoritative value comes from the
             // metricSeries the IntelligenceEngine writes; readiness is derived from what this screen sees.
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            FitnessAgeSection(vm = vm, days = days, profile = profile)
-            VitalitySection(vm = vm, days = days, profile = profile)
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item { FitnessAgeSection(vm = vm, days = days, profile = profile) }
+            item { VitalitySection(vm = vm, days = days, profile = profile) }
             // SKIN TEMPERATURE (v5 pillar) — Cycle awareness (opt-in), Body clock + an illness heads-up,
             // each from a pure engine RESULT the ViewModel publishes. A section of Health, never its own
             // destination (umbrella §2.4). Non-clinical observations about your own numbers.
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            SkinTempSuiteSection(
-                signals = v5Signals,
-                cycleEnabled = cycleEnabled,
-                onEnableCycle = { vm.setCycleTrackingEnabled(true) },
-            )
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item {
+                SkinTempSuiteSection(
+                    signals = v5Signals,
+                    cycleEnabled = cycleEnabled,
+                    onEnableCycle = { vm.setCycleTrackingEnabled(true) },
+                )
+            }
             // CONTRIBUTORS (README screen #5, recovery detail) — the signals behind recovery as
             // labelled progress bars in the shared stage/zone bar style, mirroring Today's section.
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            HealthContributorsSection(today)
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item { HealthContributorsSection(today) }
             // RECORDS & SOURCES (Swift parity) — deep-link rows into the local Lab Book and the
             // "Your Data, Fused" record, so both are discoverable from Health, not just the drawer.
-            Spacer(Modifier.height(Metrics.selectorTopUp))
-            RecordsAndSourcesSection(
-                onOpenLabBook = onOpenLabBook,
-                onOpenFusedRecord = onOpenFusedRecord,
-            )
+            item { Spacer(Modifier.height(Metrics.selectorTopUp)) }
+            item {
+                RecordsAndSourcesSection(
+                    onOpenLabBook = onOpenLabBook,
+                    onOpenFusedRecord = onOpenFusedRecord,
+                )
+            }
         }
     }
 }
@@ -183,7 +196,13 @@ fun HealthScreen(
 // shows when history last synced.
 
 @Composable
-private fun SyncStatusSection(live: LiveState, onSyncNow: () -> Unit) {
+private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
+    // PERF (#scroll-jank): collect the BLE live state HERE, inside the leaf, instead of receiving it
+    // from the screen body. The live object identity changes ~1Hz with each HR tick; reading it at body
+    // scope recomposed the whole Health screen. Scoping the collection to this section confines that
+    // ~1Hz churn to the (cheap) sync card alone. The fields read below are slow-changing; only this
+    // leaf re-runs per tick. Appearance + behaviour identical.
+    val live by vm.live.collectAsStateWithLifecycle()
     // The strap link is usable for a manual offload kick (matches WhoopBleClient.syncNow's own gate).
     val canSync = live.connected && live.bonded && !live.backfilling
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
@@ -952,7 +971,14 @@ private fun synthesiseSeries(values: List<Double>): List<LiveHrSample> {
 // MARK: - Heart rate hero (live)
 
 @Composable
-private fun HeartRateSection(live: LiveState, hrMax: Int, bpm: Int?) {
+private fun HeartRateSection(vm: AppViewModel, hrMax: Int) {
+    // PERF (#scroll-jank): collect the BLE live state + smoothed bpm HERE, in the HR hero leaf, instead
+    // of receiving them from the screen body. Both tick ~1Hz; reading them at body scope recomposed the
+    // whole Health screen on every heartbeat. Scoping the collection to this section confines the ~1Hz
+    // re-render to the HR hero alone — the rest of the screen no longer recomposes per beat. Mirrors the
+    // shipped Today fix (HeartRateTrendCard scopes its own collection). Appearance + behaviour identical.
+    val live by vm.live.collectAsStateWithLifecycle()
+    val bpm by vm.bpm.collectAsStateWithLifecycle()
     val displayHr = displayHr(bpm, live)
     val hasLiveHr = displayHr != null
     val derived = hrIsDerived(live)

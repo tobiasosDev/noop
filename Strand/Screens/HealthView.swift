@@ -13,11 +13,87 @@ import WhoopStore
 /// a ChartCard — no ad-hoc card heights or paddings.
 struct HealthView: View {
     @EnvironmentObject var repo: Repository
-    @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
-    @EnvironmentObject var model: AppModel
+    // NOTE: HealthView itself deliberately does NOT observe `LiveState`/`AppModel` for live HR. A
+    // connected strap publishes at ~1 Hz; observing here would re-evaluate this body (and re-diff the
+    // heavy vitals/skin-temp/age sections) on every tick. The ONLY live-dependent decision the parent
+    // used to make — "empty state vs the live stack while there's no history yet" — now lives in the
+    // `HealthFirstRunContent` leaf, which owns `live`/`model` itself. The common path (history present)
+    // branches purely on `repo.days`, so a live tick re-renders only the `HeartRateSection` hero leaf.
 
-    // MARK: - Derived live HR
+    // MARK: - Body
+
+    var body: some View {
+        ScreenScaffold(title: "Health Monitor",
+                       subtitle: "Live vitals, streamed from the strap.",
+                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
+                       // alignment/spacing/header); builds the trailing vitals/skin-temp/age sections on
+                       // demand instead of all up-front.
+                       onRefresh: { await repo.refresh() },
+                       lazy: true) {
+            if repo.days.isEmpty {
+                // First run / no history: whether to show the empty state or the full live stack depends
+                // on whether a strap is streaming live HR — a `live`-dependent choice. It's isolated to
+                // this leaf (which owns `live`/`model`) so a ~1 Hz HR tick re-renders only this branch,
+                // never the parent, and only while there's no history (a transient first-run state).
+                HealthFirstRunContent()
+            } else {
+                // History present: `live` is irrelevant to the layout choice, so the parent renders the
+                // full section stack directly without observing the HR stream.
+                HealthSectionsStack()
+            }
+        }
+    }
+}
+
+// MARK: - Content stacks
+
+/// The full Health section stack (live HR hero + the static vitals/age/skin-temp sections). Each section
+/// is its own leaf owning exactly what it needs, so only the `HeartRateSection` hero re-renders on a ~1 Hz
+/// HR tick — the static sections depend on `repo`/`profile`/`model` snapshots only. Shared by the
+/// history-present path and the first-run live path so the stack is defined once.
+private struct HealthSectionsStack: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+            // Manual "Sync now" + honest sync status (#364). Its own view so the ~1Hz HR stream
+            // doesn't re-render it; depends on `live` (connection/backfill state) + `model`.
+            SyncStatusSection()
+            // The live HR section is its own view: it owns `live`/`profile`,
+            // so the ~1Hz HR stream re-renders only this subtree — the static
+            // vitals grid below does not re-render on each HR tick.
+            HeartRateSection()
+            // Fitness Age (weekly, computed by IntelligenceEngine and read back from the
+            // "fitness_age" metricSeries). Its own view depending only on `repo`/`profile`,
+            // so the live HR stream never re-renders it.
+            FitnessAgeSection()
+            // Vitality / Body Age (weekly, computed by IntelligenceEngine from the mortality-
+            // hazard model). Its own view depending only on repo/profile.
+            VitalitySection()
+            // Screen-5 recovery detail: the CONTRIBUTORS to today's recovery as
+            // labelled progress bars (HRV / Resting HR / Sleep / Respiratory), each
+            // scored against the on-device baseline. Depends only on `repo`.
+            RecoveryContributorsSection()
+            // The static vitals grid is its own view depending only on `repo`,
+            // so it is unaffected by live HR ticks.
+            VitalsSection()
+            // v5 skin-temperature suite: the illness "heads-up", body clock, and (opt-in) cycle
+            // awareness, each driven by a pure StrandAnalytics engine result the analytics pass
+            // computed and AppModel publishes. Its own view depending on `model` + `repo`.
+            SkinTempSection()
+            // v5 deep-links: the records logbook + the multi-device fused record, reachable
+            // from their honest Health home as drill-in rows (not their own destinations).
+            HealthHubLinksSection()
+        }
+    }
+}
+
+/// First-run content (no history yet). Owns `live`/`model` so the live-HR-gated choice between the empty
+/// state and the full live stack ticks here, in isolation, instead of re-rendering HealthView. Renders
+/// byte-for-byte what the parent's inline `repo.days.isEmpty && !hasLiveHR` branch did.
+private struct HealthFirstRunContent: View {
+    @EnvironmentObject var repo: Repository
+    @EnvironmentObject var live: LiveState
+    @EnvironmentObject var model: AppModel
 
     /// HR to display: the spike-filtered median (model.bpm, #39) when available, else the reported
     /// value, else R-R-derived (the strap streams R-R even when its HR field reads 0).
@@ -29,58 +105,17 @@ struct HealthView: View {
     }
     private var hasLiveHR: Bool { displayHR != nil }
 
-    // MARK: - Body
-
     var body: some View {
-        ScreenScaffold(title: "Health Monitor",
-                       subtitle: "Live vitals, streamed from the strap.",
-                       onRefresh: { await repo.refresh() }) {
-            if repo.days.isEmpty && !hasLiveHR {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    // Even with no history yet, a freshly-connected strap can be told to sync now (#364) —
-                    // so the control is reachable before the screen has any data to show.
-                    SyncStatusSection()
-                    emptyState
-                }
-            } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    // Manual "Sync now" + honest sync status (#364). Its own view so the ~1Hz HR stream
-                    // doesn't re-render it; depends on `live` (connection/backfill state) + `model`.
-                    SyncStatusSection()
-                    // The live HR section is its own view: it owns `live`/`profile`,
-                    // so the ~1Hz HR stream re-renders only this subtree — the static
-                    // vitals grid below does not re-render on each HR tick.
-                    HeartRateSection()
-                    // Fitness Age (weekly, computed by IntelligenceEngine and read back from the
-                    // "fitness_age" metricSeries). Its own view depending only on `repo`/`profile`,
-                    // so the live HR stream never re-renders it.
-                    FitnessAgeSection()
-                    // Vitality / Body Age (weekly, computed by IntelligenceEngine from the mortality-
-                    // hazard model). Its own view depending only on repo/profile.
-                    VitalitySection()
-                    // Screen-5 recovery detail: the CONTRIBUTORS to today's recovery as
-                    // labelled progress bars (HRV / Resting HR / Sleep / Respiratory), each
-                    // scored against the on-device baseline. Depends only on `repo`.
-                    RecoveryContributorsSection()
-                    // The static vitals grid is its own view depending only on `repo`,
-                    // so it is unaffected by live HR ticks.
-                    VitalsSection()
-                    // v5 skin-temperature suite: the illness "heads-up", body clock, and (opt-in) cycle
-                    // awareness, each driven by a pure StrandAnalytics engine result the analytics pass
-                    // computed and AppModel publishes. Its own view depending on `model` + `repo`.
-                    SkinTempSection()
-                    // v5 deep-links: the records logbook + the multi-device fused record, reachable
-                    // from their honest Health home as drill-in rows (not their own destinations).
-                    HealthHubLinksSection()
-                }
+        if !hasLiveHR {
+            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                // Even with no history yet, a freshly-connected strap can be told to sync now (#364) —
+                // so the control is reachable before the screen has any data to show.
+                SyncStatusSection()
+                ComingSoon(what: "No biometrics yet. Import your WHOOP export (and Apple Health if you have it) in Data Sources to fill this in.")
             }
+        } else {
+            HealthSectionsStack()
         }
-    }
-
-    // MARK: - Empty state
-
-    private var emptyState: some View {
-        ComingSoon(what: "No biometrics yet. Import your WHOOP export (and Apple Health if you have it) in Data Sources to fill this in.")
     }
 }
 
@@ -454,7 +489,7 @@ private struct RecoveryContributorsSection: View {
                 VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                     ForEach(Array(contributors.enumerated()), id: \.offset) { idx, c in
                         ContributorBar(label: c.label, strength: ready ? c.strength : nil,
-                                       word: ready ? c.word : "Calibrating",
+                                       word: ready ? c.word : String(localized: "Calibrating"),
                                        detail: c.detail, tint: c.tint)
                             .staggeredAppear(index: idx)
                     }

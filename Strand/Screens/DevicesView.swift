@@ -11,7 +11,11 @@ import WhoopStore
 // active-device change — so this view never touches BLEManager or the WHOOP path directly.
 struct DevicesView: View {
     @EnvironmentObject var model: AppModel
-    @EnvironmentObject var live: LiveState
+    // PERF: this OUTER view does NOT observe `LiveState`. It only branches on `model.deviceRegistry`
+    // becoming non-nil and hands off to `DevicesContent`, which owns its own `@EnvironmentObject live`
+    // (the live battery / "Active · Live" badge live there). Observing `live` here would re-render the
+    // whole screen on every ~1 Hz strap tick for no visible change — `live` is still in the environment
+    // for `DevicesContent` and the Add-device wizard, so nothing downstream loses its live readout.
 
     var body: some View {
         ScreenScaffold(title: "Devices",
@@ -339,10 +343,11 @@ private struct DeviceCard: View {
     }
 
     /// SF Symbol for the device: WHOOP keeps the band glyph; an FTMS machine reads as gym equipment;
-    /// generic straps read as a heart-rate strap.
+    /// an Apple Watch reads as a watch; generic straps read as a heart-rate strap.
     private var icon: String {
         if device.sourceKind == .ftms { return "figure.run.treadmill" }
         if device.sourceKind == .huami { return "waveform.path.ecg.rectangle" }
+        if device.sourceKind == .liveAppleWatch { return "applewatch" }
         return SourceCoordinator.isWhoop(device) ? "applewatch.side.right" : "heart.circle"
     }
 
@@ -417,6 +422,23 @@ struct DeviceCapabilityProfile {
                 captures: "Heart rate (live, best-effort)",
                 powers: "Powers the live console + Effort — no Charge, Rest or Sleep",
                 footnote: "Experimental: live heart rate where the band exposes it. Some bands need a pairing we can't do yet — NOOP will say so honestly and never show a made-up number. No sleep, recovery, skin temp, SpO₂ or steps.")
+        }
+        // Apple Watch (live HealthKit source). UNLIKE the WHOOP/strap branches, the watch's stored
+        // capability `Set` is already the honest per-model trim (AppleWatchDevice only adds a metric
+        // once real data for it arrives), so we read the labels straight off it. An older watch with
+        // no SpO₂/wrist-temp samples simply won't list them. Recovery is the calibrating-by-design
+        // score (~a week of nights), so the footnote sets that expectation rather than over-promising.
+        if d.sourceKind == .liveAppleWatch {
+            let labels: [(Metric, String)] = [
+                (.hr, "Heart rate"), (.hrv, "HRV"), (.sleep, "Sleep"),
+                (.steps, "Steps"), (.spo2, "Blood oxygen"), (.skinTemp, "Wrist temp"),
+            ]
+            let captures = labels.filter { d.capabilities.contains($0.0) }.map { $0.1 }.joined(separator: " · ")
+            return DeviceCapabilityProfile(
+                displayModel: "Apple Watch",
+                captures: captures.isEmpty ? "Calibrating, no data yet" : captures,
+                powers: "Powers Rest, Effort, Fitness Age and steps, plus Charge once recovery calibrates",
+                footnote: "Computed live from your Apple Watch via Health. Recovery needs about a week of nights to calibrate, and every watch-derived score is labelled with its confidence. Only the metrics your watch actually records are listed above.")
         }
         // Generic heart-rate strap: live HR + R-R only; drives the live console + Effort, nothing nightly.
         // (Same WHOOP test as SourceCoordinator.isWhoop, inlined so this stays nonisolated.)
@@ -503,6 +525,12 @@ struct DeviceCardCatalog: View {
                      addedAt: 0, lastSeenAt: 0)
     }
 
+    private static func watch(_ caps: Set<Metric>) -> PairedDevice {
+        PairedDevice(id: "apple-health", brand: "Apple", model: "Apple Watch", nickname: nil,
+                     peripheralId: nil, sourceKind: .liveAppleWatch, capabilities: caps,
+                     status: .paired, addedAt: 0, lastSeenAt: 0)
+    }
+
     var body: some View {
         ScreenScaffold(title: "Devices",
                        subtitle: "What each band captures — and what NOOP uses it for.") {
@@ -515,6 +543,11 @@ struct DeviceCardCatalog: View {
                            isActive: false, isLiveConnected: false,
                            onMakeActive: {}, onRename: {}, onRemove: {})
                 DeviceCard(device: Self.dev("strap-d", "Polar", "H10", [.hr, .hrv]),
+                           isActive: false, isLiveConnected: false,
+                           onMakeActive: {}, onRename: {}, onRemove: {})
+                // Apple Watch, with an older-model trimmed set (no SpO₂ / wrist temp) so the honest
+                // capability read renders deterministically alongside the straps.
+                DeviceCard(device: Self.watch([.hr, .hrv, .sleep, .steps]),
                            isActive: false, isLiveConnected: false,
                            onMakeActive: {}, onRename: {}, onRemove: {})
             }

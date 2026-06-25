@@ -89,12 +89,16 @@ fun HydrationScreen(viewModel: AppViewModel) {
     val fraction = if (goalMl > 0) (totalMl / goalMl).toFloat() else 0f
     val accent = hydrationAccent
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each top-level section is one `item { }`. Order + spacing unchanged
+    // (LazyColumn reproduces the eager `spacedBy(20.dp)`); only on-screen cards compose + are
+    // accessibility-walked. All children are unconditional, so every wrap is a bare `item { }`.
+    LazyScreenScaffold(
         title = "Hydration",
         subtitle = "Your fluid intake today, on this phone only.",
     ) {
         // RING — total vs goal, in litres. GlowRing already shows the clean full-circle track with no
         // bloom on the light field; the blue accent keeps it on the reset palette (no gold).
+        item {
         NoopCard(padding = 20.dp) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -130,8 +134,10 @@ fun HydrationScreen(viewModel: AppViewModel) {
                 )
             }
         }
+        }
 
         // LOG BUTTONS — Sip / Cup / Bottle, secondary style, equal width.
+        item {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             NoopButton(
                 text = "Sip",
@@ -152,22 +158,28 @@ fun HydrationScreen(viewModel: AppViewModel) {
                 modifier = Modifier.weight(1f),
             ) { log(HydrationGoal.BOTTLE_ML) }
         }
+        }
+        item {
         Text(
             "Sip ${HydrationGoal.SIP_ML} ml · Cup ${HydrationGoal.CUP_ML} ml · Bottle ${HydrationGoal.BOTTLE_ML} ml",
             style = NoopType.footnote,
             color = Palette.textTertiary,
         )
+        }
 
         // 7-DAY HISTORY — flat mini bars, today on the right.
+        item {
         NoopCard(padding = 18.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Overline("Last 7 days")
                 HydrationHistoryBars(history = history, goalMl = goalMl, accent = accent)
             }
         }
+        }
 
         // TODAY'S TOTAL as a single read-out row (the MVP "logged entries" — the day total is the running
         // sum the store banks; per-tap rows aren't separately persisted, so we show the honest day figure).
+        item {
         NoopCard(padding = 18.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Overline("Today")
@@ -204,13 +216,16 @@ fun HydrationScreen(viewModel: AppViewModel) {
                 }
             }
         }
+        }
 
+        item {
         Text(
             "A simple goal that adjusts to your effort. General wellness guidance, not medical advice.",
             style = NoopType.footnote,
             color = Palette.textTertiary,
             textAlign = TextAlign.Start,
         )
+        }
     }
 }
 

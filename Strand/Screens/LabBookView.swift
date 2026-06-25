@@ -45,7 +45,12 @@ struct LabBookView: View {
         ScreenScaffold(
             title: "Lab Book",
             subtitle: "Your bloods, BP and body numbers — kept private, on \(Platform.deviceNounPhrase).",
-            onRefresh: { await load() }
+            onRefresh: { await load() },
+            // PERF: the column ends in one `categorySection` per marker category (bloods / BP / body / …),
+            // each carrying its own sparkline-bearing cards. The LazyVStack path builds the off-screen
+            // categories on demand — byte-identical layout — so a logbook with many categories doesn't
+            // render every section + sparkline up-front.
+            lazy: true
         ) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 headerCard
@@ -405,7 +410,12 @@ private struct MarkerDetailView: View {
 
     var body: some View {
         ScreenScaffold(title: LocalizedStringKey(displayName),
-                       subtitle: "\(readings.count) reading\(readings.count == 1 ? "" : "s") · your own entries") {
+                       subtitle: "\(readings.count) reading\(readings.count == 1 ? "" : "s") · your own entries",
+                       // PERF: chart + full-history column (a trend Sparkline, the compare card, then a
+                       // row-per-reading history list). The LazyVStack path builds the off-screen history
+                       // rows on demand — byte-identical layout — so a marker with many readings doesn't
+                       // materialise its whole list before the trend chart is on screen.
+                       lazy: true) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 trendSection
                 if !numericReadings.isEmpty { compareSection }

@@ -25,7 +25,11 @@ import WhoopStore
 
 struct SleepView: View {
     @EnvironmentObject var repo: Repository
-    @EnvironmentObject var live: LiveState
+    // NOTE: SleepView itself deliberately does NOT observe `LiveState`. A connected strap publishes
+    // at ~1 Hz; observing here would re-evaluate this heavy body on every tick. The only two live
+    // dependencies — the "going to sleep / awake" mark card (it appends to the strap log) and the
+    // "Syncing strap history…" note — each own their OWN `@EnvironmentObject var live` in a small
+    // leaf below (mirrors the Today leaf-scoping pattern), so a tick refreshes only that leaf.
     @EnvironmentObject var intelligence: IntelligenceEngine
 
     // The standard tile grid: ONE adaptive column set, used for every tile group.
@@ -85,11 +89,6 @@ struct SleepView: View {
     /// its OWN separate session row (`userEdited = 1`) — never folded into the night's main sleep.
     @State private var addNap: AddNapSeed?
 
-    /// The most recent sleep-mark the user tapped, shown as a transient confirmation line under the
-    /// two buttons and cleared after a moment. Drives the SwiftUI haptic landing too. LOGGING-ONLY:
-    /// a mark never feeds the sleep detector — it's persisted to the metric series + strap log. (#461)
-    @State private var lastMark: SleepMark?
-
     /// True while the hero's "why this is your main sleep" popover is open. The reason text comes
     /// straight from the foundation `MainNightReason` for the displayed night's blocks — never
     /// re-derived here — so the explainer says exactly what the selector decided. (spec 2026-06-20 C1)
@@ -107,13 +106,19 @@ struct SleepView: View {
         let key = dataKey
         let resolved: SleepModel? = (key == modelKey) ? model : buildModel()
         ScreenScaffold(title: "Sleep", subtitle: "Last night, read in two seconds.",
-                       onRefresh: { await repo.refresh() }) {
+                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
+                       // alignment/spacing/header), builds trailing trend/ledger cards on demand. Combined
+                       // with dropping the top-level LiveState observation (the sleep-mark card + the
+                       // syncing note now own `live` in their own leaves), so a 1 Hz HR tick no longer
+                       // re-evaluates this heavy body.
+                       onRefresh: { await repo.refresh() },
+                       lazy: true) {
             Group {
                 if let resolved {
                     // Each top-level section fades + rises in sequence on first appear (Reduce-Motion safe).
                     VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                         restHero(resolved).staggeredAppear(index: 0)
-                        sleepMarkCard.staggeredAppear(index: 1)
+                        SleepMarkCard().staggeredAppear(index: 1)
                         hero(resolved).staggeredAppear(index: 2)
                         metricGrid(resolved).staggeredAppear(index: 3)
                         sleepDebtLedger(resolved).staggeredAppear(index: 4)
@@ -310,61 +315,11 @@ struct SleepView: View {
     }
 
     // MARK: - 0b. SLEEP MARKS — tap to log "going to sleep" / "I'm awake" (#461, Phase 1)
-
-    /// A compact additive card with two buttons. Tapping logs a timestamped sleep-mark — persisted to
-    /// the `sleep_mark` metric series AND appended to the shareable strap log — then confirms with a
-    /// haptic and a transient line. LOGGING ONLY: a mark never touches the sleep detector or the night
-    /// boundaries on this screen; it's a record for later tap-driven sleep bounds + calibration.
-    @ViewBuilder
-    private var sleepMarkCard: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Sleep marks", overline: "Tap to log", trailing: "Phase 1")
-            NoopCard(tint: StrandPalette.restColor) {
-                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                    Text("Tap when you're heading to bed or when you wake. Each tap is logged with the time — it doesn't change tonight's detected sleep.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: NoopMetrics.gap) {
-                        // Routed through the unified NoopButton system so the two marks sit identically
-                        // (sentence-case label, leading icon at 8pt, controlHeight=48, no glow).
-                        NoopButton("Going to sleep", systemImage: "moon.zzz.fill",
-                                   kind: .secondary, fullWidth: true) { logMark(.bedtime) }
-                            .accessibilityLabel("Log going to sleep")
-
-                        NoopButton("I'm awake", systemImage: "sun.max.fill",
-                                   kind: .secondary, fullWidth: true) { logMark(.wake) }
-                            .accessibilityLabel("Log waking up")
-                    }
-                    if let lastMark {
-                        Text(lastMark.confirmation)
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.restColor)
-                            .transition(.opacity)
-                            .accessibilityLabel(lastMark.confirmation)
-                    }
-                }
-            }
-        }
-        // A success haptic lands when a new mark is captured (value-driven, not per-tap), matching the
-        // app's sparse tactile vocabulary. No-op on macOS.
-        .strandHaptic(.success, trigger: lastMark?.tsMs ?? 0)
-    }
-
-    /// Persist + log a tapped mark. Optimistically shows the confirmation immediately, fires the
-    /// haptic via `lastMark`, appends the human-readable strap-log line, then writes the metric-series
-    /// row through the repo's live store handle (no new Repository API, no schema change). The write is
-    /// idempotent by (deviceId, day, key). (#461)
-    private func logMark(_ type: SleepMarkType) {
-        let mark = SleepMark(type: type)
-        withAnimation(.easeOut(duration: 0.2)) { lastMark = mark }
-        // The shareable strap log is the human-readable surface that lands in a debug export.
-        live.append(log: mark.logLine)
-        Task {
-            guard let store = await repo.storeHandle() else { return }
-            try? await store.upsertMetricSeries([mark.metricPoint], deviceId: repo.deviceId)
-        }
-    }
+    //
+    // Extracted to the `SleepMarkCard` leaf at the foot of this file. It owns its OWN `@EnvironmentObject
+    // var live` (it appends to the shareable strap log) + `repo`, plus the `lastMark` confirmation state,
+    // so SleepView itself no longer observes LiveState and a 1 Hz HR tick can't re-render this body. The
+    // card renders byte-for-byte what the inline `sleepMarkCard` did (same copy, buttons, haptic, layout).
 
     // MARK: - 1. HERO — stage breakdown
 
@@ -1391,11 +1346,77 @@ struct SleepView: View {
     /// each fragment's real timeline end-to-end, and `sourceBlocks` keeps every block so the naps card and
     /// the daily Main/Nap/Total summary can read them. A single-block day is byte-identical to the prior
     /// behaviour. Returns nil if the group decodes to no usable stages. (#170, #318, #518, #555, #561)
+
+    /// The night's DISPLAYED onset (bedtime), aligned to the SAME fragment the pencil edit targets so the
+    /// shown "Asleep" time and the editor agree (#736). The bug: a night sometimes records a brief, all-awake
+    /// pre-sleep stub (e.g. lying in bed scrolling at 21:41) as its own block. The gap-bridge folds it into
+    /// the main-night group, so it became `group.first` and drove the shown bedtime, while the pencil edited
+    /// the MAIN block (`mainNightSession`, which scores by sleep span/timing and skips the all-awake stub) —
+    /// the two diverged and editing couldn't move the displayed bedtime. Fix: skip a leading spurious stub
+    /// when deriving the shown onset so it lands on the first fragment with real sleep, which IS the edit
+    /// target. A stub is spurious only when it's BRIEF and essentially sleepless AND a later fragment carries
+    /// the real sleep; otherwise the earliest effective onset stands (single-block and normal biphasic nights
+    /// are byte-identical). Returns a real fragment's `effectiveStartTs`, never a synthetic value.
+    private func nightOnsetTs(_ group: [CachedSleepSession]) -> Int {
+        // group is ascending by effective onset; first is the earliest fragment.
+        guard let first = group.first else { return 0 }
+        // Walk past any leading spurious pre-onset awake stubs to the first real-sleep fragment.
+        for frag in group {
+            if !isPreOnsetAwakeStub(frag) { return frag.effectiveStartTs }
+        }
+        // Whole group is stub-like (shouldn't reach the hero, mergeDay gates on stages.asleep > 0): keep the
+        // earliest onset rather than inventing one.
+        return first.effectiveStartTs
+    }
+
+    /// A fragment is a spurious pre-onset awake stub when it's within the lie-in cap (<= `preOnsetStubMaxMin`)
+    /// and carries essentially no sleep (asleep minutes <= `preOnsetStubAsleepMaxMin`). Used only to skip such
+    /// a stub when it leads the main-night group, so the displayed bedtime tracks where real sleep began. (#736)
+    private func isPreOnsetAwakeStub(_ frag: CachedSleepSession) -> Bool {
+        let spanMin = Double(frag.endTs - frag.effectiveStartTs) / 60.0
+        let asleepMin = decodeStages(frag.stagesJSON)?.asleep ?? 0
+        return SleepView.isPreOnsetAwakeStub(spanMin: spanMin, asleepMin: asleepMin)
+    }
+
+    /// Longest a leading block can be and still be treated as a spurious pre-sleep awake stub (lying in bed
+    /// before sleep). Generous (a few hours) because the reporter's stub ran 21:41 → 00:27 — ~2h45m of
+    /// pre-sleep awake — so a tight cap missed it (#736). The real guard against swallowing a genuine first
+    /// sleep fragment is `preOnsetStubAsleepMaxMin`: a stub must be essentially SLEEPLESS, which a real sleep
+    /// block never is. The cap only stops a pathological all-day awake block from being silently dropped.
+    static let preOnsetStubMaxMin: Double = 240
+    /// Most asleep minutes a fragment can carry and still count as a (sleepless) pre-onset awake stub. A real
+    /// first sleep fragment of a biphasic night carries far more, so it's never mistaken for a stub. (#736)
+    static let preOnsetStubAsleepMaxMin: Double = 3
+
+    /// Pure stub test on a fragment's span + asleep minutes, so the rule is unit-testable without decoding
+    /// JSON or building a view. BRIEF and essentially sleepless = a spurious pre-onset awake stub. (#736)
+    static func isPreOnsetAwakeStub(spanMin: Double, asleepMin: Double) -> Bool {
+        spanMin <= preOnsetStubMaxMin && asleepMin <= preOnsetStubAsleepMaxMin
+    }
+
+    /// The index into an ascending-by-onset group whose fragment supplies the DISPLAYED bedtime: the first
+    /// fragment that is NOT a spurious leading pre-onset awake stub, falling back to 0 when every fragment is
+    /// stub-like. Pure mirror of `nightOnsetTs`'s walk, driven by per-fragment (spanMin, asleepMin) so a
+    /// golden test can pin the #736 behaviour without view internals. (#736)
+    static func nightOnsetIndex(spansMin: [Double], asleepsMin: [Double]) -> Int {
+        for i in spansMin.indices {
+            let asleep = i < asleepsMin.count ? asleepsMin[i] : 0
+            if !isPreOnsetAwakeStub(spanMin: spansMin[i], asleepMin: asleep) { return i }
+        }
+        return 0
+    }
+
     private func mergeDay(_ sessions: [CachedSleepSession]) -> Night? {
-        let group = SleepView.mainNightGroup(sessions, habitualMidsleepSec: habitualMidsleepSec)
-        // Earliest fragment's EFFECTIVE onset (corrected bedtime when present) to the latest wake. (#318)
-        guard let first = group.first, let last = group.last else { return nil }
-        let onset = first.effectiveStartTs, wake = last.endTs
+        let fullGroup = SleepView.mainNightGroup(sessions, habitualMidsleepSec: habitualMidsleepSec)
+        // The displayed bedtime is the night's MAIN onset, aligned to the same fragment the pencil edits.
+        // The latest wake closes the span. (#318, #736)
+        guard let last = fullGroup.last else { return nil }
+        let onset = nightOnsetTs(fullGroup), wake = last.endTs
+        // Aggregate (stages, hypnogram, motion) from the displayed onset fragment onward so the chart and
+        // the totals start where the bedtime label does — a spurious leading pre-sleep awake stub is dropped
+        // from the night's reconstruction (#736). It still rides in `sourceBlocks`/`mainGroupStarts`, so it's
+        // never lost and never mislabelled as a nap. Without a leading stub this is the whole group (unchanged).
+        let group = fullGroup.drop { $0.effectiveStartTs < onset }
         var stages = Stages(awake: 0, light: 0, deep: 0, rem: 0)
         var segs: [SleepInterval] = []
         // #407: lay the GROUP's per-epoch motion fragment-by-fragment in the SAME order the stage timeline
@@ -1460,26 +1481,37 @@ struct SleepView: View {
         let lastIndex = max(navDays.count - 1, 0)
         let title: LocalizedStringKey = nightOffset == 0 ? "Last night"
             : (nightOffset == 1 ? "1 night ago" : "\(nightOffset) nights ago")
-        HStack(spacing: NoopMetrics.cardInnerSpacing) {
-            Button { if nightOffset < lastIndex { nightOffset += 1 } } label: {
-                Image(systemName: "chevron.left")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(nightOffset >= lastIndex ? StrandPalette.textTertiary : StrandPalette.accent)
-            }
-            .buttonStyle(.plain)
-            .disabled(nightOffset >= lastIndex)
-            .accessibilityLabel("Previous night")
+        VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
+            HStack(spacing: NoopMetrics.cardInnerSpacing) {
+                Button { if nightOffset < lastIndex { nightOffset += 1 } } label: {
+                    Image(systemName: "chevron.left")
+                        .font(StrandFont.headline)
+                        .foregroundStyle(nightOffset >= lastIndex ? StrandPalette.textTertiary : StrandPalette.accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(nightOffset >= lastIndex)
+                .accessibilityLabel("Previous night")
 
-            SectionHeader(title, overline: "Sleep", trailing: trailing)
+                SectionHeader(title, overline: "Sleep", trailing: trailing)
 
-            Button { if nightOffset > 0 { nightOffset -= 1 } } label: {
-                Image(systemName: "chevron.right")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(nightOffset == 0 ? StrandPalette.textTertiary : StrandPalette.accent)
+                Button { if nightOffset > 0 { nightOffset -= 1 } } label: {
+                    Image(systemName: "chevron.right")
+                        .font(StrandFont.headline)
+                        .foregroundStyle(nightOffset == 0 ? StrandPalette.textTertiary : StrandPalette.accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(nightOffset == 0)
+                .accessibilityLabel("Next night")
             }
-            .buttonStyle(.plain)
-            .disabled(nightOffset == 0)
-            .accessibilityLabel("Next night")
+            // When the older-night arrow is disabled because no earlier night is banked yet, the
+            // chevron just greying out reads as broken. Show a short, honest hint instead — earlier
+            // nights only appear once the strap has offloaded them (next-morning sync). (#614 follow-up)
+            if nightOffset >= lastIndex {
+                Text("No earlier night stored yet. Earlier nights sync in the morning.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
         }
     }
 
@@ -1504,15 +1536,16 @@ struct SleepView: View {
     }
 
     /// Sleep performance %: the imported WHOOP figure (sleep_performance, 0–100) when the
-    /// export carried one for that day; else the APPROXIMATE fallback (asleep / personal
-    /// need, capped 100) so strap-only days after the import horizon stay populated.
+    /// export carried one for that day; else the REAL resolved Rest composite for that day —
+    /// the same single source of truth the Today Rest score reads (AnalyticsEngine.Rest.composite,
+    /// what Repository.dailyColumn resolves "sleep_performance" to), NOT a local hours-vs-need
+    /// approximation. Keeps the Rest detail graph in agreement with the Today Rest score. (#614
+    /// follow-up) Values land 0–100 via the composite; the metric() finite filter drops the rest.
     private var performanceSeries: Metric {
         let imported = repo.importedSleep
-        let need = sleepNeedMin
         return metric { d in
             if let p = imported[d.day]?.performancePct { return p }   // export-verbatim
-            guard let asleep = d.totalSleepMin, asleep > 0, need > 0 else { return nil }
-            return min(100, asleep / need * 100)   // APPROXIMATE fallback
+            return AnalyticsEngine.Rest.composite(daily: d)            // real resolved Rest composite
         }
     }
 
@@ -1630,8 +1663,10 @@ struct SleepView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        // While the strap is mid-offload, say so — "No nights" reads as final otherwise (#77).
-        if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
+        // While the strap is mid-offload, say so — "No nights" reads as final otherwise (#77). The note
+        // owns the `LiveState` observation in its own leaf so the chunk count ticks without re-rendering
+        // SleepView (scroll-stutter isolation; identical output to the prior inline check).
+        SleepSyncingNote()
         if repo.loaded {
             ComingSoon(what: "No nights here yet. Import your WHOOP export in Data Sources to see every night, your sleep stages and trends straight away. Or open Intelligence to see last night computed from the strap after you wear it to bed.")
         } else {
@@ -1839,6 +1874,88 @@ struct SleepView: View {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
+}
+
+// MARK: - Live-observing leaf subviews (scroll-stutter isolation)
+//
+// SleepView itself does NOT observe `LiveState` (a connected strap publishes at ~1 Hz, which would
+// re-evaluate the heavy Sleep body on every tick). These two small leaves each hold their OWN
+// `@EnvironmentObject var live`, so a live tick re-renders only the mark card / syncing note — never
+// the hero hypnogram, the stage chart, the metric grid or the trends. They render byte-for-byte what
+// the inline code did before the extraction (mirrors the Today leaf-scoping pattern).
+
+/// The "going to sleep / I'm awake" sleep-mark card (#461, Phase 1). Tapping logs a timestamped mark —
+/// persisted to the `sleep_mark` metric series AND appended to the shareable strap log — then confirms
+/// with a haptic and a transient line. LOGGING ONLY: a mark never touches the sleep detector or the
+/// night boundaries. Owns `live` (it appends to the strap log) + `repo` (the metric-series write) and
+/// the `lastMark` confirmation state, so its strap-log write keeps working without SleepView observing.
+private struct SleepMarkCard: View {
+    @EnvironmentObject private var repo: Repository
+    @EnvironmentObject private var live: LiveState
+
+    /// The most recent sleep-mark the user tapped, shown as a transient confirmation line under the
+    /// two buttons. Drives the SwiftUI haptic landing too. LOGGING-ONLY: a mark never feeds the sleep
+    /// detector — it's persisted to the metric series + strap log. (#461)
+    @State private var lastMark: SleepMark?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Sleep marks", overline: "Tap to log", trailing: "Phase 1")
+            NoopCard(tint: StrandPalette.restColor) {
+                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
+                    Text("Tap when you're heading to bed or when you wake. Each tap is logged with the time — it doesn't change tonight's detected sleep.")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: NoopMetrics.gap) {
+                        // Routed through the unified NoopButton system so the two marks sit identically
+                        // (sentence-case label, leading icon at 8pt, controlHeight=48, no glow).
+                        NoopButton("Going to sleep", systemImage: "moon.zzz.fill",
+                                   kind: .secondary, fullWidth: true) { logMark(.bedtime) }
+                            .accessibilityLabel("Log going to sleep")
+
+                        NoopButton("I'm awake", systemImage: "sun.max.fill",
+                                   kind: .secondary, fullWidth: true) { logMark(.wake) }
+                            .accessibilityLabel("Log waking up")
+                    }
+                    if let lastMark {
+                        Text(lastMark.confirmation)
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.restColor)
+                            .transition(.opacity)
+                            .accessibilityLabel(lastMark.confirmation)
+                    }
+                }
+            }
+        }
+        // A success haptic lands when a new mark is captured (value-driven, not per-tap), matching the
+        // app's sparse tactile vocabulary. No-op on macOS.
+        .strandHaptic(.success, trigger: lastMark?.tsMs ?? 0)
+    }
+
+    /// Persist + log a tapped mark. Optimistically shows the confirmation immediately, fires the
+    /// haptic via `lastMark`, appends the human-readable strap-log line, then writes the metric-series
+    /// row through the repo's live store handle (no new Repository API, no schema change). The write is
+    /// idempotent by (deviceId, day, key). (#461)
+    private func logMark(_ type: SleepMarkType) {
+        let mark = SleepMark(type: type)
+        withAnimation(.easeOut(duration: 0.2)) { lastMark = mark }
+        // The shareable strap log is the human-readable surface that lands in a debug export.
+        live.append(log: mark.logLine)
+        Task {
+            guard let store = await repo.storeHandle() else { return }
+            try? await store.upsertMetricSeries([mark.metricPoint], deviceId: repo.deviceId)
+        }
+    }
+}
+
+/// The "Syncing strap history…" note, shown only while a historical offload is running (#77). Owns the
+/// `LiveState` observation so the chunk count ticks without re-rendering the rest of the Sleep screen.
+private struct SleepSyncingNote: View {
+    @EnvironmentObject private var live: LiveState
+    var body: some View {
+        if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
+    }
 }
 
 // MARK: - Diagonal-hatch track (WHOOP "typical range" context)

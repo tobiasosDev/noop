@@ -16,13 +16,18 @@ extension WidgetSnapshot {
         // Most recent day that actually has a recovery score — the anchor row for every derived field.
         let day = model.repo.days.last(where: { $0.recovery != nil })
         // Rest (sleep_performance) for that same day. exploreSeries merges imported + on-device,
-        // exactly like the Today Rest tile. Keyed to the anchor day; falls back to the series tail when
-        // the anchor row has no Rest entry yet (early in a fresh day), matching TodayView's behaviour.
+        // exactly like the Today Rest tile. The tail fallback (restSeries.last) is ONLY valid when the
+        // anchor day IS the local today: early in a fresh day today's Rest row may not exist yet, so we
+        // borrow the latest value. For an anchor that is NOT today, borrowing the tail would surface a
+        // DIFFERENT day's Rest as this day's (the cross-day bug), so we leave it nil. Mirrors TodayView's
+        // `restByDay[selectedDayKey] ?? (selectedDayOffset == 0 ? restSeries.last?.value : nil)` and the
+        // matching guard in WatchSessionBridge.
         var restScore: Double?
         if let day {
             let restSeries = await model.repo.exploreSeries(key: "sleep_performance", source: "my-whoop")
             let restByDay = Dictionary(restSeries.map { ($0.day, $0.value) }, uniquingKeysWith: { _, last in last })
-            restScore = restByDay[day.day] ?? restSeries.last?.value
+            let anchorIsToday = day.day == Repository.localDayKey(Date())
+            restScore = restByDay[day.day] ?? (anchorIsToday ? restSeries.last?.value : nil)
         }
         let snap = WidgetSnapshot(
             recovery: day?.recovery.map { Int($0.rounded()) },

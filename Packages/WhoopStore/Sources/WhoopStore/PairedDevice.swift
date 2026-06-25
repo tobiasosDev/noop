@@ -50,6 +50,9 @@ public enum SourceKind: String, Sendable, CaseIterable {
     /// behind the experimental add-device tier. Additive: only the experimental wizard writes it.
     /// (Garmin uses `liveBLE` — its live HR is the standard broadcast-HR path, no proprietary protocol.)
     case huami
+    /// Apple Watch streamed via HealthKit (live HealthKit observer + background delivery). Apple-only,
+    /// no Android twin. Additive: only the Apple Watch device registration writes it.
+    case liveAppleWatch
 }
 
 /// Canonical metric a source can provide. Drives capability-aware UI + the day-owner resolver.

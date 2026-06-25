@@ -6,7 +6,11 @@ import StrandAnalytics
 /// using the WHOOP model shape. Makes the app independent of WHOOP's cloud for live-collected days.
 struct IntelligenceView: View {
     @EnvironmentObject var intelligence: IntelligenceEngine
-    @EnvironmentObject var live: LiveState
+    // NOTE: IntelligenceView deliberately does NOT observe `LiveState`. A connected strap publishes at
+    // ~1 Hz, which would re-evaluate this body (and its lazy By-Day list) on every tick. The only live
+    // dependency — the "Syncing strap history…" note shown over the empty state — owns its OWN
+    // `@EnvironmentObject var live` in the `IntelSyncingNote` leaf below (mirrors the Today/Sleep
+    // leaf-scoping pattern), so a tick refreshes only that note.
 
     @State private var range: IntelRange = .month
 
@@ -41,8 +45,10 @@ struct IntelligenceView: View {
                     }
                 }
             } else if intelligence.results.isEmpty {
-                // While the strap is mid-offload, say so — "no days" reads as final otherwise (#77).
-                if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
+                // While the strap is mid-offload, say so — "no days" reads as final otherwise (#77). The
+                // note owns the `LiveState` observation in its own leaf so the chunk count ticks without
+                // re-rendering Intelligence (identical output to the prior inline check).
+                IntelSyncingNote()
                 DataPendingNote(
                     title: "Building from your strap",
                     message: "This builds from the strap as it syncs. Effort and rest appear after you have worn it and slept a night. Charge needs about a week of nights to learn your baseline, or import your WHOOP export to skip the wait.",
@@ -265,6 +271,16 @@ struct IntelligenceView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+}
+
+/// The "Syncing strap history…" note, shown only while a historical offload is running (#77). Owns the
+/// `LiveState` observation in its own leaf (scroll-stutter isolation) so the chunk count ticks without
+/// re-rendering IntelligenceView. Renders byte-for-byte what the prior inline `live.backfilling` check did.
+private struct IntelSyncingNote: View {
+    @EnvironmentObject private var live: LiveState
+    var body: some View {
+        if live.backfilling { SyncingHistoryNote(chunks: live.syncChunksThisSession) }
+    }
 }
 
 /// Recent-window options for the By Day list. `days == nil` means show everything.

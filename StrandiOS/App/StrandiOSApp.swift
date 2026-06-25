@@ -15,6 +15,9 @@ import StrandDesign
 struct StrandiOSApp: App {
     @StateObject private var model: AppModel
     @StateObject private var health: HealthKitBridge
+    /// The phone→watch link. Built + activated here so the watch app actually receives snapshots on a
+    /// real device; without an owner that pushes it, the watch only ever shows placeholder data.
+    @StateObject private var watch = WatchSessionBridge()
     /// Shared cross-screen navigation hook (e.g. Live → Devices). The iOS shell (`RootTabView`)
     /// observes it and presents the Devices manager.
     @StateObject private var router = NavRouter()
@@ -26,6 +29,13 @@ struct StrandiOSApp: App {
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
 
     init() {
+        #if DEBUG
+        // DEBUG-only promo-screenshot harness: when launched with `--demo-hour <Int>`, pin Today to that
+        // hour's day-cycle scene + a per-hour stat frame. No-op (active stays nil) when the arg is absent.
+        // MUST live here, not in StrandApp.swift — that is the macOS @main and is excluded from the iOS
+        // target, so the hook there never runs on iOS.
+        DemoDayHarness.applyLaunchArgsIfNeeded()
+        #endif
         // Debug-only canary: trips if the App Group entitlement is missing on this target before any
         // silent no-op (PendingIntents, WidgetSnapshot.publish, Live Activity) can mask the issue as
         // "the widget doesn't show anything yet." No-op in Release.
@@ -93,6 +103,14 @@ struct StrandiOSApp: App {
                         model.handleHealthImportURL(url)
                     }
                 }
+                // Bring the watch link up once at launch (WCSession ignores a redundant activate), then
+                // push the first snapshot so a watch that's already on-wrist gets current scores without
+                // waiting for the next foreground. activate() is idempotent + a no-op where WC isn't
+                // supported, so this is safe on every device/simulator combination.
+                .task {
+                    watch.activate()
+                    await watch.pushLatest(from: model)
+                }
         }
         // HealthKit authorization is intentionally NOT requested on launch. The system permission
         // dialog without prior in-app rationale violates Apple HIG / App Review guidance — the user
@@ -112,6 +130,10 @@ struct StrandiOSApp: App {
                     health.refreshAuthIfPreviouslyGranted()
                     await health.sync()
                     await WidgetSnapshot.publish(from: model)
+                    // Push the wrist on the SAME refresh as the Home-screen widget so the watch, the
+                    // widget and Today never disagree about which day they describe. Without this the
+                    // watch only ever holds placeholder data on a real device.
+                    await watch.pushLatest(from: model)
                 }
             } else if phase == .background {
                 // #155: refresh the Documents/noop_sync.txt drop file the user's Siri Shortcut logs

@@ -3,6 +3,7 @@ package com.noop.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,20 +98,26 @@ fun DevicesScreen(viewModel: AppViewModel) {
         all.firstOrNull { it.status == DeviceStatus.active.name }?.let { displayName(it) }
             ?: "Your current strap"
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each device card is virtualized via `items(...)` (each was a direct
+    // child of the eager `spacedBy(20.dp)` column, so the LazyColumn's matching spacing is identical) and
+    // the static button/footer are single items. Only on-screen cards compose + are accessibility-walked.
+    // Conditional rows use `if (cond) { item/items }` so a hidden section adds no row.
+    LazyScreenScaffold(
         title = "Devices",
         subtitle = "Pair and manage the bands NOOP reads from.",
     ) {
         if (devices == null) {
             // The registry resolves a beat after launch. Show a calm pending note in that brief window.
+            item {
             DataPendingNote(
                 title = "Getting your devices ready",
                 body = "NOOP is opening your on-device data. Your paired bands will appear here in a moment.",
             )
-            return@ScreenScaffold
+            }
+            return@LazyScreenScaffold
         }
 
-        activeDevices.forEach { device ->
+        items(activeDevices) { device ->
             DeviceCard(
                 device = device,
                 isActive = device.status == DeviceStatus.active.name,
@@ -126,11 +133,11 @@ fun DevicesScreen(viewModel: AppViewModel) {
         }
 
         // Prominent "+ Add a device" button.
-        AddDeviceButton(onClick = { showAddWizard = true })
+        item { AddDeviceButton(onClick = { showAddWizard = true }) }
 
         if (removedDevices.isNotEmpty()) {
-            Overline("Removed", modifier = Modifier.padding(top = 4.dp))
-            removedDevices.forEach { device ->
+            item { Overline("Removed", modifier = Modifier.padding(top = 4.dp)) }
+            items(removedDevices) { device ->
                 DeviceCard(
                     device = device,
                     isActive = false,
@@ -145,7 +152,7 @@ fun DevicesScreen(viewModel: AppViewModel) {
             }
         }
 
-        WhoopFirstFooter()
+        item { WhoopFirstFooter() }
     }
 
     // --- Add a device (guided, branching wizard: WHOOP family · HR strap · coming-soon rows) ---

@@ -226,4 +226,41 @@ final class TodayExplainabilityTests: XCTestCase {
         XCTAssertEqual(TodayView.provenanceDisplayLabel(rawSource: "xiaomi-band", deviceId: "my-whoop"),
                        "Mi Band")
     }
+
+    // MARK: - Apple Watch provenance (M1) — Today-only "Apple Watch" relabel of the apple-health source
+
+    func testIsWatchSource_appleHealthSource_isTrue() {
+        XCTAssertTrue(TodayView.isWatchSource("apple-health", appleHealthSource: "apple-health"))
+    }
+
+    func testIsWatchSource_strapOrNil_isFalse() {
+        // A strap-sourced score (or no resolved source at all) is never the watch.
+        XCTAssertFalse(TodayView.isWatchSource("my-whoop", appleHealthSource: "apple-health"))
+        XCTAssertFalse(TodayView.isWatchSource(nil, appleHealthSource: "apple-health"))
+    }
+
+    func testTodayChipLabel_appleHealthSource_readsAppleWatch() {
+        // The audience knows the device, not the framework — a watch-sourced score reads "Apple Watch".
+        XCTAssertEqual(
+            TodayView.todayProvenanceChipLabel(rawSource: "apple-health", deviceId: "my-whoop",
+                                               appleHealthSource: "apple-health"),
+            "Apple Watch")
+    }
+
+    func testTodayChipLabel_nonWatchSources_deferToSharedLabel() {
+        // Everything else stays byte-identical to the shared provenance label (and the footer): the
+        // Today relabel only touches the apple-health source.
+        XCTAssertEqual(
+            TodayView.todayProvenanceChipLabel(rawSource: "my-whoop", deviceId: "my-whoop",
+                                               appleHealthSource: "apple-health"),
+            "Whoop")
+        XCTAssertEqual(
+            TodayView.todayProvenanceChipLabel(rawSource: "my-whoop-noop", deviceId: "my-whoop",
+                                               appleHealthSource: "apple-health"),
+            "On-device")
+        XCTAssertEqual(
+            TodayView.todayProvenanceChipLabel(rawSource: "xiaomi-band", deviceId: "my-whoop",
+                                               appleHealthSource: "apple-health"),
+            "Mi Band")
+    }
 }

@@ -54,7 +54,12 @@ struct WorkoutDetailView: View {
 
     var body: some View {
         ScreenScaffold(title: "\(WorkoutSource.displaySport(row.sport))",
-                       subtitle: "\(dateLabel(row.startTs))") {
+                       subtitle: "\(dateLabel(row.startTs))",
+                       // PERF: chart/map-heavy column (a MapKit route map, the session HR curve, the
+                       // zone-split chart and the effort card). The LazyVStack path builds the off-screen
+                       // ones on demand — byte-identical layout — so a tall detail doesn't materialise the
+                       // map + both charts before the header is even on screen.
+                       lazy: true) {
             headerCard
             statStrip
             routeCard

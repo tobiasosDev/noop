@@ -113,11 +113,17 @@ fun LabBookScreen(vm: AppViewModel) {
 
     LaunchedEffect(reloadSeq) { reload() }
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each top-level section is one `item { }` so only on-screen cards
+    // compose + are accessibility-walked on scroll. Order/spacing unchanged (no standalone Spacers; the
+    // LazyColumn reproduces the eager `spacedBy(20.dp)`). The category/marker list stays inside the single
+    // `when {}` item (it's a user-entered, bounded set, not unbounded history), so its appearance is
+    // byte-identical; the sheets below the scaffold are untouched.
+    LazyScreenScaffold(
         title = "Lab Book",
         subtitle = "Your bloods, BP and body numbers — kept private, on this phone.",
     ) {
         // Header card: count + scope + add action.
+        item {
         NoopCard(padding = 18.dp, tint = Palette.metricCyan) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -158,10 +164,12 @@ fun LabBookScreen(vm: AppViewModel) {
                 PrimaryActionButton("Add a reading", Icons.Filled.Add) { showEditor = true }
             }
         }
+        }
 
         // Import entry — reuses the Data Sources import-card idiom. A bulk "Markers CSV" import is a
         // Phase-2 engine; until it lands the card honestly points the user at Data Sources rather
         // than fabricating a flow.
+        item {
         NoopCard(padding = 18.dp, tint = Palette.metricAmber) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -186,7 +194,9 @@ fun LabBookScreen(vm: AppViewModel) {
                 )
             }
         }
+        }
 
+        item {
         when {
             !loaded -> {
                 Text("Reading your logbook…", style = NoopType.subhead, color = Palette.textTertiary)
@@ -218,8 +228,10 @@ fun LabBookScreen(vm: AppViewModel) {
                 }
             }
         }
+        }
 
         // Always-visible disclaimer footnote + link.
+        item {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 "Lab Book is a private notebook, not a medical service. NOOP stores and lines up the numbers " +
@@ -237,6 +249,7 @@ fun LabBookScreen(vm: AppViewModel) {
                     .clickable { showDisclaimer = true }
                     .semantics { contentDescription = "Read the full Lab Book note" },
             )
+        }
         }
     }
 

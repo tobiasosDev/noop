@@ -68,7 +68,15 @@ struct DataSourcesView: View {
     var body: some View {
         ScreenScaffold(title: "Data Sources",
                        subtitle: "Everything stays on \(Platform.deviceNounPhrase). Bring your history in once, then it's yours.",
-                       onRefresh: { await repo.refresh() }) {
+                       onRefresh: { await repo.refresh() },
+                       // PERF: a nine-card import/source column (WHOOP, Apple Health, Xiaomi, nutrition,
+                       // lifting, activity files, wearables, broadcast-out, live strap). The LazyVStack
+                       // path is byte-identical layout. The cards stay in their inner VStack(sectionSpacing)
+                       // for pixel-identical spacing, so the lazy win is partial until they're promoted to
+                       // direct children. NOTE: this screen still observes `LiveState` for the broadcaster
+                       // lifecycle binding in onAppear/onDisappear, so a ~1 Hz tick still re-evaluates the
+                       // built cards — that observation can't be removed here (see the lane-B2 note).
+                       lazy: true) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
                 whoopCard.staggeredAppear(index: 0)
                 appleHealthCard.staggeredAppear(index: 1)

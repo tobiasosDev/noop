@@ -1,6 +1,5 @@
 package com.noop.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -394,9 +394,10 @@ fun CompareScreen(vm: AppViewModel) {
         if (anyWidened) "$base · sparse widened" else base
     }
 
-    ScreenScaffold(title = "Compare", subtitle = "Overlay signals, draw conclusions.") {
+    LazyScreenScaffold(title = "Compare", subtitle = "Overlay signals, draw conclusions.") {
 
         // ── Metric picker section (chips + range control)
+        item {
         Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
             SectionHeader("Metrics", overline = "Overlay 2–4 signals")
             NoopCard {
@@ -451,24 +452,29 @@ fun CompareScreen(vm: AppViewModel) {
                 }
             }
         }
+        }
 
         if (selected.size < minSelection) {
-            EmptyNote("Pick at least two metrics above to overlay them and read how they move together.")
+            item {
+                EmptyNote("Pick at least two metrics above to overlay them and read how they move together.")
+            }
         } else {
             val nonEmpty = activeSeries.filter { it.rows.isNotEmpty() }
             if (nonEmpty.isEmpty()) {
                 if (loadedOnce) {
-                    DataPendingNote(
-                        title = "Compare needs at least two metrics with history",
-                        body = "Compare needs at least two metrics with history. Import your " +
-                            "WHOOP export in Data Sources first.",
-                    )
+                    item {
+                        DataPendingNote(
+                            title = "Compare needs at least two metrics with history",
+                            body = "Compare needs at least two metrics with history. Import your " +
+                                "WHOOP export in Data Sources first.",
+                        )
+                    }
                 } else {
-                    EmptyNote("Reading your history…")
+                    item { EmptyNote("Reading your history…") }
                 }
             } else {
-                OverlaySection(nonEmpty, range, anyWidened)
-                CorrelationSection(activeSeries, range)
+                item { OverlaySection(nonEmpty, range, anyWidened) }
+                item { CorrelationSection(activeSeries, range) }
             }
         }
     }
@@ -715,66 +721,112 @@ private fun OverlaySection(
  */
 @Composable
 private fun OverlayChart(series: List<CompareSeries>, modifier: Modifier) {
-    // Union of all day ordinals present → shared x domain.
-    val dayOrds = remember(series) {
-        series.flatMap { s -> s.rows.mapNotNull { dayOrdinal(it.first) } }
-    }
-    val minOrd = dayOrds.minOrNull()
-    val maxOrd = dayOrds.maxOrNull()
-
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        if (w <= 0f || h <= 0f) return@Canvas
-
-        val topPad = 6f
-        val usableH = (h - topPad * 2f).coerceAtLeast(1f)
-
-        // Faint low / mid / high gridlines.
-        val gridColor = Palette.hairline.copy(alpha = 0.4f)
-        for (f in listOf(0f, 0.5f, 1f)) {
-            val y = topPad + (1f - f) * usableH
-            drawLine(
-                color = gridColor,
-                start = Offset(0f, y),
-                end = Offset(w, y),
-                strokeWidth = 1f,
-            )
-        }
-
-        if (minOrd == null || maxOrd == null) return@Canvas
-        val span = (maxOrd - minOrd).coerceAtLeast(1L).toFloat()
-
-        series.forEach { s ->
-            val pts = s.rows.mapNotNull { (day, value) ->
+    // PERF (#scroll-jank — drawing-bound): the old draw lambda re-parsed every day string (dayOrdinal)
+    // and re-normalised every value on EVERY frame, then rebuilt each series' Path. Precompute the
+    // expensive, size-INDEPENDENT part once per `series` change: the parsed (ordinal, normalized) pairs
+    // and the shared x-domain. The math is byte-identical to the old per-point computation; only its
+    // timing moves out of the hot draw loop.
+    val prepared = remember(series) {
+        // Per series: its rows reduced to (ordinal, norm0to1) pairs, dropping unparseable days exactly
+        // as the old `mapNotNull { dayOrdinal(...) }` did — same order, same drop rule, same normalize.
+        val perSeries = series.map { s ->
+            val pairs = s.rows.mapNotNull { (day, value) ->
                 val ord = dayOrdinal(day) ?: return@mapNotNull null
-                val x = if (maxOrd > minOrd) (ord - minOrd).toFloat() / span * w else w / 2f
-                val norm = s.normalized(value).toFloat().coerceIn(0f, 1f)
-                val y = topPad + (1f - norm) * usableH
-                Offset(x, y)
+                ord to s.normalized(value).toFloat().coerceIn(0f, 1f)
             }
-            if (pts.size < 2) {
-                // A single point still renders as a dot so the series is visible.
-                pts.firstOrNull()?.let { drawCircle(s.color, radius = 3.5f, center = it) }
-                return@forEach
-            }
-            val path = Path().apply {
-                moveTo(pts.first().x, pts.first().y)
-                for (i in 1 until pts.size) lineTo(pts[i].x, pts[i].y)
-            }
-            drawPath(
-                path = path,
-                color = s.color,
-                style = Stroke(width = 2.2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
-            )
-            // Bevel "now" end-cap on this series' latest point — soft halo + bright core + white centre.
-            val last = pts.last()
-            drawCircle(color = s.color.copy(alpha = 0.30f), radius = 8f, center = last)
-            drawCircle(color = s.color.copy(alpha = 0.65f), radius = 5f, center = last)
-            drawCircle(color = Palette.tipCore, radius = 2.2f, center = last)
+            Triple(s.color, pairs, s)
         }
+        val allOrds = perSeries.flatMap { (_, pairs, _) -> pairs.map { it.first } }
+        OverlayPrepared(minOrd = allOrds.minOrNull(), maxOrd = allOrds.maxOrNull(), perSeries = perSeries)
     }
+
+    // Build the per-series Paths in drawWithCache — rebuilt only when the prepared pairs or the canvas
+    // size change (NOT on unrelated recompositions), instead of allocating a fresh Path every frame.
+    Box(
+        modifier = modifier.drawWithCache {
+            val w = size.width
+            val h = size.height
+            val topPad = 6f
+            val usableH = (h - topPad * 2f).coerceAtLeast(1f)
+            val minOrd = prepared.minOrd
+            val maxOrd = prepared.maxOrd
+
+            // Pre-place each series' pixel points + Path once (size-dependent, so it lives here, keyed
+            // on size by drawWithCache). x/y formulas are identical to the old per-frame computation.
+            data class Built(val color: Color, val path: Path?, val singleDot: Offset?, val last: Offset?)
+            val built = if (minOrd != null && maxOrd != null) {
+                val span = (maxOrd - minOrd).coerceAtLeast(1L).toFloat()
+                prepared.perSeries.map { (color, pairs, _) ->
+                    val pts = pairs.map { (ord, norm) ->
+                        val x = if (maxOrd > minOrd) (ord - minOrd).toFloat() / span * w else w / 2f
+                        val y = topPad + (1f - norm) * usableH
+                        Offset(x, y)
+                    }
+                    when {
+                        pts.size < 2 -> Built(color, null, pts.firstOrNull(), null)
+                        else -> {
+                            val path = Path().apply {
+                                moveTo(pts.first().x, pts.first().y)
+                                for (i in 1 until pts.size) lineTo(pts[i].x, pts[i].y)
+                            }
+                            Built(color, path, null, pts.last())
+                        }
+                    }
+                }
+            } else {
+                emptyList()
+            }
+
+            val gridColor = Palette.hairline.copy(alpha = 0.4f)
+            val tipCore = Palette.tipCore
+
+            onDrawBehind {
+                if (w <= 0f || h <= 0f) return@onDrawBehind
+
+                // Faint low / mid / high gridlines.
+                for (f in listOf(0f, 0.5f, 1f)) {
+                    val y = topPad + (1f - f) * usableH
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(0f, y),
+                        end = Offset(w, y),
+                        strokeWidth = 1f,
+                    )
+                }
+
+                if (minOrd == null || maxOrd == null) return@onDrawBehind
+
+                built.forEach { b ->
+                    if (b.singleDot != null) {
+                        // A single point still renders as a dot so the series is visible.
+                        drawCircle(b.color, radius = 3.5f, center = b.singleDot)
+                        return@forEach
+                    }
+                    if (b.path != null) {
+                        drawPath(
+                            path = b.path,
+                            color = b.color,
+                            style = Stroke(width = 2.2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                        )
+                    }
+                    // Bevel "now" end-cap on this series' latest point — soft halo + bright core + white centre.
+                    b.last?.let { last ->
+                        drawCircle(color = b.color.copy(alpha = 0.30f), radius = 8f, center = last)
+                        drawCircle(color = b.color.copy(alpha = 0.65f), radius = 5f, center = last)
+                        drawCircle(color = tipCore, radius = 2.2f, center = last)
+                    }
+                }
+            }
+        },
+    )
 }
+
+/** Pre-parsed overlay inputs (size-independent): the shared x-domain + each series' (ordinal, norm) pairs. */
+private data class OverlayPrepared(
+    val minOrd: Long?,
+    val maxOrd: Long?,
+    val perSeries: List<Triple<Color, List<Pair<Long, Float>>, CompareSeries>>,
+)
 
 @Composable
 private fun Legend(series: List<CompareSeries>) {

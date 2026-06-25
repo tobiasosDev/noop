@@ -77,6 +77,42 @@ public enum ReadinessEngine {
     /// Evaluate readiness from daily metrics. `days` may be in any order; the most recent day is
     /// treated as "today" unless `today` (a YYYY-MM-DD string) is given.
     public static func evaluate(days: [DailyMetric], today: String? = nil) -> Readiness {
+        // v7.0.2 perf (#707): `evaluate` SORTS the entire daily history and walks trailing windows every
+        // call, and it is read from a SwiftUI computed property — so a `body` re-evaluation (the iOS twin of
+        // a Compose recompose) re-runs the full-history sort on each ~1 Hz live-HR tick. The Today view also
+        // memoizes this at the View layer (its `todayInputKey`); this engine-level cache additionally shields
+        // every OTHER caller and the first/uncached read. Key = `today` + a fingerprint over ONLY the row
+        // fields the synthesis reads (day + avgHrv/restingHr/respRateBpm/strain), so a new sync re-keys but a
+        // cosmetic reorder does not. Result is a small `Readiness`; no row arrays are retained.
+        let key = ReadinessKey(today: today, rows: Self.rowsFingerprint(days))
+        return evaluateCache.value(key) { evaluateUncached(days: days, today: today) }
+    }
+
+    private struct ReadinessKey: Hashable { let today: String?; let rows: StreamFingerprint }
+    private static let evaluateCache = AnalyticsMemoCache<ReadinessKey, Readiness>(capacity: 16)
+
+    /// Fingerprint the readiness-relevant columns of the daily rows without re-sorting or copying them.
+    /// Order-independent per-row hash (folded into the checksum), so two identical histories in different
+    /// order key the same — `evaluate` sorts internally, so order never changes the result.
+    private static func rowsFingerprint(_ days: [DailyMetric]) -> StreamFingerprint {
+        var sum: UInt64 = 1469598103934665603
+        var minDayHash = 0, maxDayHash = 0
+        for (i, d) in days.enumerated() {
+            // All folds stay in UInt64 — `Double.bitPattern` is already a UInt64 (its sign bit can exceed
+            // Int64.max, so an Int64 round-trip would TRAP), and `Int.bitPattern` reinterprets without loss.
+            var h: UInt64 = UInt64(bitPattern: Int64(d.day.hashValue))
+            h = (h &* 1099511628211) ^ (d.avgHrv ?? -1).bitPattern
+            h = (h &* 1099511628211) ^ (d.restingHr.map { UInt64(bitPattern: Int64($0)) } ?? .max)
+            h = (h &* 1099511628211) ^ (d.respRateBpm ?? -1).bitPattern
+            h = (h &* 1099511628211) ^ (d.strain ?? -1).bitPattern
+            sum ^= h                                   // commutative fold → order-independent
+            let dh = d.day.hashValue
+            if i == 0 { minDayHash = dh; maxDayHash = dh } else { minDayHash = min(minDayHash, dh); maxDayHash = max(maxDayHash, dh) }
+        }
+        return StreamFingerprint(count: days.count, firstTs: minDayHash, lastTs: maxDayHash, checksum: sum)
+    }
+
+    private static func evaluateUncached(days: [DailyMetric], today: String?) -> Readiness {
         let sorted = days.sorted { $0.day < $1.day }
         // When an explicit `today` is given (the dashboard passes the device's real local day key), use
         // the row for THAT day and nothing else: a stale historical import has no row for today, so the

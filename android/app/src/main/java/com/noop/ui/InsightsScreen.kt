@@ -252,24 +252,36 @@ fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
     androidx.compose.runtime.LaunchedEffect(Unit) { vm.loadWorkouts() }
     val activityCosts = remember(workouts, days) { computeActivityCosts(workouts, days) }
 
-    ScreenScaffold(title = "Insights", subtitle = "Interrogate what affects what.") {
+    // PERF (#707): migrate to the lazy scaffold so only on-screen sections compose + get
+    // accessibility-walked. Each eager child becomes its own `item { }` — INCLUDING the standalone
+    // `Spacer(sectionGap - 20)` separators, which are real Column children that already sat inside the
+    // eager `spacedBy(20.dp)`; a LazyColumn with the same `spacedBy(20.dp)` flanks each item identically,
+    // so the rendered spacing is byte-for-byte unchanged. Conditional sections use `if (cond) { item {} }`
+    // (never `item { if (cond) }`) so a hidden section emits NO item — an unconditional empty item would
+    // otherwise insert a 0-height row that the 20dp arrangement flanks, shifting layout. The one
+    // composable-only block (`run { … remember(snapshot) … }`) moves inside its `item { }` (which is
+    // @Composable). Order is preserved exactly.
+    LazyScreenScaffold(title = "Insights", subtitle = "Interrogate what affects what.") {
 
         // --- "What moves you" deep-link into the v5 Insights Hub (ranked, lag-aware ranked-effect feed +
         //     personal alcohol/caffeine dose-response). The honest in-Insights entry point; the hub is its
         //     own destination too. Mirrors the Swift InsightsView.whatMovesYouLink. ---
-        WhatMovesYouLink(onOpen = onOpenInsightsHub)
+        item { WhatMovesYouLink(onOpen = onOpenInsightsHub) }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Native journal logging (always reachable — the account-free way in) ---
         if (preFilledFromYesterday) {
+            item {
             Text(
                 "Pre-filled from last night — tap to confirm or change.",
                 style = NoopType.footnote,
                 color = Palette.textTertiary,
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
         }
+        item {
         JournalLogCard(
             catalog = mergeJournalCatalog(importedQuestions, customQuestions, hiddenQuestions),
             answers = dayAnswers,
@@ -314,23 +326,25 @@ fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
                 hiddenQuestions = next
             },
         )
+        }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Mind: daily mood check-in + mood ↔ body correlations (Swift Mind-lane
         //     mirror; storage contract + footnote shared verbatim across platforms) ---
-        MindSection(vm)
+        item { MindSection(vm) }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Caffeine window (#526) — log an intake + a rough on-device "still active"
         //     hint. Self-contained (owns its own SharedPreferences state). Opt-in: shows
         //     nothing until the user logs one. Twin of macOS CaffeineLogCard. ---
-        CaffeineLogCard()
+        item { CaffeineLogCard() }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Personal experiment (LOCAL ONLY n-of-1 protocol) ------------------
+        item {
         run {
             // Candidates are gated to behaviours the user actually has data for —
             // logged journal questions ∪ imported wording, minus hidden — NOT the
@@ -398,10 +412,13 @@ fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
                 },
             )
         }
+        }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Behaviour effects -------------------------------------------------
+        // (Always emits one of three branches → one unconditional item, never empty.)
+        item {
         if (!journalLoaded) {
             NoopCard {
                 Text(
@@ -425,16 +442,17 @@ fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
                 ranked = ranked,
             )
         }
+        }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Activity Cost (what each activity costs your recovery) ------------
-        ActivityCostSection(activityCosts)
+        item { ActivityCostSection(activityCosts) }
 
-        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
+        item { Spacer(Modifier.height(Metrics.sectionGap - 20.dp)) }
 
         // --- Metric relationships ---------------------------------------------
-        RelationshipsSection(relationships)
+        item { RelationshipsSection(relationships) }
     }
 }
 

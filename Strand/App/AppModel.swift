@@ -247,10 +247,23 @@ final class AppModel: ObservableObject {
         }.store(in: &hrCancellables)
         // A completed backfill has just written strap history. Refresh the dashboard cache,
         // but leave heavyweight analysis to its own guarded/background-friendly path.
+        //
+        // #755 COALESCE: a strap whose firmware segments a deep offload into many small HISTORY_COMPLETE
+        // slices stamps `lastSyncedAt` once PER slice (BLEManager.exitBackfilling), seconds apart, for the
+        // whole multi-minute download. Without coalescing each slice fired refreshAfterCompletedBackfill()
+        // — a full repo.refresh (~50 store reads) + analyzeRecent — and every one re-fired TodayView's
+        // ~50-read loadAll, all contending with the backfill's bulk writes on the single-connection store.
+        // On a heavy + actively-syncing history that stacked into a ~10s freeze. `.debounce` collapses the
+        // slice storm: it suppresses the intermediate emissions and fires ONCE, 2s after the stream goes
+        // quiet — i.e. after the LAST slice lands (the backfill is done). Crucially it ALWAYS delivers the
+        // trailing edge, so the dashboard still refreshes with the newly-synced data — freshness is kept,
+        // we just stop re-doing it dozens of times mid-download. removeDuplicates() still drops a slice that
+        // stamped an identical second; the trailing refresh after a real change is never dropped.
         live.$lastSyncedAt
             .dropFirst()
             .compactMap { $0 }
             .removeDuplicates()
+            .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { [weak self] in await self?.refreshAfterCompletedBackfill() }
             }
@@ -280,7 +293,11 @@ final class AppModel: ObservableObject {
         // actor; no-op on macOS for the Inbox part.
         Task.detached { AppModel.purgeImportInbox(); AppModel.purgeImportTemp() }
 
-        Task { [weak self] in
+        // FIX 2(b): the launch sequence runs at `.utility` so its heavy one-shot 4000-day heal/rescore
+        // yields to UI rendering instead of contending at the inherited user-initiated QoS. The reads are
+        // already off the main actor (analyzeRecent — FIX 1), and at `.utility` the scheduler keeps the
+        // main thread free for SwiftUI during the deep-history pass right after an import / first launch.
+        Task(priority: .utility) { [weak self] in
             guard let self else { return }
             #if DEBUG
             // DEBUG-only: when launched with `--demo-seed`, populate a deterministic synthetic
@@ -296,6 +313,22 @@ final class AppModel: ObservableObject {
             await self.repo.refresh()                          // surface any imported data at once
             await self.wireSourceCoordinator()                 // dormant unless a generic strap is active
             try? await Task.sleep(nanoseconds: 6_000_000_000)  // give the first offload a moment
+            // FIX 2(a): DEFER the heavy one-shot 4000-day heal/rescore while an import is in flight. A
+            // large Apple Health import is the worst-case launch overlap — running a 4000-iteration heal
+            // + rescore concurrently with the import's parse+writes is what produced the ~1-minute app-wide
+            // lag. The import refreshes the dashboard itself on completion, and the steady-state cadence
+            // loop below still runs, so deferring the ONE-SHOT passes until the import finishes costs
+            // nothing but removes the contention. Bounded poll (respects cancellation); typical imports
+            // clear in seconds, so this almost always passes through immediately.
+            // CAP the wait (#review): `hasActiveImport` is cleared only by finishImport(), which a true
+            // non-throwing import HANG would never reach, permanently starving the one-shot passes AND the
+            // cadence loop below for the whole session. Bound it so a wedged import can't disable analysis;
+            // the merge reads are off-actor now, so proceeding under a still-flagged import is safe.
+            var importWaited = 0
+            while self.hasActiveImport && !Task.isCancelled && importWaited < 180 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 s, re-check; ~3 min cap then proceed
+                importWaited += 1
+            }
             // One-shot on-upgrade heal (#547): purge rows a bad-clock strap dated to scattered garbage
             // (far-past / bogus-2027 / FUTURE) from an older build, then rescore the real days. Runs
             // BEFORE the Effort rescore + analyzeRecent loop so both operate on a cleaned DB. Persisted
@@ -1359,7 +1392,10 @@ final class AppModel: ObservableObject {
 
     func importAppleHealth(url: URL) {
         beginImport(.appleHealth)
-        Task {
+        // FIX 2(c): run the parse+writes at `.utility` so a large Apple Health import yields to UI
+        // rendering instead of inheriting the user-initiated QoS of the calling tap — the import's bulk
+        // work was contending with the main actor and contributing to the transient post-import lag.
+        Task(priority: .utility) {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {

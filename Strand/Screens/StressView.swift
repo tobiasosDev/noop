@@ -51,7 +51,11 @@ struct StressView: View {
     @State private var modelSignature: StressInputs?
 
     var body: some View {
-        ScreenScaffold(title: "Stress", subtitle: "Autonomic load from HRV and resting heart rate") {
+        ScreenScaffold(title: "Stress", subtitle: "Autonomic load from HRV and resting heart rate",
+                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
+                       // alignment/spacing/header). The content is one inner eager VStack, so the staggered
+                       // section reveal is unchanged; this only defers building that stack until it scrolls in.
+                       lazy: true) {
             if let model {
                 content(model)
             } else if !loaded {

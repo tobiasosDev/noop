@@ -136,16 +136,46 @@ final class SourceCoordinator: ObservableObject {
 
     /// Resolve the device for `id` and reconcile which live source is running. Idempotent and guarded
     /// against redundant churn:
+    ///   • An Apple Watch (`.liveAppleWatch`) → a HealthKit pseudo-device, NOT a BLE peripheral. Hand it
+    ///     to the HealthKit-backed path and DO NOTHING to the BLE world (no scan/connect, and crucially
+    ///     no `stopWhoop()`: the watch must never tear down a live WHOOP link).
     ///   • A WHOOP, same one we're already on (incl. the single-WHOOP first launch) → DO NOTHING new.
     ///   • A DIFFERENT WHOOP → re-point the WHOOP connection (preferred peripheral + deviceId) + reconnect.
     ///   • WHOOP active after a strap → stop the strap source + resume WHOOP.
     ///   • A generic strap → pause WHOOP + (re)start `StandardHRSource` for that strap's id.
     func activeDeviceChanged(to id: String) {
+        // The Apple Watch is a HealthKit source with `peripheralId: nil` (see `AppleWatchDevice`): there is
+        // no BLE peripheral to connect, and the M1 live read happens entirely in `HealthKitBridge`'s
+        // observers + sync, off this BLE coordinator. Short-circuit BEFORE the WHOOP branch so we never
+        // route it through `switchToStrap` (which would `stopWhoop()` and then BLE-scan a peripheral that
+        // doesn't exist, tearing down the real WHOOP for nothing).
+        if sourceKind(for: id) == .liveAppleWatch {
+            switchToAppleWatch(id: id)
+            return
+        }
+
         if isWhoop(id) {
             switchToWhoop(id: id)
         } else {
             switchToStrap(id: id)
         }
+    }
+
+    /// Active device is the Apple Watch (a `.liveAppleWatch` HealthKit pseudo-device). It has no BLE
+    /// peripheral, so this coordinator owns NONE of its data path: `HealthKitBridge` already streams it
+    /// via HealthKit observers + background delivery and persists under the `apple-health` source. The one
+    /// thing we MUST do here is leave the BLE world alone: do NOT `stopWhoop()` (a HealthKit device can't
+    /// be allowed to drop a live WHOOP link) and do NOT start any BLE source. If a non-WHOOP BLE source
+    /// (a strap / FTMS machine / Huami band) was the previously-active live source, tear it down so we're
+    /// not streaming a strap that's no longer the active device, then mark ourselves off-strap so the
+    /// next WHOOP activation resumes cleanly. The WHOOP, if it was active, is deliberately untouched.
+    private func switchToAppleWatch(id: String) {
+        if onStrap {
+            tearDownNonWhoopSource()
+            activeStrapId = nil
+            onStrap = false
+        }
+        // No `stopWhoop()`, no BLE scan/connect: the watch lives entirely in HealthKitBridge.
     }
 
     /// Active device is a WHOOP (`id`). Three sub-cases, all churn-guarded:
@@ -195,6 +225,14 @@ final class SourceCoordinator: ObservableObject {
     /// Active device is a generic strap. Pause WHOOP (once, on the WHOOP→strap edge) and run the
     /// isolated `StandardHRSource` for this strap's deviceId. Re-running for the SAME id is a no-op.
     private func switchToStrap(id: String) {
+        // Belt-and-braces: the Apple Watch is handled (and returned) in `activeDeviceChanged` before we
+        // ever get here, but guard the case explicitly so a future caller reaching `switchToStrap`
+        // directly can NEVER stop the WHOOP or BLE-scan a non-existent peripheral for a HealthKit device.
+        if sourceKind(for: id) == .liveAppleWatch {
+            switchToAppleWatch(id: id)
+            return
+        }
+
         guard activeStrapId != id else { return }   // already streaming this strap → no churn
 
         // Leaving WHOOP for the first non-WHOOP source: pause WHOOP's BLE via its existing teardown.
@@ -205,7 +243,8 @@ final class SourceCoordinator: ObservableObject {
 
         // Route by sourceKind: an FTMS gym machine runs FTMSSource; an EXPERIMENTAL Huami device
         // (Amazfit / Zepp / Mi Band) runs the HuamiHRSource; everything else is a generic HR strap on
-        // StandardHRSource. All are non-WHOOP live sources sharing this same strap edge.
+        // StandardHRSource. All are non-WHOOP live sources sharing this same strap edge. (`.liveAppleWatch`
+        // never reaches this switch: it's short-circuited above.)
         switch sourceKind(for: id) {
         case .ftms:  startFTMSSource(id: id)
         case .huami: startHuamiSource(id: id)

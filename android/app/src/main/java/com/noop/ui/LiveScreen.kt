@@ -123,41 +123,89 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
     val zoneCoaching by viewModel.zoneCoaching.collectAsStateWithLifecycle()
     val zone5Bpm = zoneSet.zones.firstOrNull { it.number == 5 }?.lower?.roundToInt() ?: 0
 
-    ScreenScaffold(title = "Live Body Console", subtitle = "Current physiology, strap trust, and session controls") {
+    // PERF (#707): the eager ScreenScaffold built (and accessibility-walked) every section up front; on a
+    // live-ticking console that long column is what the Compose semantics copy hits each scroll frame.
+    // Hoisting these two presentation-only sheet toggles out of the (now-lazy) content lambda — they were
+    // shared across sibling sections — and rendering the sheets at body level (an overlay either way, so
+    // appearance/behaviour-identical) lets the body migrate to LazyScreenScaffold below. Each former
+    // top-level child becomes one `item { }` in the SAME order/spacing, so only on-screen sections compose
+    // and semanticize. The live/bpm body reads are intentionally LEFT as-is (this screen's whole purpose is
+    // the live readout); see the report note.
+    var showSportPicker by remember { mutableStateOf(false) }
+    var showHrvSnapshot by remember { mutableStateOf(false) }
+
+    // GPS workout sport picker — the shared sheet (also used on the Workouts screen, #115). Rendered at
+    // body level so it floats over Live as an overlay regardless of list position (unchanged behaviour).
+    if (showSportPicker) {
+        StartWorkoutSheet(vm = viewModel, onDismiss = { showSportPicker = false })
+    }
+
+    // Manual HRV snapshot (#127) — a still, seated 60s R-R reading. A plain full-screen Dialog so it floats
+    // over Live; gated on a bonded connection (the reading needs the live R-R stream).
+    if (showHrvSnapshot) {
+        Dialog(
+            onDismissRequest = { showHrvSnapshot = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            // Tell the reading where its R-R is coming from so the caveat is honest: a WHOOP 5/MG derives
+            // R-R from the optical pulse signal (noisier) while a WHOOP 4 / chest strap is electrical R-R.
+            // Driven off the picked strap model.
+            val hrvSource = when (selectedModel) {
+                WhoopModel.WHOOP5_MG -> SpotHrvReading.Source.OPTICAL_PPG
+                WhoopModel.WHOOP4 -> SpotHrvReading.Source.CHEST_STRAP
+            }
+            HrvSnapshotScreen(
+                viewModel = viewModel,
+                source = hrvSource,
+                onClose = { showHrvSnapshot = false },
+            )
+        }
+    }
+
+    LazyScreenScaffold(title = "Live Body Console", subtitle = "Current physiology, strap trust, and session controls") {
 
         // Active band row (MW-6) — names the band the console is reading, with a "Manage devices"
         // affordance that opens the Devices screen. Additive; the connect/disconnect controls below are
         // untouched. Mirrors the iOS Live screen's active-band header + Manage-devices link.
+        item {
         ActiveBandRow(name = activeDeviceName ?: "WHOOP", onManageDevices = onManageDevices)
+        }
 
         // Console header — the pill + a connection-mode badge (+ a live SYNCING badge during a history
         // offload), with battery / worn / last-sync stats. Mirrors the macOS consoleHeader.
+        item {
         ConsoleHeader(live = live, activeConnection = activeConnection)
+        }
 
         // Primary Connect affordance, surfaced ABOVE the fold whenever there's no link — the real
         // Connect control otherwise lives far below, past the Signal Trust grid, so an offline user
         // saw only inert copy up top. Gated purely on `!live.connected`, so it disappears the instant
         // the radio connects. Mirrors the macOS offlineConnectCallout.
         if (!live.connected) {
+            item {
             OfflineConnectCallout(
                 scanning = live.scanning,
                 onConnect = { requestConnect() },
             )
+            }
         }
 
         // Why it's in this state and what to try (permission, strap busy, not found…).
         live.statusNote?.let { note ->
+            item {
             Text(
                 note,
                 style = NoopType.footnote,
                 color = Palette.textSecondary,
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
         }
 
         // Strap wiped its Bluetooth bond (firmware reset / official WHOOP app re-bond): show the forget+
         // re-pair steps in-app instead of looping a dead reconnect — parity with the macOS v1.73 banner.
         live.reconnectGuide?.let { guide ->
+            item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -173,11 +221,17 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                 )
                 Text(guide, style = NoopType.footnote, color = Palette.textSecondary)
             }
+            }
         }
 
         // Honest sync outcome for a cloud-free app. While offloading, say so plainly — the brief
         // "· syncing" pill suffix is easy to miss (#91/#93). Otherwise: a non-silent error if the
         // last offload stalled, else a relative "history synced N ago". (PR #85; sync-visibility v1.70)
+        // The item is gated on this block actually having something to render — in the old eager Column an
+        // empty branch produced NO child (no spacing gap); an unconditional lazy `item {}` would instead
+        // insert a 0-height row that `spacedBy(20.dp)` flanks, so the guard preserves the exact spacing.
+        if (live.backfilling || live.lastSyncError != null || live.lastSyncAt != null) {
+        item {
         if (live.backfilling) {
             // INDETERMINATE on purpose: the strap never tells us how many records remain, so a percent
             // would be a lie. A small spinner + the live acked-chunk count is the honest "it's working"
@@ -220,49 +274,41 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                 }
             }
         }
+        }
+        }
 
         // Body console — focal pulsing HR ring + live physiology (R-R strip, rolling RMSSD, frame/event).
+        item {
         BodyConsole(live = live, bpm = bpm, activeConnection = activeConnection, zone = liveZone)
+        }
 
         // Signal Trust rail — one tile per signal that has to be current for the console to be trusted.
+        item {
         SignalTrustRail(live = live, bpm = bpm, activeConnection = activeConnection)
+        }
 
         // Max HR + the top-zone entry threshold (read-only; manage coaching in Automations).
+        item {
         MaxHrZoneCard(hrMax = profile.hrMax, zone5Bpm = zone5Bpm, coachingOn = zoneCoaching)
-
-        // GPS workout sport picker — the shared sheet (also used on the Workouts screen, #115).
-        var showSportPicker by remember { mutableStateOf(false) }
-        if (showSportPicker) {
-            StartWorkoutSheet(vm = viewModel, onDismiss = { showSportPicker = false })
         }
 
-        // Manual HRV snapshot (#127) — a still, seated 60s R-R reading. A plain full-screen Dialog so
-        // it floats over Live; gated on a bonded connection (the reading needs the live R-R stream).
-        var showHrvSnapshot by remember { mutableStateOf(false) }
-        if (showHrvSnapshot) {
-            Dialog(
-                onDismissRequest = { showHrvSnapshot = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                // Tell the reading where its R-R is coming from so the caveat is honest: a WHOOP 5/MG
-                // derives R-R from the optical pulse signal (noisier) while a WHOOP 4 / chest strap is
-                // electrical R-R. Driven off the picked strap model.
-                val hrvSource = when (selectedModel) {
-                    WhoopModel.WHOOP5_MG -> SpotHrvReading.Source.OPTICAL_PPG
-                    WhoopModel.WHOOP4 -> SpotHrvReading.Source.CHEST_STRAP
-                }
-                HrvSnapshotScreen(
-                    viewModel = viewModel,
-                    source = hrvSource,
-                    onClose = { showHrvSnapshot = false },
-                )
-            }
-        }
+        // (The Start-workout sheet + HRV-snapshot Dialog were hoisted to the body above — they're overlays
+        // that float regardless of list position, so this is appearance/behaviour-identical and keeps the
+        // composable-only `remember`/Dialog out of the LazyListScope lambda.)
 
         // Session console — record or inspect the current stream.
+        item {
         SectionHeader(title = "Session", overline = "Record or inspect the current stream")
+        }
 
         // Manual workout — start/stop a session yourself; records HR + strain until you end it.
+        // This block emits MULTIPLE siblings in its `else` branch (the actions Row, the last-workout note,
+        // the HRV button), which in the old eager scaffold were spaced by the column's `spacedBy(20.dp)`.
+        // Wrapping the whole block in one lazy item, they'd lose that inter-child spacing — so an explicit
+        // `Column(spacedBy(20.dp))` inside the item reproduces the exact gaps (the if-branch's single card
+        // is unaffected). Spacing to the neighbouring items is the LazyColumn's own `spacedBy(20.dp)`.
+        item {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         val w = activeWorkout
         if (w != null) {
             var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -375,11 +421,17 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                 )
             }
         }
+        }
+        }
 
         // Strap picker — choose the model before scanning so we look for exactly one device family.
         // Shown whenever we're not actively streaming, so a user with both a WHOOP 4 and a 5/MG can
         // switch between them (it used to hide once `bonded`, which stuck after the first pairing).
         if (!(live.connected && live.bonded)) {
+            // Two siblings (picker Row + optional 5/MG guidance) that the eager column spaced by 20dp —
+            // an inner `Column(spacedBy(20.dp))` reproduces that gap inside the single lazy item.
+            item {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
@@ -404,9 +456,12 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 )
             }
+            }
+            }
         }
 
         // Controls.
+        item {
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap), modifier = Modifier.fillMaxWidth()) {
             // Compact, single-line labels: with three weight(1f) buttons in a row, the default
             // body style + icon could wrap "Re-scan"/"Searching…" to two lines on narrow phones,
@@ -488,6 +543,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                 )
             }
         }
+        }
 
         // Manual "Sync now" — kick a historical offload on demand instead of waiting for the 15-min
         // periodic timer (#93). Only meaningful once bonded (the offload needs the command channel), and
@@ -496,6 +552,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
         // an INDETERMINATE spinner (NEVER a percent — total pending records are unknowable from the
         // protocol); the "Syncing your strap history… N chunks pulled" line above carries the live count.
         if (live.bonded) {
+            item {
             OutlinedButton(
                 onClick = { viewModel.syncNow() },
                 modifier = Modifier.fillMaxWidth(),
@@ -528,12 +585,15 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
                     overflow = TextOverflow.Clip,
                 )
             }
+            }
         }
 
         // Foolproof connection walkthrough — detects each blocker (WHOOP app, Bluetooth,
         // permission) and offers a one-tap fix. Hidden once the strap is bonded.
         if (!live.bonded) {
+            item {
             ConnectionHelp(viewModel, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }

@@ -114,13 +114,18 @@ fun AutomationsScreen(viewModel: AppViewModel) {
     // enabling the reminder while master is off isn't silently inert.
     val notifMasterOn = NotifPrefs.getBool(ctx, NotifPrefs.MASTER, false)
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each settings section is an unconditional top-level child, so each
+    // becomes one `item { }` in the same order. No standalone Spacers (the eager `spacedBy(20.dp)` is
+    // reproduced by the LazyColumn), so spacing is byte-identical; only on-screen sections compose + get
+    // accessibility-walked on scroll.
+    LazyScreenScaffold(
         title = "Automations",
         subtitle = "Make the strap do things — tap to act, walk away to lock, train by feel.",
     ) {
         // Double-tap (parity since 4.2.8): a real, persisted action picker bound to the ViewModel, with a
         // Test action button. Mirrors AutomationsView.swift's Picker (Apple-applicable subset only; no
         // lockScreen / runShortcut on Android).
+        item {
         SettingsSection(
             icon = Icons.Filled.TouchApp,
             title = "Double-tap",
@@ -153,8 +158,10 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 )
             }
         }
+        }
 
         // Haptic coaching.
+        item {
         SettingsSection(
             icon = Icons.Filled.Bolt,
             title = "Haptic coaching",
@@ -184,8 +191,10 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 onChange = { stressNudge = it },
             )
         }
+        }
 
         // Wear & presence.
+        item {
         SettingsSection(
             icon = Icons.Filled.TouchApp,
             title = "Wear & presence",
@@ -199,8 +208,10 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 onChange = { autoLockOnWristOff = it },
             )
         }
+        }
 
         // Smart alarm.
+        item {
         SettingsSection(
             icon = Icons.Filled.Alarm,
             title = "Smart alarm",
@@ -258,8 +269,10 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 }
             }
         }
+        }
 
         // Inactivity reminder (#419) — real + persisted via InactivityPrefs; opt-in, default OFF.
+        item {
         SettingsSection(
             icon = Icons.Filled.Timer,
             title = "Inactivity reminder",
@@ -363,13 +376,15 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 }
             }
         }
+        }
 
         // On-device short-nap detection (PR #569 reimpl) — opt-in, default OFF. Detected on the offload
         // hook; a confident nap is offered as a review card you accept (it becomes a nap session) or
         // dismiss. NEVER auto-written.
-        NapDetectionSection(viewModel)
+        item { NapDetectionSection(viewModel) }
 
         // Illness early-warning (real + persisted; opt-OUT — the watch has always run on Android).
+        item {
         SettingsSection(
             icon = Icons.Filled.MonitorHeart,
             title = "Illness early-warning",
@@ -383,8 +398,10 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 onChange = { viewModel.setIllnessWatchEnabled(it) },
             )
         }
+        }
 
         // Battery alerts (real + persisted; opt-OUT, default ON — #368, thanks @ujix).
+        item {
         SettingsSection(
             icon = Icons.Filled.BatteryStd,
             title = "Battery alerts",
@@ -397,6 +414,7 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 checked = batteryAlerts,
                 onChange = { viewModel.setBatteryAlertsEnabled(it) },
             )
+        }
         }
     }
 }

@@ -350,11 +350,17 @@ fun DataSourcesScreen(vm: AppViewModel) {
         }
     }
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each SourceCard is an unconditional top-level child, so each becomes one
+    // `item { }` in the same order. There are no standalone Spacers (the eager column relied on
+    // `spacedBy(20.dp)`, which the LazyColumn reproduces), so spacing is byte-identical. Only the on-screen
+    // cards now compose + get accessibility-walked on scroll — this list of 11 source cards is long. The
+    // confirm dialogs below the scaffold are untouched.
+    LazyScreenScaffold(
         title = "Data Sources",
         subtitle = "Everything stays on this phone. Bring your history in once, then it's yours.",
     ) {
         // --- WHOOP data (cached history) ---
+        item {
         SourceCard(
             title = "WHOOP History",
             icon = Icons.Filled.MonitorHeart,
@@ -378,8 +384,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { whoopImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Apple Health ---
+        item {
         SourceCard(
             title = "Apple Health",
             icon = Icons.Filled.FavoriteBorder,
@@ -418,8 +426,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 ) { confirmDeleteApple = true }
             }
         }
+        }
 
         // --- Health Connect (native Android health data) ---
+        item {
         SourceCard(
             title = "Health Connect",
             icon = Icons.Filled.MonitorHeart,
@@ -542,8 +552,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 RoadmapNote("Health Connect isn't set up on this device — install it from Google Play, then return here to import.")
             }
         }
+        }
 
         // --- Nutrition CSV (calories / macros / body weight) ---
+        item {
         SourceCard(
             title = "Nutrition (CSV)",
             icon = Icons.Filled.Restaurant,
@@ -569,8 +581,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { nutritionImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Xiaomi Mi Band (Mi Fitness on-device DB) — #35 ---
+        item {
         SourceCard(
             title = "Xiaomi Mi Band",
             icon = Icons.Filled.Watch,
@@ -597,8 +611,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { xiaomiImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Lifting log (Hevy CSV / Liftosaur JSON) ---
+        item {
         SourceCard(
             title = "Lifting log (Hevy / Liftosaur)",
             icon = Icons.Filled.FitnessCenter,
@@ -625,8 +641,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { liftingImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Workout file (GPX / TCX / FIT) — any brand, on-device ---
+        item {
         SourceCard(
             title = "Workout file (GPX / TCX / FIT)",
             icon = Icons.Filled.Map,
@@ -652,8 +670,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { activityFileImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Oura / Fitbit / Garmin own-data export — on-device ---
+        item {
         SourceCard(
             title = "Oura / Fitbit / Garmin export",
             icon = Icons.Filled.Watch,
@@ -681,8 +701,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             ) { wearableImportLauncher.launch(arrayOf("*/*")) }
         }
+        }
 
         // --- Broadcast heart rate (NOOP as a standard BLE HR peripheral) ---
+        item {
         SourceCard(
             title = "Broadcast heart rate",
             icon = Icons.Filled.MonitorHeart,
@@ -774,8 +796,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 }
             }
         }
+        }
 
         // --- Live WHOOP strap over BLE ---
+        item {
         SourceCard(
             title = "WHOOP Strap (Live BLE)",
             icon = Icons.Filled.Bluetooth,
@@ -788,8 +812,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
             }
             StatePill(title = label, tone = tone, showsDot = true, pulsing = live.connected && !live.bonded)
         }
+        }
 
         // --- Whole-store backup (the real Android migration path) ---
+        item {
         SourceCard(
             title = "Backup & Move",
             icon = Icons.Filled.FileDownload,
@@ -824,6 +850,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
                     color = Palette.statusWarning,
                 )
             }
+        }
         }
     }
 

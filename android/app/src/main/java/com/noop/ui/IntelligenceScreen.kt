@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,7 +51,19 @@ import kotlin.math.roundToInt
 @Composable
 fun IntelligenceScreen(vm: AppViewModel) {
     val days by vm.recentDays.collectAsStateWithLifecycle()
+    // PERF (#scroll-jank): the BLE live state ticks ~1Hz. This screen reads `live` ONLY for the
+    // "syncing history" note (backfilling + the chunk count), so reading the whole `live` object at
+    // body scope recomposed the entire Intelligence screen on every HR tick. Collapse it to the two
+    // fields the note needs via a structural-equality snapshot: a 72→73 bpm tick produces an EQUAL
+    // snapshot and the body is NOT recomposed; it only recomposes when the backfilling state / chunk
+    // count actually changes. Mirrors the shipped Today liveSnap fix. Appearance-preserving.
     val live by vm.live.collectAsStateWithLifecycle()
+    val backfillNote by remember {
+        derivedStateOf {
+            val s = live
+            if (s.backfilling) s.syncChunksThisSession else null
+        }
+    }
 
     // Effort display scale (#268) — routes every Effort value/label on this screen. Display-only.
     val effortScale = UnitPrefs.effortScale(LocalContext.current)
@@ -97,7 +110,7 @@ fun IntelligenceScreen(vm: AppViewModel) {
         if (ordered.isEmpty()) {
             item {
                 // While the strap is mid-offload, say so — an empty list reads as final otherwise (#77).
-                if (live.backfilling) SyncingHistoryNote(chunks = live.syncChunksThisSession)
+                if (backfillNote != null) SyncingHistoryNote(chunks = backfillNote!!)
                 EmptyNote()
             }
         } else {

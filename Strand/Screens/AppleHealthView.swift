@@ -172,7 +172,14 @@ struct AppleHealthView: View {
 
     var body: some View {
         ScreenScaffold(title: "Apple Health", subtitle: spanSubtitle.map { "\($0)" },
-                       onRefresh: { await repo.refresh() }) {
+                       onRefresh: { await repo.refresh() },
+                       // PERF: chart-heavy column (the tile grid plus the heart / activity / body / sleep
+                       // sections, each carrying its own sparklines + metric charts). The LazyVStack path
+                       // is byte-identical layout. NOTE: the populated branch wraps its sections in an
+                       // inner VStack(spacing: sectionGap=22) to preserve the 22pt inter-section spacing
+                       // (the scaffold stack is 20pt), so the lazy win is partial until those sections are
+                       // promoted to direct children — kept as one node here to stay pixel-identical.
+                       lazy: true) {
             if loaded && !hasAnyData {
                 #if os(iOS)
                 // No data yet, but iOS can grant live access right here — keep the Enable card above

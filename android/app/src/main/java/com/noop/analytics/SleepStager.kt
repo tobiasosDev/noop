@@ -270,6 +270,18 @@ object SleepStager {
     const val stageWakeMoveFrac: Double = 0.15
     const val stageStillMoveFrac: Double = 0.10
 
+    /**
+     * Fraction of sleep-period epochs that must carry a MISSING per-epoch RMSSD (sparse R-R) for the
+     * session's cardiac signal to count as PPG-DERIVED / sparse-cardiac. On a WHOOP 5/MG the PPG-derived
+     * HR feeds a noisier per-epoch HR-variance, which inflates `hrVar` on otherwise still, low-HR sleep
+     * epochs and was tripping the Stage-2 WAKE rule (which keys on the `hrvarHigh` percentile), so a
+     * whole night over-reported WAKE. We already trust `!rmssd.isFinite()` as a PPG/sparse tell for the
+     * pro-deep RMSSD handling (#127/#129); at this share across the night it also down-weights the
+     * HR-variance half of the WAKE rule. ~50% keeps a real worn 4.0 night (dense R-R) on the strict
+     * path and only relaxes nights whose cardiac signal is genuinely sparse/derived. (#705)
+     */
+    const val cardiacSparseEpochFrac: Double = 0.5
+
     const val smoothEpochs: Int = 5
     const val noREMAfterOnsetMin: Double = 15.0
     const val deepFirstFraction: Double = 1.0 / 3.0
@@ -891,8 +903,32 @@ object SleepStager {
         return Pair(o, f)
     }
 
-    /** Build a 30 s hypnogram for [start, end] and return StageSegments. */
+    /**
+     * Build a 30 s hypnogram for [start, end] and return StageSegments.
+     *
+     * PERF (v7.0.2 / #707): staging is the heaviest per-night step on the model path and it was being
+     * re-run for EVERY detected night on EVERY [IntelligenceEngine.analyzeRecent] — ~21× per post-sync
+     * pass, again per sleep edit, and up to thousands of nights on the one-shot full-history Effort rescore
+     * (maxDays=4000). It is a pure function of (start, end, samples), so this is a thin cache veneer over
+     * [stageSessionUncached]: each distinct night stages AT MOST ONCE, peak heap stays flat across repeated
+     * passes, and the output is byte-identical (the cached list is the same one the recipe produced, handed
+     * back as a fresh copy so a caller extending a segment in place can never poison the cache). Edits
+     * invalidate naturally — a moved bed/wake time changes start/end → new key; newly-banked samples change
+     * the per-stream count/edge-ts/checksum → new key (see [StagerCache.fingerprint]).
+     */
     internal fun stageSession(
+        start: Long, end: Long, grav: List<GravitySample>,
+        hr: List<HrSample>, rr: List<RrInterval>, resp: List<RespSample>,
+    ): List<StageSegment> {
+        val key = StagerCache.fingerprint(StagerCache.Version.V1, start, end, grav, hr, rr, resp)
+        StagerCache.get(key)?.let { return StagerCache.copyOf(it) }
+        val segments = stageSessionUncached(start, end, grav, hr, rr, resp)
+        StagerCache.put(key, segments)
+        return StagerCache.copyOf(segments)
+    }
+
+    /** The pure recipe, exactly as before — extracted so [stageSession] can memoize it. */
+    private fun stageSessionUncached(
         start: Long, end: Long, grav: List<GravitySample>,
         hr: List<HrSample>, rr: List<RrInterval>, resp: List<RespSample>,
     ): List<StageSegment> {
@@ -1497,16 +1533,32 @@ object SleepStager {
         val hrvarHi = percentile(sleepFeats.map { it.hrVar }, stageHRVarHighPct)
         val rrvHi = percentile(sleepFeats.map { it.rrv }, stageRRVHighPct)
         val rrvLo = percentile(sleepFeats.map { it.rrv }, stageRRVLowPct)
+        val cardiacSparse = isCardiacSparse(sleepFeats)
 
         return features.map {
             classifyOne(it, hrLo = hrLo, hrHi = hrHi, rmssdHi = rmssdHi,
-                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo)
+                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo,
+                cardiacSparse = cardiacSparse)
         }
+    }
+
+    /**
+     * Session-level PPG-derived / sparse-cardiac tell: most sleep-period epochs carry NO finite
+     * per-epoch RMSSD (sparse R-R). On those nights the HR is PPG-derived and its windowed variance
+     * (`hrVar`) is noisier, so the percentile `hrvarHigh` bar fires on genuinely still, low-HR sleep —
+     * which the WAKE rule must NOT treat as cardiac activation. Same `!rmssd.isFinite()` signal already
+     * trusted for the pro-deep RMSSD handling (#127/#129), aggregated across the night. (#705)
+     */
+    internal fun isCardiacSparse(sleepFeats: List<EpochFeatures>): Boolean {
+        if (sleepFeats.isEmpty()) return false
+        val sparse = sleepFeats.count { !it.rmssd.isFinite() }
+        return sparse.toDouble() >= cardiacSparseEpochFrac * sleepFeats.size.toDouble()
     }
 
     internal fun classifyOne(
         f: EpochFeatures, hrLo: Double?, hrHi: Double?,
         rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+        cardiacSparse: Boolean = false,
     ): String {
         val hasHR = f.hr.isFinite()
         val hrLow = hasHR && hrLo != null && f.hr <= hrLo
@@ -1523,6 +1575,13 @@ object SleepStager {
         val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
         val cardiacActivated = hrHigh || hrvarHigh
 
+        // WAKE-specific cardiac vetting. On a PPG-derived / sparse-cardiac night the per-epoch HR-variance
+        // is noisy, so `hrvarHigh` fires on still, low-HR sleep and used to flip those epochs to WAKE. When
+        // the session is sparse we DOWN-WEIGHT hrVar for the wake promotion and require a real elevated HR
+        // (`hrHigh`) — the down-weighting mirrors how sparse R-R is trusted for the pro-deep RMSSD handling.
+        // Dense 4.0 nights keep the full `hrHigh || hrvarHigh` signal, so their behaviour is unchanged. (#705)
+        val cardiacActivatedForWake = if (cardiacSparse) hrHigh else cardiacActivated
+
         val rrvIrregular = f.rrv.isFinite() && rrvHi != null && f.rrv >= rrvHi
         // Missing respiration (NaN RRV) treated as "regular" (pro-deep bias).
         val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
@@ -1530,8 +1589,10 @@ object SleepStager {
         val still = f.moveFrac <= stageStillMoveFrac
         val moving = f.moveFrac >= stageWakeMoveFrac
 
-        // WAKE: sustained motion + activated cardiac (or no HR to vet motion).
-        if (moving && (cardiacActivated || !hasHR)) return "wake"
+        // WAKE: sustained motion + activated cardiac (or no HR to vet motion). On a sparse/PPG night the
+        // cardiac half is vetted by HR only (see `cardiacActivatedForWake`), so noisy hrVar no longer
+        // over-promotes still sleep to wake. (#705)
+        if (moving && (cardiacActivatedForWake || !hasHR)) return "wake"
         // DEEP: still + low HR + regular respiration, with high parasympathetic tone when measurable.
         if (still && parasympOK && hrLow && rrvRegular) return "deep"
         // REM: still body + activated cardiac + irregular respiration.
@@ -1657,6 +1718,7 @@ object SleepStager {
     internal fun remRejectReason(
         f: EpochFeatures, hrLo: Double?, hrHi: Double?,
         rmssdHi: Double?, hrvarHi: Double?, rrvHi: Double?, rrvLo: Double?,
+        cardiacSparse: Boolean = false,
     ): REMRejectReason {
         // Mirror classifyOne's derived predicates exactly.
         val hasHR = f.hr.isFinite()
@@ -1665,6 +1727,7 @@ object SleepStager {
         val parasympOK = (!f.rmssd.isFinite()) || (rmssdHi != null && f.rmssd >= rmssdHi)
         val hrvarHigh = f.hrVar.isFinite() && hrvarHi != null && f.hrVar >= hrvarHi
         val cardiacActivated = hrHigh || hrvarHigh
+        val cardiacActivatedForWake = if (cardiacSparse) hrHigh else cardiacActivated
         val rrvIrregular = f.rrv.isFinite() && rrvHi != null && f.rrv >= rrvHi
         val rrvRegular = (!f.rrv.isFinite()) || (rrvLo != null && f.rrv <= rrvLo)
         val still = f.moveFrac <= stageStillMoveFrac
@@ -1672,7 +1735,7 @@ object SleepStager {
 
         // classifyOne precedence: WAKE, then DEEP, then REM (then REM fallback), else LIGHT.
         // An epoch that wins WAKE or DEEP was never a REM candidate.
-        if (moving && (cardiacActivated || !hasHR)) return REMRejectReason.WON_OTHER_STAGE  // → wake
+        if (moving && (cardiacActivatedForWake || !hasHR)) return REMRejectReason.WON_OTHER_STAGE  // → wake
         if (still && parasympOK && hrLow && rrvRegular) return REMRejectReason.WON_OTHER_STAGE // → deep
         // From here the epoch did NOT win wake/deep; it is either REM or falls through to LIGHT.
         if (still && cardiacActivated && rrvIrregular) return REMRejectReason.REM_ELIGIBLE
@@ -1726,6 +1789,7 @@ object SleepStager {
         val hrvarHi = percentile(sleepFeats.map { it.hrVar }, stageHRVarHighPct)
         val rrvHi = percentile(sleepFeats.map { it.rrv }, stageRRVHighPct)
         val rrvLo = percentile(sleepFeats.map { it.rrv }, stageRRVLowPct)
+        val cardiacSparse = isCardiacSparse(sleepFeats)
 
         // Classify + post-process exactly as stageSession does, so we explain the SAME hypnogram.
         val labels = classifyEpochs(feats)
@@ -1746,7 +1810,8 @@ object SleepStager {
             if (f.rrv.isFinite()) respChannelPresent = true
             // Per-epoch REM reason at the raw classifier seam (pre-smoothing) — the funnel's mouth.
             when (remRejectReason(f, hrLo = hrLo, hrHi = hrHi, rmssdHi = rmssdHi,
-                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo)) {
+                hrvarHi = hrvarHi, rrvHi = rrvHi, rrvLo = rrvLo,
+                cardiacSparse = cardiacSparse)) {
                 REMRejectReason.REM_ELIGIBLE -> remAtClassify += 1
                 REMRejectReason.WON_OTHER_STAGE -> wonOtherStage += 1
                 REMRejectReason.NOT_STILL -> blockedNotStill += 1

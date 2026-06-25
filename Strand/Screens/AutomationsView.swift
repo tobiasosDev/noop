@@ -6,7 +6,11 @@ import StrandDesign
 struct AutomationsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var behavior: BehaviorStore
-    @EnvironmentObject var live: LiveState
+    // PERF: this screen does NOT observe `LiveState`. Its only live-dependent pixel is the "Strap
+    // bonded / not connected" pill inside the double-tap card, which is now the `BondStatePill` leaf
+    // that owns its own `@EnvironmentObject live`. Observing `live` at this level would re-render the
+    // whole 8-9 card automations column on every ~1 Hz strap tick (bond state changes only rarely);
+    // scoping it means a tick re-renders just the one pill.
     /// Deep-link into the experimental Rhythm visualization (it self-gates on its own consent).
     @EnvironmentObject var router: NavRouter
 
@@ -31,7 +35,11 @@ struct AutomationsView: View {
 
     var body: some View {
         ScreenScaffold(title: "Automations",
-                       subtitle: "Make the strap do things — tap to act, walk away to lock, train by feel.") {
+                       subtitle: "Make the strap do things — tap to act, walk away to lock, train by feel.",
+                       // PERF: the cards are direct children of the scaffold column, so the LazyVStack
+                       // path (byte-identical layout) genuinely builds the off-screen cards on demand
+                       // instead of constructing all eight/nine + their toggle subtrees up-front.
+                       lazy: true) {
             #if os(iOS)
             wristAlertsCard
             #endif
@@ -91,8 +99,10 @@ struct AutomationsView: View {
                     .buttonStyle(.bordered).tint(StrandPalette.accent)
                     .disabled(behavior.doubleTapAction == .none)
                     Spacer()
-                    StatePill(live.bonded ? "Strap bonded" : "Strap not connected",
-                              tone: live.bonded ? .positive : .warning, showsDot: true)
+                    // Live-observing leaf: re-renders on its own when the strap's bond state flips, so a
+                    // ~1 Hz strap tick doesn't re-render the whole automations column (scroll-stutter
+                    // isolation). Renders byte-for-byte the previous inline pill.
+                    BondStatePill()
                 }
                 if !model.moments.isEmpty {
                     rowDivider
@@ -623,6 +633,20 @@ struct AutomationsView: View {
 
     private var rowDivider: some View {
         Rectangle().fill(StrandPalette.hairline).frame(height: 1).padding(.vertical, 4)
+    }
+}
+
+// MARK: - Live-observing leaf (scroll-stutter isolation)
+
+/// The strap bond-status pill in the double-tap card ("Strap bonded" / "Strap not connected"). It owns
+/// its OWN `@EnvironmentObject live` so a ~1 Hz strap publish re-renders only this pill, not the whole
+/// automations column (the parent `AutomationsView` no longer observes `LiveState`). Renders
+/// byte-for-byte the previous inline `StatePill(live.bonded ? …)`.
+private struct BondStatePill: View {
+    @EnvironmentObject private var live: LiveState
+    var body: some View {
+        StatePill(live.bonded ? "Strap bonded" : "Strap not connected",
+                  tone: live.bonded ? .positive : .warning, showsDot: true)
     }
 }
 

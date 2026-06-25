@@ -97,3 +97,4 @@ dist/
 # local xcodebuild output dirs (not for VCS)
 build-*/
 .superpowers/
+err.txt

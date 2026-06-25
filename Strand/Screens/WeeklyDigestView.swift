@@ -84,7 +84,13 @@ struct WeeklyDigestView: View {
 
     var body: some View {
         ScreenScaffold(title: "Week in review",
-                       subtitle: "Your Monday-to-Sunday, read in one glance.") {
+                       subtitle: "Your Monday-to-Sunday, read in one glance.",
+                       // PERF: chart-heavy column (per-score summary cards with gauges, the metric grid
+                       // and the focal-points list, all inside WeeklyDigestContent). The LazyVStack path
+                       // is byte-identical layout. The content is kept in its inner VStack(sectionGap=22)
+                       // for pixel-identical spacing (the scaffold stack is 20pt), so the win is partial
+                       // until those rows are promoted to direct children.
+                       lazy: true) {
             if repo.days.isEmpty {
                 ComingSoon(what: repo.loaded
                     ? "A weekly digest needs a few days of history. Wear your strap or import your WHOOP export in Data Sources."

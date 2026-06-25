@@ -17,6 +17,16 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 7.0.2 — the smoothness release: app-wide performance + a Sleep V2 crash fix (all platforms)
+
+You told us the home screen and sleep cards felt laggy, so this is a top-to-bottom performance pass across every screen on every platform, plus a real fix for a Sleep V2 crash.
+
+- **Scrolling is much smoother on every screen, all platforms.** Charts and rings now cache their drawing instead of redrawing on every frame, long screens build only what is actually on screen, and the home screen no longer redraws itself on every heartbeat.
+- **The analytics stopped thrashing your phone's memory.** The sleep and scoring engines were re-crunching the same nights over and over; now each night is worked out once and reused, so the app stays quieter and faster while it scores.
+- **Fixed the Sleep V2 crash (#707).** With the experimental sleep staging on, the app could get choppy and then crash on Android while scrolling back through previous nights: the V2 staging never trimmed each night down to that night and redid the same heavy windowed maths a million times, so it ran the phone out of memory. Fixed by clipping each night's data to that night before staging, doing the windowed maths in a single pass, and collapsing the sleep cards' accessibility tree. Your sleep numbers are unchanged.
+- **The day no longer jumps when you come back to the app** (the Rest graph now matches the Rest score, and the sleep arrows say something useful when there is no earlier night stored yet) (#614).
+- **New Settings toggle to turn off the day-cycle background** (#698).
+
 ## 7.0.1 — fixes: sleep toggle, steps, manual workouts, HRV, scrolling, and the version display (all platforms)
 
 A fast follow-up to 7.0.0.

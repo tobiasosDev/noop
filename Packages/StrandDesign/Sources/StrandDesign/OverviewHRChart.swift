@@ -1,3 +1,6 @@
+#if !os(watchOS)
+// OverviewHRChart is a Swift Charts view with .onContinuousHover / MagnificationGesture pan-zoom
+// (none available on watchOS); the watch never shows it, so the whole file is excluded there.
 import SwiftUI
 import Charts
 
@@ -110,12 +113,28 @@ public struct OverviewHRChart: View {
         self.averageValue = sorted.isEmpty
             ? valueRange.lowerBound
             : sorted.map(\.value).reduce(0, +) / Double(sorted.count)
+        // Deep Timeline (the only caller that supplies `zoomBounds`) keeps full resolution so pinch-zoom
+        // into sub-windows stays crisp. The default-binding case here is `zoomBounds == nil`, so the
+        // static Today chart downsamples. `zoomBounds` is the stable discriminator (set once, never
+        // toggles) — unlike the live `zoomDomain`, which is nil until the user first zooms.
+        self.displayPoints = (zoomBounds != nil)
+            ? sorted
+            : ChartDownsample.minMaxBucketed(sorted, threshold: ChartDownsample.markThreshold,
+                                             targetCount: ChartDownsample.targetVertices)
     }
 
     @State private var hoverX: CGFloat? = nil
     /// The zoom window captured at the start of a magnify/drag gesture, so the gesture is applied
     /// against a stable anchor instead of compounding each frame.
     @State private var gestureAnchorDomain: ClosedRange<Date>? = nil
+
+    /// PERF: the 24h HR line can carry hundreds of samples — more than the ~360pt plot has pixels, so most
+    /// are sub-pixel pure draw cost. This is the point set actually handed to the line/area marks:
+    /// full resolution in the Deep Timeline (where the user pinches into sub-windows), else
+    /// min/max-per-bucket down to ~the plot pixel width. Min/max bucketing keeps every visible spike, so
+    /// the static Today chart is pixel-identical. Computed ONCE in `init` (not per body/hover eval) so
+    /// it's memoized on `points`; hover / markers / accessibility stay on the full `points`.
+    private let displayPoints: [TrendPoint]
 
     /// Smallest zoom window we allow (1 minute) — past this the line is just two points and pinch jitters.
     public static let minZoomSpan: TimeInterval = 60
@@ -230,7 +249,7 @@ public struct OverviewHRChart: View {
             .foregroundStyle(StrandPalette.sleepDeep.opacity(0.32))
         }
 
-        ForEach(points) { p in
+        ForEach(displayPoints) { p in
             AreaMark(x: .value("Time", p.date), y: .value("BPM", p.value))
                 .interpolationMethod(.catmullRom)
                 .foregroundStyle(
@@ -243,7 +262,7 @@ public struct OverviewHRChart: View {
                     )
                 )
         }
-        ForEach(points) { p in
+        ForEach(displayPoints) { p in
             LineMark(x: .value("Time", p.date), y: .value("BPM", p.value))
                 .interpolationMethod(.catmullRom)
                 .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
@@ -573,4 +592,5 @@ private struct ZoomPanModifier: ViewModifier {
     .background(StrandPalette.surfaceBase)
     .preferredColorScheme(.dark)
 }
+#endif
 #endif

@@ -137,11 +137,16 @@ fun HrvSnapshotScreen(
         phase = HrvPhase.Done
     }
 
-    ScreenScaffold(
+    // PERF (#707): lazy scaffold — each section is one `item { }`; the capture dial ticks `secondsRemaining`
+    // each second during a capture, and a LazyColumn confines that tick's recomposition to the visible
+    // items. Conditional sections use `if (cond) { item {} }` so a hidden result/hint adds no row. Order +
+    // spacing identical (LazyColumn reproduces the eager `spacedBy(20.dp)`).
+    LazyScreenScaffold(
         title = "HRV Reading",
         subtitle = "A still, seated snapshot of your heart-rate variability",
     ) {
         // Status row.
+        item {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             when (phase) {
                 HrvPhase.Idle -> StatePill("Ready", tone = StrandTone.Neutral)
@@ -163,8 +168,10 @@ fun HrvSnapshotScreen(
                 )
             }
         }
+        }
 
         // Capture card — the progress dial over a calm Rest-world starfield.
+        item {
         NoopCard(padding = 24.dp, tint = Palette.restColor) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -200,8 +207,10 @@ fun HrvSnapshotScreen(
                 )
             }
         }
+        }
 
         // Controls.
+        item {
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap), modifier = Modifier.fillMaxWidth()) {
             Button(
                 onClick = {
@@ -262,16 +271,18 @@ fun HrvSnapshotScreen(
                 }
             }
         }
+        }
 
         // Result.
         val done = result
         if (phase == HrvPhase.Done && done != null) {
-            ResultCard(done)
+            item { ResultCard(done) }
         }
 
         // Methodology — source-aware caveat (a 5/MG's R-R is optical PPG, noisier than a chest strap).
         // The same RMSSD math the nightly HRV uses (Task Force 1996, cleaned), so the spot number is
         // comparable to your overnight figure.
+        item {
         NoopCard(tint = Palette.restColor) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Overline("How this is measured")
@@ -287,8 +298,9 @@ fun HrvSnapshotScreen(
                 )
             }
         }
+        }
 
-        if (!bonded) NotBondedHint()
+        if (!bonded) { item { NotBondedHint() } }
     }
 }
 
