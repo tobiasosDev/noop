@@ -1,0 +1,22 @@
+Strand/Screens/AutomationsView.swift
+  s_187d4863c07d3d::t_0e524137b8ce1c 624-658
+  s_187d4863c07d3d::t_507e1815393db6 225-227
+project.yml
+  s_187d4863c07d3d::t_70ece7e23a486b 15-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.13",
+  "base_commit_sha": "c599d6b4051260012522bc41b12b427453b02e1f",
+  "prompts": {},
+  "sessions": {
+    "s_187d4863c07d3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf6e4658-e9e2-4819-8e3a-162e8b7cc365",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
