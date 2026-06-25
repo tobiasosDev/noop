@@ -222,12 +222,9 @@ struct AutomationsView: View {
                     rowDivider
                     alarmWeekdayPicker
                     rowDivider
-                    HStack(spacing: 8) {
-                        Image(systemName: alarmStatusIcon).foregroundStyle(alarmStatusTint)
-                        Text(alarmStatusText).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
+                    AlarmStatusRow()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
                 }
             }
             // Step 2: enable/disable path → coordinator + phone backup (no double-arm with direct BLE).
@@ -290,32 +287,6 @@ struct AutomationsView: View {
     private var nextSmartWake: Date {
         AppModel.nextSmartAlarmDate(minutes: behavior.smartAlarmMinutes, weekdays: behavior.smartAlarmWeekdays)
             ?? WakeTime.next(minutesSinceMidnight: behavior.smartAlarmMinutes)
-    }
-
-    // MARK: Alarm status helpers (driven by live.alarmArmConfirmed)
-
-    private var alarmStatusIcon: String {
-        switch live.alarmArmConfirmed {
-        case .some(true): return "checkmark.seal.fill"
-        case .some(false): return "exclamationmark.triangle.fill"
-        case .none: return "clock.arrow.circlepath"
-        }
-    }
-
-    private var alarmStatusTint: Color {
-        switch live.alarmArmConfirmed {
-        case .some(true): return StrandPalette.accent
-        case .some(false): return StrandPalette.statusWarning
-        case .none: return StrandPalette.textSecondary
-        }
-    }
-
-    private var alarmStatusText: String {
-        switch live.alarmArmConfirmed {
-        case .some(true): return "Confirmed on your strap — buzzes even with NOOP closed."
-        case .some(false): return "Strap didn't store it — phone backup is set."
-        case .none: return "Syncing to your strap…"
-        }
     }
 
     // MARK: Weekday picker (#539)
@@ -647,6 +618,41 @@ private struct BondStatePill: View {
     var body: some View {
         StatePill(live.bonded ? "Strap bonded" : "Strap not connected",
                   tone: live.bonded ? .positive : .warning, showsDot: true)
+    }
+}
+
+/// The Smart-Alarm confirm-status row ("Confirmed on your strap…" / "Strap didn't store it…" /
+/// "Syncing…"). Owns its OWN `@EnvironmentObject live` so a strap read-back publish re-renders only
+/// this row, not the whole automations column (the parent `AutomationsView` no longer observes
+/// `LiveState`, mirroring `BondStatePill`). Driven by `live.alarmArmConfirmed`.
+private struct AlarmStatusRow: View {
+    @EnvironmentObject private var live: LiveState
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(text).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+        }
+    }
+    private var icon: String {
+        switch live.alarmArmConfirmed {
+        case .some(true): return "checkmark.seal.fill"
+        case .some(false): return "exclamationmark.triangle.fill"
+        case .none: return "clock.arrow.circlepath"
+        }
+    }
+    private var tint: Color {
+        switch live.alarmArmConfirmed {
+        case .some(true): return StrandPalette.accent
+        case .some(false): return StrandPalette.statusWarning
+        case .none: return StrandPalette.textSecondary
+        }
+    }
+    private var text: String {
+        switch live.alarmArmConfirmed {
+        case .some(true): return "Confirmed on your strap — buzzes even with NOOP closed."
+        case .some(false): return "Strap didn't store it — phone backup is set."
+        case .none: return "Syncing to your strap…"
+        }
     }
 }
 
