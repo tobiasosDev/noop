@@ -1,0 +1,377 @@
+Strand/Data/IntelligenceEngine.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 68-80,92-95,127,318-451,456,515,555-561,602-629,736-779,877-889,895,906,954-992,1062-1065
+android/app/src/main/java/com/noop/ingest/CsvParser.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 196-237
+android/app/src/main/java/com/noop/ui/CompareScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 39,397,400,455,458-460,465-471,473,476-477,724-733,735,737,739-740,742-821,824-829
+StrandiOS/Health/HealthKitBridge.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 123-127,139-266
+StrandiOS/App/StrandiOSApp.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 18-20,32-38,106-113,133-136
+Strand/Screens/TrendsView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 3,52-64,214-218,232-234,238-240,263-377,383-385
+NOOPWatch/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-14
+Tools/make_icon.py
+  s_187d4863c07d3d::t_603b10aa5e7d8f 90-93
+android/app/src/main/java/com/noop/ui/AppChangelog.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 28,39-101
+android/app/src/main/java/com/noop/ingest/WhoopCsvImporter.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 257-263
+android/app/src/main/java/com/noop/ui/WorkoutsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 149-157,159,161,164,166,174,183-189,201
+android/app/src/main/java/com/noop/analytics/BatteryEstimator.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-106
+android/app/src/main/java/com/noop/analytics/SleepStagerV2.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 52-66,71-128,202-208,211-213,240-267,269-281
+android/app/src/main/java/com/noop/ui/TimeOfDayBackground.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 9,15,92-94,97-106,128-139,163-171,192,194-196
+android/app/src/main/java/com/noop/ui/AppleHealthScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 161-165,167-168,170-175
+Packages/StrandAnalytics/Sources/StrandAnalytics/BatteryEstimator.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-114
+Strand/Screens/DataSourcesView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 71-79
+android/app/src/main/java/com/noop/ui/TrendsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 14,16-18,20-21,41,87-121,123-126,132-143,148-156,159-162,164-180,187-214,219-253,257-260,266-368,792-802
+StrandTests/IntelligenceWatchRecoveryTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-78
+android/app/src/main/java/com/noop/ui/LiveWorkoutScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 33,74-82
+Packages/StrandImport/Sources/StrandImport/CSVParsing.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 182-223
+StrandTests/BackfillerSessionTallyTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 34,39-48
+NOOPWatch/Assets.xcassets/Contents.json
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-6
+android/app/src/main/java/com/noop/ui/PipBar.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 28,111,205
+android/app/src/main/java/com/noop/ui/FullDayChartScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 28,92-101
+android/app/src/main/java/com/noop/ble/Backfiller.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 152-159,216,356,423,425
+Strand/Screens/SleepView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 28-32,109-115,121,318-322,1349-1408,1410-1419,1484-1493,1495,1497-1513,1539-1543,1548,1666-1669,1879-1959
+android/app/src/main/java/com/noop/ui/BreatheScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 30-31,36-37,55-56,60-66,147-156,246,251,356,378-386,511,568-611,1272-1381
+Strand/Screens/WorkoutDetailView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 57-62
+android/app/src/main/java/com/noop/ui/Charts.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 18-19,31-32,50-95,160-168,171-190,261-264,273,276-290,293-341,344-372,391-399,469-482,484-486,490,509-567,570-587,589,611-618,621-654,671-676,681-700,702,814-816,821
+StrandTests/AppleWatchDeviceTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-105
+Strand/Data/Repository.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 257-269,272-287,290-291,310-356,362-363,419-420,439
+android/app/src/main/java/com/noop/ui/InsightsHubScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 97-100,102,106-107,111,113,116,118,121
+NOOPWatch/WatchWorkoutView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-560
+Strand/Screens/AppleHealthView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 175-182
+Packages/StrandAnalytics/Sources/StrandAnalytics/ReadinessEngine.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 80-115
+docs/releases/v7.0.2.md
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-31
+Strand/Screens/HealthView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 17-22,24-96,109-114,116-117,492
+Strand/App/RootView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 63-66,187,216-228
+altstore-source.json
+  s_187d4863c07d3d::t_603b10aa5e7d8f 20-82,1012-1017
+android/app/src/main/java/com/noop/ui/RhythmScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 245-248,261,264,269,271-273,276-277
+android/app/src/main/java/com/noop/ui/InsightsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 255-264,269,271,275,282,284,329,331,335,337,342,344,347,415,417,420-421,445,447,450,452,455
+Packages/StrandDesign/Sources/StrandDesign/YearHeatStrip.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,38-44,53-54,60,87-89,108,119,121,125,133,184-188,278-280
+android/app/src/main/java/com/noop/ui/DataSourcesScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 353-358,363,387,390,429,432,555,558,584,587,614,617,644,647,673,676,704,707,799,802,815,818,854
+Packages/StrandImport/Sources/StrandImport/WhoopCsvExporter.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 174-179,181,192
+README.md
+  s_187d4863c07d3d::t_603b10aa5e7d8f 19,22-23,37
+android/app/src/test/java/com/noop/analytics/SleepStagerRemFunnelTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 8,126-190
+Strand/Screens/LiveWorkoutView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 16-24,32-36,53-56,79-89,247-299
+Tools/release.sh
+  s_187d4863c07d3d::t_603b10aa5e7d8f 41-48,52-57,59,62
+android/app/src/main/java/com/noop/ui/SleepScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 47,130-136,138-143,323,326-329,334-341,345,359-361,421,423-437,1567-1578,2293-2302,2309-2313,2317,2320,2324-2330,2376-2398,2819-2823,2826-2827,3170-3174
+Packages/StrandAnalytics/Package.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 6
+Packages/StrandAnalytics/Sources/StrandAnalytics/DaytimeStress.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 151-165
+android/app/build.gradle.kts
+  s_187d4863c07d3d::t_603b10aa5e7d8f 25-26
+android/app/src/main/java/com/noop/ble/PostBondTimeoutLoopDetector.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 35
+android/app/src/main/java/com/noop/ui/RouteCanvas.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 3,7,9,19-47
+Packages/StrandDesign/Sources/StrandDesign/BevelGauge.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 78-88,94-95,97,102-103,105-107,121-137
+Strand/Screens/SettingsView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 71-73,83-88,137-141,192-194,643-658,925-940,1609-1640,1774-1800
+android/app/src/main/java/com/noop/ui/HrvSnapshotScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 140-144,149,171,174,210,213,274,279,285,301,303
+Packages/StrandDesign/Package.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 6
+Packages/StrandAnalytics/Sources/StrandAnalytics/WatchRecovery.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-100
+NOOPWatchComplications/NOOPWatchComplications.entitlements
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-12
+Strand/BLE/LiveState.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 3,46-69,259,263-281,304
+Strand/Screens/AutoWorkoutCard.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 92,94-95,97,132-148
+Tools/build-v7-artifacts.sh
+  s_187d4863c07d3d::t_603b10aa5e7d8f 37-41,51-59
+android/app/src/main/java/com/noop/ui/StressScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 31,41,111,117-118,143-147,156,159-166,172,176,179,348-377,403-468,471-496,498-522,911,930
+Strand/Screens/SmartAlarmView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 26
+android/app/src/main/java/com/noop/ui/LabBookScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 116-121,126,167,172,197,199,231,234,253
+Strand/Screens/RhythmView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 307-310
+Strand/Resources/Info.plist
+  s_187d4863c07d3d::t_603b10aa5e7d8f 22
+project.yml
+  s_187d4863c07d3d::t_b23c4e4653745f 350
+  s_187d4863c07d3d::t_603b10aa5e7d8f 14,18,78,269-273,320-349,351-361,363-409,411-416,436-441
+  s_187d4863c07d3d::t_b179f5def634fe 248-250
+  s_187d4863c07d3d::t_9a0106ab764d74 312
+  s_187d4863c07d3d::t_ec23375aed7092 362
+  s_187d4863c07d3d::t_9b6f7c854626d3 410
+Strand/Screens/StressView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 54-58
+Strand/Screens/WeeklyDigestView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 87-93
+Packages/StrandDesign/Sources/StrandDesign/StrandCard.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 145-146,148,235
+android/app/src/main/java/com/noop/ui/IntervalsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 201-205,210,224,227,335,338,391,394,424
+android/app/src/test/java/com/noop/ingest/WhoopCsvImporterTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 99-136
+android/app/src/main/java/com/noop/ui/AutoWorkoutNudge.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 37,77-81,84-98,100
+Strand/App/StrandApp.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 6-15
+Strand/BLE/BLEManager.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 390-395,680-684,727-736,759,1273,2264-2284
+android/app/src/main/java/com/noop/ui/HydrationScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 92-95,101,137,140,161-162,168,171,178,182,219,221,228
+android/app/src/test/java/com/noop/ingest/WhoopCsvExporterTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 116-119
+Strand/System/AppChangelog.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 10,22-84
+StrandTests/SleepOnsetStubTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-81
+android/app/src/main/java/com/noop/analytics/StagerCache.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-131
+Packages/StrandDesign/Sources/StrandDesign/OverviewHRChart.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,116-123,131-138,252,265
+Packages/StrandImport/Sources/StrandImport/WhoopExportImporter.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 65-71
+Packages/StrandDesign/Sources/StrandDesign/Appearance.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 89-99
+Packages/StrandImport/Tests/StrandImportTests/WhoopCsvExporterTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 85,141
+android/app/src/main/java/com/noop/ingest/ExerciseTypes.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 50-56
+android/app/src/main/java/com/noop/ui/LiveScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 126-165,170,172,176,178,185,190,195,202,208,224,230-234,277-278,281,283,286,288,291,295-297,300,302,305-311,424-425,431-434,459-460,464,546,555,588,594,596
+android/app/src/main/java/com/noop/ui/SettingsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 370-375,405-407,846-881,1601-1610,1855-1877,1882
+NOOPWatch/NOOPWatch.entitlements
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-17
+Strand/Data/AppleWatchDevice.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-123
+Strand/Data/CsvExport.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 102-107
+android/app/src/main/java/com/noop/ui/MainActivity.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 425-438
+Strand/Screens/TodayView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 25-33,36-59,68-71,102-113,217-227,349-353,399-472,644-648,758-767,770-782,798-800,873-878,883-889,1278-1297,1305,1431-1433,1436-1438,1461-1469,1508-1512,1575-1588,1596,1617-1624,1626,1630,1665,1672-1673,1816-1839,1853-1857,1868,1871-1888,1957-1962,2236,2270-2271,2459-2462,2464-2466,2528-2538,2540-2592,2595-2596,2599-2614,2620,2624-2625,2627-2628,2632-2634,2648-2697,2712-2727,2729,2734,2765,2842-2845,2950-2952,2961,2970-2971,3047-3072,3074-3079,3081-3217
+android/app/src/main/java/com/noop/ui/TodayScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 57,63,94,133-166,176-182,188-211,213-218,223-241,245,247-248,330-363,383-386,544-563,720,733-735,742,744,748-752,779,789,791,825,828,844,868,878,901-903,907,913,921,935,960,966,970,975,980,983,987,1005,1008,1023,1029-1030,1034-1035,1039,1044,1047,1051,1054-1060,1946-1948,1991-2001,2008-2027,2099-2103,2121-2122,2131-2132,2814-2817,2884-2885,3527-3531,3543,3580,3589-3598,4048-4050
+Packages/WhoopStore/Tests/WhoopStoreTests/PairedDeviceTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-9
+Strand/Screens/AppleWatchAboutView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-297
+StrandTests/TodayExplainabilityTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 229-265
+StrandTests/WorkoutCatalogTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-28
+Packages/WhoopStore/Sources/WhoopStore/DeviceRegistryStore.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 7-12
+android/app/src/test/java/com/noop/ui/SleepOnsetStubTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-113
+StrandTests/WatchScoreSnapshotTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-107
+Strand/Screens/IntelligenceView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 9-13,48-51,276-283
+android/app/src/main/java/com/noop/analytics/SleepStager.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 273-284,906-918,922-933,1536,1540-1541,1545-1557,1561,1578-1584,1592-1595,1721,1730,1738,1792,1813-1814
+Strand/Screens/InsightsHubView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 42-46
+android/app/src/main/java/com/noop/ui/Components.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 57,64,289-313,317,326,334-339,669-680,685-688,691,693-715,735-736,893-915,917-948,1195-1202,1225,1228-1238,1241-1263,1266-1312
+android/app/src/main/java/com/noop/ui/DevicesScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 6,101-105,111,116-117,120,136,139-140,155
+Strand/Screens/DevicesView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 14-18,346,350,426-442,528-533,548-550
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/SleepStagerTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 493-568
+Strand/Data/DemoDayHarness.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-71
+android/app/src/main/java/com/noop/ingest/WhoopCsvExporter.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 199-208,211,225,323-327,378-381
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/WatchRecoveryTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-112
+android/app/src/main/java/com/noop/ui/AppRoot.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 144-147,174,266-270
+Packages/StrandDesign/Sources/StrandDesign/StrainGauge.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3
+Packages/StrandDesign/Sources/StrandDesign/DayNavBar.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,142
+Strand/Screens/LabBookView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 48-53,413-418
+NOOPWatchComplications/NOOPWatchComplicationBundle.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-12
+android/app/src/main/java/com/noop/ui/SceneHeroBackground.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 10,121-127,142-147,149-150,152-156,158-159,161-179,223-228,247-253,255-256,258-262,264-265,267-283
+android/app/src/test/java/com/noop/ble/BackfillerSessionTallyTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 41,46-56
+Packages/StrandDesign/Sources/StrandDesign/PipBar.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 82-88,92,114,135-136,138,145-147,150
+Packages/StrandDesign/Sources/StrandDesign/RecoveryRing.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 5-9,24,172,204
+NOOPWatch/WatchScoreStore.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-112
+Packages/WhoopStore/Sources/WhoopStore/PairedDevice.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 53-55
+StrandiOS/Widgets/WidgetPublish.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 19-24,29-30
+Strand/Screens/DashboardCards.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 36-38,41-52,57,60-71
+Packages/StrandAnalytics/Sources/StrandAnalytics/StrainScorer.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 78,215-237
+Strand/Screens/CompareView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 150-155
+android/app/src/test/java/com/noop/analytics/BatteryEstimatorTest.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-74
+android/app/src/main/java/com/noop/ui/AutomationsScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 117-121,128,161,164,194,197,211,214,272,275,379,384,387,401,404,418
+CHANGELOG.md
+  s_187d4863c07d3d::t_603b10aa5e7d8f 20-29
+NOOPWatch/NOOPWatchApp.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-75
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStagerV2.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 39-108,184-186,210-236,238-249
+Packages/StrandDesign/Sources/StrandDesign/TrendChart.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,90-94,109-117,155,172,182-183,185,293-357
+Strand/App/AppModel.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 250-261,266,296-300,316-331,1395-1398
+Packages/StrandAnalytics/Tests/StrandAnalyticsTests/BatteryEstimatorTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-71
+Strand/BLE/SourceCoordinator.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 139-141,147-156,164-180,228-235,246-247
+Strand/Collect/Backfiller.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 90-93,158,217,219,339
+android/app/src/main/java/com/noop/ui/SmartAlarmScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 67-74,77,79,160,163,166
+NOOPWatch/WatchBreatheView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-369
+Packages/StrandImport/Tests/StrandImportTests/WhoopExportImporterTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 297-330
+Strand/Screens/BreathingView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 3,146-153,194-203,292-313,315-318,350-357,382-387,670-672,742-845
+Strand/Data/WorkoutCatalog.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 36-37,43-44
+Strand/Screens/InsightsView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 160-164
+Strand/Screens/WhatsNewView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 20-24
+Packages/StrandDesign/Sources/StrandDesign/WatchScoreSnapshot.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-164
+Strand/Screens/MetricExplorerView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 168-173
+StrandTests/ExperimentalDriversTests.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 2,116-161
+android/app/src/main/java/com/noop/ui/IntelligenceScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 19,54-59,61-66,113
+Tools/update-altstore-source.sh
+  s_187d4863c07d3d::t_603b10aa5e7d8f 41
+Packages/StrandDesign/Sources/StrandDesign/StrandDesign.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 2-4,51,65
+NOOPWatch/Info.plist
+  s_187d4863c07d3d::t_9b40727db6379e 32
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-31,33-34
+.gitignore
+  s_187d4863c07d3d::t_603b10aa5e7d8f 100
+android/app/src/main/java/com/noop/ui/HealthScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 29,114-123,125,132-134,138-139,142-153,157-159,163-170,173-174,177-183,199-205,974-981
+NOOPWatch/WatchIntervalView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-319
+NOOPWatch/WatchGlanceView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-195
+Strand/Screens/AppleWatchSetupView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-344
+Packages/StrandDesign/Sources/StrandDesign/Components.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 189-191,197,598,601-604,609-612
+Packages/StrandDesign/Sources/StrandDesign/Haptics.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 2-4,22-36,52-54
+Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStager.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 246-255,692-734,859-885,1400,1404-1405,1409-1419,1421-1422,1438-1444,1452-1455,1583-1584,1592,1600,1649,1669-1670
+Packages/StrandDesign/Sources/StrandDesign/Sparkline.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,68-77,82-95,97-112
+Strand/Screens/AutomationsView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 9-13,38-42,102-105,639-649
+Packages/StrandDesign/Sources/StrandDesign/Palette.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 34-38,378-379,391-445
+NOOPWatchComplications/Info.plist
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-38
+Strand/Screens/WorkoutsView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 83-88
+Tools/anonymize-ios-app.sh
+  s_187d4863c07d3d::t_603b10aa5e7d8f 15,19-20
+android/app/src/main/java/com/noop/ble/WhoopBleClient.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1155-1159,1433-1434,2406-2431,3943-3944
+NOOPWatch/WatchRootView.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-24
+Strand/Resources/Localizable.xcstrings
+  s_187d4863c07d3d::t_603b10aa5e7d8f 793-798,1581-1586,1609-1614,2039-2044,4215-4220,4513-4518,7287-7292,7387-7392,9930-10545
+Packages/StrandDesign/Sources/StrandDesign/ChartHover.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3
+Packages/StrandDesign/Sources/StrandDesign/Hypnogram.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-3,21-26,98-125,135-146,148-149,154-164,166-181,183-186,222-227
+NOOPWatchComplications/NOOPWatchComplication.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-440
+Packages/StrandDesign/Sources/StrandDesign/StatePill.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 80,90-93,99-102
+NOOPWatch/WatchLiveHR.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-93
+Strand/Data/WatchSessionBridge.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-215
+android/app/src/main/java/com/noop/ui/TrendsExploreScreen.kt
+  s_187d4863c07d3d::t_603b10aa5e7d8f 324-328,333,338,344,348,354,358,381-382,388,391,400,403,410
+Packages/StrandAnalytics/Sources/StrandAnalytics/AnalyticsMemo.swift
+  s_187d4863c07d3d::t_603b10aa5e7d8f 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.13",
+  "base_commit_sha": "ee6f23ef26b31d527734256d593927ddfe7ef3c3",
+  "prompts": {},
+  "sessions": {
+    "s_187d4863c07d3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf6e4658-e9e2-4819-8e3a-162e8b7cc365",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Tobias Lüscher <luescher.tobias1@gmail.com>"
+    }
+  }
+}
