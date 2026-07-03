@@ -3,6 +3,20 @@
 # each anonymized + leak-checked. Writes dist/NOOP-v7.0.0-{macos.zip,.ipa,.apk}.
 set -uo pipefail
 cd ~/Documents/Strand
+
+# ── Anonymity source guard ─────────────────────────────────────────────────────
+# A maintainer name or home path must never reach a release. This is a build-from-
+# source project, so the SOURCE (not just the compiled binary) has to stay clean.
+# Abort before building if a real identity has leaked into tracked code/docs.
+# (A first-name leak in code comments shipped silently for weeks once; never again.)
+LEAK="$(git grep -niE 'aaron|iinde|phull' -- '*.swift' '*.kt' '*.md' '*.py' '*.sh' '*.yml' '*.json' '*.xcstrings' 2>/dev/null | grep -ivE 'aaronson' || true)"
+if [ -n "$LEAK" ]; then
+  echo "✗ ANONYMITY LEAK in tracked source, refusing to build:" >&2
+  echo "$LEAK" | head -20 >&2
+  exit 1
+fi
+echo "✓ anonymity source-scan clean"
+
 VER="${1:-7.0.1}"
 DIST="dist"; mkdir -p "$DIST"
 HOMEPATH="$HOME"

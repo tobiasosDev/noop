@@ -25,4 +25,50 @@ final class WorkoutCatalogTests: XCTestCase {
         XCTAssertEqual(WorkoutCatalog.sport(named: "treadmill WALK")?.name, "Treadmill walk")
         XCTAssertEqual(WorkoutCatalog.sport(named: "  bodybuilding  ")?.name, "Bodybuilding")
     }
+
+    /// #768: the newly requested presets exist and are spelled byte-for-byte the way Android persists
+    /// them (the stored sport label round-trips cross-platform via CSV / export). Racket + court sports
+    /// have no route so GPS defaults off; snow sports cover ground so GPS defaults on.
+    func testNewPresetsExistWithCorrectGpsDefaults() {
+        let gpsOff = ["Racquetball", "Volleyball", "Martial arts", "Dancing", "Golf",
+                      "Climbing", "Stretching", "Pickleball"]
+        for name in gpsOff {
+            let s = WorkoutCatalog.sport(named: name)
+            XCTAssertNotNil(s, "\(name) must be in the suggestion catalogue (#768)")
+            XCTAssertEqual(s?.name, name, "Name is persisted data, must match Android byte-for-byte")
+            XCTAssertEqual(s?.isDistanceSport, false, "\(name) has no route, GPS defaults off")
+        }
+        for name in ["Skiing", "Snowboarding"] {
+            let s = WorkoutCatalog.sport(named: name)
+            XCTAssertNotNil(s, "\(name) must be in the suggestion catalogue (#768)")
+            XCTAssertEqual(s?.isDistanceSport, true, "\(name) covers ground, GPS defaults on")
+        }
+    }
+
+    /// Padel (#152) stays the canonical racket extra, and the new Pickleball extra rides last, just
+    /// before the generic "Other" catch-all , parity with Android's WorkoutSport build order.
+    func testExtrasPrecedeOther() {
+        let names = WorkoutCatalog.all.map(\.name)
+        guard let pickle = names.firstIndex(of: "Pickleball"),
+              let other = names.firstIndex(of: "Other") else {
+            return XCTFail("Pickleball and Other must both be present")
+        }
+        XCTAssertLessThan(pickle, other, "Pickleball extra must sit before the generic Other")
+        XCTAssertEqual(names.last, "Other", "Other stays the final catch-all")
+    }
+
+    /// Bowling (D#850): exists, is spelled byte-for-byte the way Android persists it, defaults GPS off
+    /// (a lane has no route), and rides with the extras before the generic "Other" catch-all.
+    func testBowlingPresetExistsWithGpsOff() {
+        let s = WorkoutCatalog.sport(named: "bowling")
+        XCTAssertNotNil(s, "Bowling must be in the suggestion catalogue (D#850)")
+        XCTAssertEqual(s?.name, "Bowling", "Name is persisted data, must match Android byte-for-byte")
+        XCTAssertEqual(s?.isDistanceSport, false, "Bowling has no route, GPS defaults off")
+        let names = WorkoutCatalog.all.map(\.name)
+        guard let bowling = names.firstIndex(of: "Bowling"),
+              let other = names.firstIndex(of: "Other") else {
+            return XCTFail("Bowling and Other must both be present")
+        }
+        XCTAssertLessThan(bowling, other, "Bowling extra must sit before the generic Other")
+    }
 }

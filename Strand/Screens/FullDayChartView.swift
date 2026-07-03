@@ -91,7 +91,7 @@ struct FullDayChartView: View {
             Spacer()
             // #574 — owned-source scope. The strap is the owned source; "All sources" reveals the honest
             // disclosure that other sources' raw per-second streams aren't offloaded on-device.
-            SegmentedPillControl([true, false], selection: $ownedOnly) { $0 ? "Owned" : "All" }
+            SegmentedPillControl([true, false], selection: $ownedOnly) { $0 ? String(localized: "Owned") : String(localized: "All") }
                 .fixedSize()
         }
         .padding(.horizontal, NoopMetrics.space1)
@@ -141,8 +141,8 @@ struct FullDayChartView: View {
 
     private var dayLabel: String {
         let today = Repository.logicalDayStart(Date())
-        if Calendar.current.isDate(dayStart, inSameDayAs: today) { return "Today" }
-        if Calendar.current.isDate(dayStart, inSameDayAs: today.addingTimeInterval(-86_400)) { return "Yesterday" }
+        if Calendar.current.isDate(dayStart, inSameDayAs: today) { return String(localized: "Today") }
+        if Calendar.current.isDate(dayStart, inSameDayAs: today.addingTimeInterval(-86_400)) { return String(localized: "Yesterday") }
         return Self.dayFmt.string(from: dayStart)
     }
 
@@ -233,9 +233,9 @@ struct FullDayChartView: View {
             Image(systemName: zoomDomain == nil ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
                 .font(StrandFont.footnote.weight(.semibold))
             #if os(macOS)
-            Text(zoomDomain == nil ? "Scroll to zoom · drag to pan" : "Zoomed in — drag to pan")
+            Text(zoomDomain == nil ? "Scroll to zoom · drag to pan" : "Zoomed in. Drag to pan")
             #else
-            Text(zoomDomain == nil ? "Pinch to zoom · drag to pan" : "Zoomed in — drag to pan")
+            Text(zoomDomain == nil ? "Pinch to zoom · drag to pan" : "Zoomed in. Drag to pan")
             #endif
             Spacer()
             if zoomDomain != nil {
@@ -292,9 +292,10 @@ struct FullDayChartView: View {
 
     private var resolutionSubtitle: String {
         guard !series.points.isEmpty else { return "—" }
-        if series.isRaw { return "Raw · per second" }
+        if series.isRaw { return String(localized: "Raw · per second") }
         let m = series.bucketSeconds / 60
-        return m >= 1 ? "\(m)-minute average" : "\(series.bucketSeconds)-second average"
+        return m >= 1 ? String(localized: "\(m)-minute average")
+                      : String(localized: "\(series.bucketSeconds)-second average")
     }
 
     private var latestReadout: String? {
@@ -307,7 +308,7 @@ struct FullDayChartView: View {
         case .skinTemp: return "°C"
         case .respiration: return ""
         case .hrv: return " ms"
-        case .spo2, .motion: return ""
+        case .spo2, .motion, .bandSleepState: return ""
         }
     }
 
@@ -316,6 +317,21 @@ struct FullDayChartView: View {
         case .hr, .respiration, .hrv: return String(Int(v.rounded()))
         case .skinTemp: return String(format: "%.1f", v)
         case .spo2, .motion: return String(format: "%.2f", v)
+        // #175: name the band's own state at the nearest code so the readout reads "asleep", not "2.0".
+        case .bandSleepState: return Self.bandStateLabel(v)
+        }
+    }
+
+    /// #175: map the band's 0-3 sleep_state code to its word. A bucket-averaged fractional value (when
+    /// zoomed out) is rounded to the nearest code — honest for a readout label; the track itself plots the
+    /// numeric code. This names the BAND's own reported state, never a stage NOOP derives.
+    static func bandStateLabel(_ v: Double) -> String {
+        switch Int(v.rounded()) {
+        case 0: return String(localized: "wake")
+        case 1: return String(localized: "still")
+        case 2: return String(localized: "asleep")
+        case 3: return String(localized: "up")
+        default: return String(Int(v.rounded()))
         }
     }
 
@@ -340,6 +356,9 @@ struct FullDayChartView: View {
             return Gradient(colors: [StrandPalette.sleepLight.opacity(0.55), StrandPalette.sleepLight])
         case .respiration, .motion:
             return Gradient(colors: [StrandPalette.textSecondary.opacity(0.5), StrandPalette.textSecondary])
+        // #175: the band-state track uses the deep-sleep hue so it reads as a distinct sleep track.
+        case .bandSleepState:
+            return Gradient(colors: [StrandPalette.sleepDeep.opacity(0.55), StrandPalette.sleepDeep])
         }
     }
 

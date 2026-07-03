@@ -53,23 +53,23 @@ enum DataBackup {
     static func runExport(checkpoint: @escaping () async -> Bool) async -> BackupResult {
         let dbPath: String
         do { dbPath = try StorePaths.defaultDatabasePath() }
-        catch { return .failure("Couldn't locate the NOOP database. \(error.localizedDescription)") }
+        catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         let dbURL = URL(fileURLWithPath: dbPath)
         guard FileManager.default.fileExists(atPath: dbPath) else {
-            return .failure("There's no NOOP data to export yet. Import or record some first.")
+            return .failure(String(localized: "There's no NOOP data to export yet. Import or record some first."))
         }
 
         // Flush the WAL so the single .sqlite carries everything. Required for ZIP (no sidecar
         // fallback in a single-file archive).
         guard await checkpoint() else {
-            return .failure("Couldn't safely export right now — recent changes are still in the database's write-ahead log. Close any in-flight sync, then try again.")
+            return .failure(String(localized: "Couldn't safely export right now. Recent changes are still in the database's write-ahead log. Close any in-flight sync, then try again."))
         }
 
         #if os(macOS)
         let panel = NSSavePanel()
-        panel.title = "Export NOOP backup"
-        panel.prompt = "Export"
+        panel.title = String(localized: "Export NOOP backup")
+        panel.prompt = String(localized: "Export")
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = defaultBackupName()
         panel.allowedContentTypes = backupContentTypes()
@@ -84,10 +84,12 @@ enum DataBackup {
         do {
             // NSSavePanel already handled the "replace existing?" confirmation; clear the target.
             if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try writeBackupZip(dbURL: dbURL, to: dest)
+            // Reading the whole SQLite and DEFLATE-compressing it is multi-second on a big library;
+            // run it off the main actor so the UI never beach-balls. Only file paths cross the hop.
+            try await Task.detached(priority: .utility) { try writeBackupZip(dbURL: dbURL, to: dest) }.value
             return .exported(dest)
         } catch {
-            return .failure("Export failed: \(error.localizedDescription)")
+            return .failure(String(localized: "Export failed: \(error.localizedDescription)"))
         }
         #else
         let fm = FileManager.default
@@ -96,9 +98,10 @@ enum DataBackup {
         let staged = fm.temporaryDirectory.appendingPathComponent(defaultBackupName())
         do {
             if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
-            try writeBackupZip(dbURL: dbURL, to: staged)
+            // Off the main actor: same reason as the macOS branch (heavy read + DEFLATE). Only paths hop.
+            try await Task.detached(priority: .utility) { try writeBackupZip(dbURL: dbURL, to: staged) }.value
         } catch {
-            return .failure("Export failed: \(error.localizedDescription)")
+            return .failure(String(localized: "Export failed: \(error.localizedDescription)"))
         }
         guard let dest = await DocumentPicker.export(staged) else { return .cancelled }
         return .exported(dest)
@@ -114,6 +117,44 @@ enum DataBackup {
         try archive.addEntry(with: backupEntryName, fileURL: dbURL, compressionMethod: .deflate)
     }
 
+    /// (Backup & Sync) Write a `.noopbak` to a SPECIFIC `dest` URL with NO save panel: the folder /
+    /// auto-backup path. Checkpoints the WAL (so the single `.sqlite` is whole) then writes the same
+    /// deflate ZIP via the same `writeBackupZip` the interactive export uses, so folder / auto backups
+    /// are byte-identical to a manual export. The CALLER owns any security-scoped access to `dest`
+    /// (start/stop around this call). Never presents UI, so it is safe off the main actor.
+    static func writeBackup(checkpoint: @escaping () async -> Bool, to dest: URL) async -> BackupResult {
+        let dbPath: String
+        do { dbPath = try StorePaths.defaultDatabasePath() }
+        catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
+
+        let dbURL = URL(fileURLWithPath: dbPath)
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            return .failure(String(localized: "There's no NOOP data to export yet."))
+        }
+        // Flush the WAL into the single file (same requirement as the interactive export: a single-file
+        // ZIP has no sidecar fallback, so committed pages still in the WAL would otherwise be absent).
+        guard await checkpoint() else {
+            return .failure(String(localized: "Couldn't safely back up right now. Recent changes are still in the write-ahead log."))
+        }
+        do {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+            try writeBackupZip(dbURL: dbURL, to: dest)
+            return .exported(dest)
+        } catch {
+            return .failure(String(localized: "Backup failed: \(error.localizedDescription)"))
+        }
+    }
+
+    /// Test seam: write a `.noopbak` for an EXPLICIT source database (no checkpoint, no `StorePaths`),
+    /// so a unit test can round-trip a throwaway SQLite through the exact ZIP container the app writes.
+    /// Not used by app code; production goes through `writeBackup(checkpoint:to:)`.
+    static func writeBackupForTesting(databaseAt dbURL: URL, to dest: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+        try writeBackupZip(dbURL: dbURL, to: dest)
+    }
+
     // MARK: - Import
 
     /// Pick a `.noopbak` (ZIP) or legacy `.sqlite` backup, validate it, snapshot the current DB
@@ -124,12 +165,12 @@ enum DataBackup {
     static func runImport() async -> BackupResult {
         let dbPath: String
         do { dbPath = try StorePaths.defaultDatabasePath() }
-        catch { return .failure("Couldn't locate the NOOP database. \(error.localizedDescription)") }
+        catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         #if os(macOS)
         let panel = NSOpenPanel()
-        panel.title = "Import NOOP backup"
-        panel.prompt = "Import"
+        panel.title = String(localized: "Import NOOP backup")
+        panel.prompt = String(localized: "Import")
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -145,6 +186,37 @@ enum DataBackup {
         guard let pickedSource = await DocumentPicker.importFile(backupContentTypes()) else { return .cancelled }
         #endif
 
+        // Hand the chosen file to the same hardened restore core the folder (Backup & Sync) path uses,
+        // so the unzip / magic-byte / GRDB-origin / sidecar-snapshot / rollback logic lives in one place.
+        // The restore does heavy synchronous file work (unzip, copy the whole DB, scan sqlite_master,
+        // snapshot + rollback), which can run tens of seconds on a big library. Push it off the main
+        // actor so the picker's UI thread stays live; the security-scoped access opened above (macOS)
+        // stays valid because the surrounding function is still awaiting here. Only Sendable value
+        // types (URL, String) cross the hop; the result hops back to main for handleBackup.
+        return await Task.detached(priority: .utility) {
+            restore(from: pickedSource, toDatabaseAt: dbPath)
+        }.value
+    }
+
+    /// Restore a chosen backup file directly, with NO picker. The Backup & Sync folder flow calls this
+    /// with a snapshot it already resolved from the user's backup folder (the caller owns any
+    /// security-scoped access around the call). Runs against the live database path.
+    ///
+    /// Reuses the exact same hardened path as the picker import: ZIP extraction, SQLite magic-byte
+    /// validation, GRDB-origin rejection (a foreign-but-valid SQLite is refused), a timestamped
+    /// sidecar snapshot of the current store, and rollback-on-failure so a failed restore leaves the
+    /// live database untouched.
+    static func restore(from pickedSource: URL) -> BackupResult {
+        let dbPath: String
+        do { dbPath = try StorePaths.defaultDatabasePath() }
+        catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
+        return restore(from: pickedSource, toDatabaseAt: dbPath)
+    }
+
+    /// The hardened restore core, with the destination database path injected so it is unit-testable
+    /// against a throwaway DB (real file I/O, never the user's live store). Behaviour is identical to
+    /// the previous `runImport` body; only the picker and path-resolution moved out to the callers.
+    static func restore(from pickedSource: URL, toDatabaseAt dbPath: String) -> BackupResult {
         // If the picked file is a .noopbak ZIP, extract the SQLite entry to a temp dir first.
         // Legacy plain-SQLite files fall straight through. The extracted dir is cleaned up below.
         let fm = FileManager.default
@@ -160,13 +232,13 @@ enum DataBackup {
                 try extractBackupZip(at: pickedSource, into: tmpExtract)
             } catch {
                 try? fm.removeItem(at: tmpExtract)
-                return .failure("Couldn't open the backup archive: \(error.localizedDescription)")
+                return .failure(String(localized: "Couldn't open the backup archive: \(error.localizedDescription)"))
             }
             guard let sqliteEntry = (try? fm.contentsOfDirectory(
                 at: tmpExtract, includingPropertiesForKeys: nil))?
                 .first(where: { $0.pathExtension == "sqlite" }) else {
                 try? fm.removeItem(at: tmpExtract)
-                return .failure("The backup archive doesn't contain a database file.")
+                return .failure(String(localized: "The backup archive doesn't contain a database file."))
             }
             source = sqliteEntry
             extractedDir = tmpExtract
@@ -178,7 +250,7 @@ enum DataBackup {
 
         // Validate: must be a real SQLite database (magic header "SQLite format 3\0").
         guard isSQLiteFile(at: source) else {
-            return .failure("That file isn't a NOOP backup — it doesn't look like a SQLite database.")
+            return .failure(String(localized: "That file isn't a NOOP backup. It doesn't look like a SQLite database."))
         }
 
         // Reject any backup that isn't a clean GRDB (this-app) backup. The magic check passes for ANY
@@ -190,7 +262,7 @@ enum DataBackup {
         let origin = backupOrigin(of: backupTables)
         let holdsData = backupTables.contains("device") || backupTables.contains("hrSample")
         if origin == .android || (origin == .unknown && holdsData) {
-            return .failure("This isn't a NOOP backup from this app — it's missing the migration bookkeeping a NOOP backup carries (it looks like an Android backup or another app's database), and restoring it would strand your store. To move your history across platforms, export the WHOOP-format CSV on the other device (Settings → Export data) and import that here, or import your original WHOOP / Apple Health export.")
+            return .failure(String(localized: "This isn't a NOOP backup from this app. It's missing the migration bookkeeping a NOOP backup carries (it looks like an Android backup or another app's database), and restoring it would strand your store. To move your history across platforms, export the WHOOP-format CSV on the other device (Settings → Export data) and import that here, or import your original WHOOP / Apple Health export."))
         }
 
         let dbURL = URL(fileURLWithPath: dbPath)
@@ -230,11 +302,11 @@ enum DataBackup {
                     removeIfPresent(dbURL)
                     try? fm.copyItem(at: sidecar, to: dbURL)
                 }
-                return .failure("Import failed — your existing data was kept. \(error.localizedDescription)")
+                return .failure(String(localized: "Import failed. Your existing data was kept. \(error.localizedDescription)"))
             }
             return .imported(sidecar: sidecar)
         } catch {
-            return .failure("Import failed: \(error.localizedDescription)")
+            return .failure(String(localized: "Import failed: \(error.localizedDescription)"))
         }
     }
 

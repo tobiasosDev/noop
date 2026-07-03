@@ -772,6 +772,10 @@ object SleepStager {
         // (frozen-golden tests stay green). The live call site threads the experimentalSleepV2 flag so the
         // Settings toggle now affects normal detected nights, not just the self-heal restage path. Mirrors Swift.
         useSleepStagerV2: Boolean = false,
+        // Sleep & Rest test mode (E10): when non-null, each candidate run emits ONE gate verdict line
+        // and the sparse-gravity bridge records its result. Side-effect-only; the returned list is
+        // byte-identical to the untraced call. Default null = no work, byte-identical. Mirrors Swift.
+        traceSink: ((String) -> Unit)? = null,
     ): List<DetectedSleep> {
         val grav = gravity.sortedBy { it.ts }
         if (grav.size < 2) return emptyList()
@@ -792,7 +796,16 @@ object SleepStager {
         var runs = buildRuns(grav, flags, sparse = sparse, hr = hrS, baseline = baseline)
         runs = mergePeriods(runs)
         // Re-stitch sleep runs fragmented by pure gravity dropouts (sparse only) before minSleepMin.
+        val runsBeforeBridge = if (traceSink == null) 0 else runs.count { it.stage == "sleep" }
         runs = bridgeSparseSleep(runs, sparse = sparse, hr = hrS, baseline = baseline)
+        // Sleep & Rest test mode (E10): record the sparse-gravity bridge result, so a sparse 5.0 night
+        // rescued from fragmentation is visible. Only when gravity is sparse and only when tracing.
+        if (traceSink != null && sparse) {
+            val runsAfterBridge = runs.count { it.stage == "sleep" }
+            traceSink(SleepStagerTrace.runLine(-1, 0, 0,
+                if (runsAfterBridge < runsBeforeBridge) SleepStagerTrace.Verdict.KEPT else SleepStagerTrace.Verdict.DROPPED,
+                "sparseBridge", "sparse=true gapMin=$sparseBridgeGapMin runsBefore=$runsBeforeBridge runsAfter=$runsAfterBridge"))
+        }
 
         val minSleepS = (minSleepMin * 60).toLong()
 
@@ -807,16 +820,35 @@ object SleepStager {
         val continuationGapS = (nightContinuationGapMin * 60).toLong()
         var chainPrevEnd: Long? = null       // end of the last accepted sleep run
         var chainFromOvernight = false       // did the current contiguous chain begin overnight?
+        // Sleep & Rest test mode (E10): each candidate sleep run emits ONE verdict line naming the gate
+        // that kept or dropped it. The decisions below are byte-identical to the untraced path; the
+        // traceSink calls are the only addition and never alter `sessions`. `runIndex` counts only
+        // sleep-stage runs so the trace numbers match the candidate ordinal.
+        var runIndex = -1
         for (p in runs) {
             if (p.stage != "sleep") continue
-            if ((p.end - p.start) <= minSleepS) continue
+            runIndex += 1
+            val spanMin = ((p.end - p.start) / 60).toInt()
+            if ((p.end - p.start) <= minSleepS) {
+                traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                    SleepStagerTrace.Verdict.DROPPED, "minSleepMin", "spanMin=$spanMin minSleepMin=$minSleepMin"))
+                continue
+            }
             // H4 physiological in-bed span cap (#547/#531/#509 tail): a single assembled main-sleep run
             // longer than ~16 h is a bad-clock artefact (a frozen still stretch banked under a stale/wrong
             // clock), not a real night. Drop it rather than report (or truncate to) a 12 h+ "sleep" — an
             // over-long block can't be trusted to assert a span at all, and truncating would fabricate a
             // wake time. Checked before staging so the artefact never reaches the aggregate. Mirrors Swift.
-            if ((p.end - p.start) > maxMainSleepSpanS) continue
-            if (!confirmSleepWithHR(p, hrS, baseline)) continue
+            if ((p.end - p.start) > maxMainSleepSpanS) {
+                traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                    SleepStagerTrace.Verdict.DROPPED, "maxMainSleepSpanS", "spanMin=$spanMin maxMainSleepSpanMin=${maxMainSleepSpanS / 60}"))
+                continue
+            }
+            if (!confirmSleepWithHR(p, hrS, baseline)) {
+                traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                    SleepStagerTrace.Verdict.DROPPED, "hrConfirm", "hrSleepBaselineMult=$hrSleepBaselineMult baseline=${baseline?.toInt() ?: -1}"))
+                continue
+            }
             // Off-wrist backstop (#500), FRACTIONAL rule (design credited to j0b-dev's #504 analysis):
             // a wrist-OFF stretch is still gravity with no HR, so it slips past both the gravity spine
             // and the daytime guard's "missing data" path. Measure off-wrist COVERAGE — the union of the
@@ -827,7 +859,12 @@ object SleepStager {
             // (≈100% gap) is still dropped. Checked BEFORE the night-tail exemption: off-wrist time is
             // off-wrist day or night and must NOT ride a continuation chain. It does NOT re-anchor the
             // chain (the run is simply skipped).
-            if (offWristFraction(p, hrS, wristOff) >= maxOffWristSleepFraction) continue
+            val offFrac = offWristFraction(p, hrS, wristOff)
+            if (offFrac >= maxOffWristSleepFraction) {
+                traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                    SleepStagerTrace.Verdict.DROPPED, "offWrist", "offWristFrac=${SleepStagerTrace.round2(offFrac)} max=$maxOffWristSleepFraction"))
+                continue
+            }
             // Daytime false-sleep guard (#90): a window centered in the local daytime band
             // must clear a stricter bar (≥daytimeMinSleepMin AND a real resting-HR dip).
             // Overnight windows skip this entirely. restingHR is computed here (reused below).
@@ -839,10 +876,20 @@ object SleepStager {
             // clear the STRONGER re-onset bar — killing the 9 am phantom nap of residual post-wake stillness
             // while keeping a genuine second sleep. Outside the window the guard is the ordinary daytime bar.
             val morningWakeEnd = if (chainFromOvernight) chainPrevEnd else null
-            if (isDaytimeCenter(p, tzOffsetSeconds) &&
-                !passesMorningStillnessGuard(p, resting, baseline, morningWakeEnd, bandSleepState) &&
-                !isNightTail
-            ) continue
+            val isDaytime = isDaytimeCenter(p, tzOffsetSeconds)
+            // Evaluate the morning-stillness guard ONLY when the run is daytime-centered, preserving the
+            // original short-circuit (overnight runs never call it). The boolean used to drop below is
+            // identical to the original combined condition.
+            val passesMorning = if (isDaytime)
+                passesMorningStillnessGuard(p, resting, baseline, morningWakeEnd, bandSleepState)
+            else true
+            if (isDaytime && !passesMorning && !isNightTail) {
+                val gateName = if (morningWakeEnd != null) "morningStillness" else "daytimeGuard"
+                traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                    SleepStagerTrace.Verdict.DROPPED, gateName,
+                    "daytime=true restingHR=${resting ?: -1} baseline=${baseline?.toInt() ?: -1} nightTail=false"))
+                continue
+            }
             val stages = if (useSleepStagerV2) {
                 SleepStagerV2.stageSession(start = p.start, end = p.end, grav = grav,
                     hr = hrS, rr = rrS, resp = respS)
@@ -858,6 +905,9 @@ object SleepStager {
                     stages = stages, restingHR = resting, avgHRV = avgHrv,
                 )
             )
+            traceSink?.invoke(SleepStagerTrace.runLine(runIndex, p.start, p.end,
+                SleepStagerTrace.Verdict.KEPT, "accepted",
+                "spanMin=$spanMin eff=${SleepStagerTrace.round2(eff)} restingHR=${resting ?: -1} daytime=$isDaytime"))
             // A run that does NOT continue the chain re-anchors it on this run's onset.
             if (!continuesChain) chainFromOvernight = isOvernightOnset(p.start, tzOffsetSeconds)
             chainPrevEnd = p.end
@@ -1011,6 +1061,37 @@ object SleepStager {
             hr = emptyList(), rr = emptyList(), resp = emptyList(),
         )
         return grid.counts
+    }
+
+    /**
+     * #175: the strap's OWN band sleep_state (0 wake/1 still/2 asleep/3 up) gridded onto the SAME 30 s epoch
+     * grid `stagesJSON` / [sessionEpochMotion] use, so the caller can persist it via
+     * [com.noop.data.WhoopRepository.persistSessionSleepState] and the H7 re-onset CONFIRM guard can read it
+     * back as timestamped `(startTs + i*epochS, state)` samples. Returns EMPTY when the session carries no
+     * band-state samples (a WHOOP 4.0, or an unbanded window) — an absent signal stays absent, never a
+     * fabricated array. When present, each epoch takes the band's LAST reported state within its
+     * `[start + i*30, start + (i+1)*30)` window; an epoch with no sample of its own CARRIES FORWARD the
+     * previous epoch's state (band state is a step function). Leading epochs before the first sample take the
+     * first sample's state. The band code is carried VERBATIM — this never converts an unproven code into a
+     * derived stage; consumers decide meaning. Mirrors Swift `sessionEpochSleepState`. (#175)
+     */
+    fun sessionEpochSleepState(start: Long, end: Long, sleepState: List<Pair<Long, Int>>): List<Int> {
+        val seg = rowsBetween(sleepState, start, end) { it.first }.sortedBy { it.first }
+        if (seg.isEmpty() || end <= start) return emptyList()
+        val nEpochs = maxOf(1, kotlin.math.ceil((end - start).toDouble() / epochS).toInt())
+        val out = IntArray(nEpochs) { seg[0].second }   // lead-in = first sample's state
+        var last = seg[0].second
+        var si = 0
+        for (i in 0 until nEpochs) {
+            val epochEnd = start + ((i + 1) * epochS).toLong()
+            // Advance through every sample that falls in/at-or-before this epoch's window; the LAST one wins.
+            while (si < seg.size && seg[si].first < epochEnd) {
+                last = seg[si].second
+                si++
+            }
+            out[i] = last   // carry-forward when the epoch had no sample of its own
+        }
+        return out.toList()
     }
 
     // ── Epoch grid ────────────────────────────────────────────────────────────

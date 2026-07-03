@@ -77,7 +77,11 @@ struct StrandiOSApp: App {
                 // clipping; the common Larger-Text range still scales fully.
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .onReceive(model.live.$heartRate) { _ in
-                    let day = model.repo.days.last(where: { $0.recovery != nil })
+                    // #911: anchor the Live Activity on the SAME shared `Repository.widgetAnchor` the
+                    // Home/Lock widget and the watch snapshot use, so this fourth surface can't drift to a
+                    // different day at the rollover (it previously read `days.last(where: recovery != nil)`,
+                    // which kept pointing at yesterday's scored row after Today had moved on).
+                    let day = Repository.widgetAnchor(days: model.repo.days)
                     liveActivity.update(
                         bpm: model.live.connected ? (model.bpm ?? model.live.heartRate) : nil,
                         recovery: day?.recovery.map { Int($0.rounded()) },
@@ -87,13 +91,36 @@ struct StrandiOSApp: App {
                 }
                 // End the Live Activity the moment the link drops, even if no further HR tick arrives.
                 .onReceive(model.live.$connected) { isConnected in
-                    let day = model.repo.days.last(where: { $0.recovery != nil })
+                    // #911: same shared anchor as the heartRate site above, so the Live Activity, the
+                    // widget, the watch and Today never disagree about which day they describe.
+                    let day = Repository.widgetAnchor(days: model.repo.days)
                     liveActivity.update(
                         bpm: isConnected ? (model.bpm ?? model.live.heartRate) : nil,
                         recovery: day?.recovery.map { Int($0.rounded()) },
                         connected: isConnected,
                         effort: day?.strain.map { Int($0.rounded()) }
                     )
+                }
+                // #911/#759: republish the Home/Lock-Screen widget whenever the dashboard caches actually
+                // change mid-session. The only other publish site is the scenePhase .active handler, so
+                // during a long foreground session the widget froze at the last-foreground snapshot while
+                // Today and the Live Activity kept updating. `refreshSeq` is diff-guarded (Repository.refresh
+                // skips the bump when the merged caches are byte-identical) and refresh() assigns every cache
+                // BEFORE bumping the seq, so this publish always reads fresh data. `dropFirst()` skips the
+                // publisher's attach-time replay of the current value; the .active publish already covers
+                // launch. BUDGET: this app runs with bluetooth-central, so the process is NOT suspended in
+                // the background, and the 15-minute analyze tick + backfill-completion refreshes bump the
+                // seq back there too, where WidgetKit reloads DO count against the daily budget. Hence the
+                // foreground gate: publish only while .active (foreground-initiated reloads are budget
+                // exempt); a background bump is covered by the widget's own 15-minute timeline policy and
+                // by the .active republish on return.
+                .onReceive(model.repo.$refreshSeq.dropFirst()) { _ in
+                    guard scenePhase == .active else { return }
+                    Task { await WidgetSnapshot.publish(from: model) }
+                    // The watch rides the same active-only hook because the bridge now SELF-THROTTLES
+                    // (30-minute spacing + headline-change dedup, both must pass, see WatchSessionBridge),
+                    // so a refresh storm can't burn the ~50/day complication transfer budget.
+                    Task { await watch.pushLatest(from: model) }
                 }
                 // #581: the `noop://import-health` deep link the iOS Shortcut opens after building the
                 // HealthKit-free payload. Filter on the host so other future schemes don't trip the
@@ -259,11 +286,19 @@ enum DemoScreens {
         case "explore":  return AnyView(MetricExplorerView())
         case "compare":  return AnyView(CompareView())
         case "settings": return AnyView(SettingsView())
+        case "chargebreakdown": return AnyView(ChargeBreakdownDemoHost())
         case "devices":  return AnyView(DevicesView())
         case "devicescatalog": return AnyView(DeviceCardCatalog())
         case "fitnessage": return AnyView(FitnessAgeDemoScreen())
         case "vitality": return AnyView(VitalityDemoScreen())
         case "addwizard": return AnyView(AddWizardDemoHost())
+        // Oura onboarding: the Add-device wizard deep-linked straight to the Oura factory-reset-and-adopt
+        // prep step (the Beta banner + get/lose card + the red irreversible-consent gate), screenshot-able
+        // WITHOUT a ring.
+        case "ouraonboarding": return AnyView(OuraOnboardingDemoHost())
+        // Oura device card: the locally-adopted Oura ring card (Beta chip + per-gen honest capability copy
+        // + battery + local-state note), rendered with mock data, no ring required.
+        case "ouradevice": return AnyView(OuraDeviceDemoScreen())
         default:         return nil
         }
     }
@@ -278,5 +313,16 @@ enum DemoScreens {
 private struct AddWizardDemoHost: View {
     @EnvironmentObject var live: LiveState
     var body: some View { AddDeviceWizard(live: live, onClose: {}) }
+}
+
+/// DEBUG-only host so `--demo-screen ouraonboarding` renders the Add-device wizard deep-linked to the
+/// Oura factory-reset-and-adopt prep step (the Beta banner + what-you-get/what-you-lose card + the red
+/// irreversible-consent gate). A SwiftUI View body is main-actor, so it can pull the injected LiveState
+/// and seed the wizard's `startAt` into the Oura prep step without a ring present.
+private struct OuraOnboardingDemoHost: View {
+    @EnvironmentObject var live: LiveState
+    var body: some View {
+        AddDeviceWizard(live: live, onClose: {}, startAt: (.oura, .prep))
+    }
 }
 #endif

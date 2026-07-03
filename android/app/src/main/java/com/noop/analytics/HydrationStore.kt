@@ -50,6 +50,45 @@ object HydrationStore {
         return next
     }
 
+    /**
+     * Pure clamp behind [set]: a day total can never be negative. Factored out so the correction math
+     * (#798) is unit-testable without a Room/repo stand-in. Returns [totalMl] floored at 0.0.
+     */
+    fun clampedTotal(totalMl: Double): Double = totalMl.coerceAtLeast(0.0)
+
+    /**
+     * Pure result of removing [amountMl] from a [currentTotalMl] (#798): a non-positive amount is a no-op
+     * (the current total, still clamped at 0), otherwise the difference floored at 0 so an over-subtraction
+     * lands on an empty day rather than a negative total. The testable core of [remove].
+     */
+    fun afterRemoving(currentTotalMl: Double, amountMl: Int): Double =
+        if (amountMl <= 0) clampedTotal(currentTotalMl) else clampedTotal(currentTotalMl - amountMl)
+
+    /**
+     * Set the day total directly to [totalMl] for the local day containing [ts], clamped at 0 (a negative
+     * target lands on 0, never a negative total). The correction seam behind the detail screen's
+     * delete/undo affordances (#798): because the schema banks ONE additive total per (source, day, key)
+     * row, an entry isn't separately addressable - removing or editing a log is expressed as adjusting the
+     * day total. Returns the new stored total (ml). Mirrors the iOS `setHydration`.
+     */
+    suspend fun set(repo: WhoopRepository, totalMl: Double, ts: Long = System.currentTimeMillis() / 1000L): Double {
+        val day = dayKey(ts)
+        val next = clampedTotal(totalMl)
+        repo.upsertMetricSeries(listOf(MetricSeriesRow(SOURCE_ID, day, KEY, next)))
+        return next
+    }
+
+    /**
+     * Remove [amountMl] from the local day's running total (the undo / delete-a-log path for the detail
+     * screen, #798). Subtracts the amount and clamps at 0 so the total never goes negative; a non-positive
+     * amount is a no-op. Returns the new day total (ml). Built on [set] + [afterRemoving] so the correction
+     * math is shared + tested. Mirrors the iOS `removeHydration`.
+     */
+    suspend fun remove(repo: WhoopRepository, amountMl: Int, ts: Long = System.currentTimeMillis() / 1000L): Double {
+        if (amountMl <= 0) return total(repo, ts)
+        return set(repo, afterRemoving(total(repo, ts), amountMl), ts)
+    }
+
     /** The total fluid (ml) logged for the local day containing [ts] (defaults to now), or 0.0 when
      *  nothing has been logged that day. */
     suspend fun total(repo: WhoopRepository, ts: Long = System.currentTimeMillis() / 1000L): Double {

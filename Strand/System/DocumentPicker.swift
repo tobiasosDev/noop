@@ -30,6 +30,26 @@ enum DocumentPicker {
         }
     }
 
+    /// Present a folder picker (Backup & Sync). Returns the chosen folder, or nil.
+    ///
+    /// To let the user actually SELECT a directory (not just dive into it), the picker must be built for
+    /// OPENING the `.folder` content type with `asCopy: false`. The bare `forOpeningContentTypes:` form
+    /// historically left Files' "Open"/"Select" greyed out for folders on some iOS builds (#859), because
+    /// without the explicit `asCopy: false` the picker can resolve to a copy-in (import) presentation that
+    /// only enables the button for files. Passing `asCopy: false` puts it in true open-in-place mode, where
+    /// the directory itself is selectable and the button enables on a folder. The returned URL is
+    /// security-scoped; the caller bookmarks it (see `FolderBackup.saveFolder`, which brackets the scoped
+    /// access while minting the bookmark) so the chosen folder survives relaunch.
+    @MainActor
+    static func pickFolder() async -> URL? {
+        await present { coordinator in
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+            picker.delegate = coordinator
+            picker.allowsMultipleSelection = false
+            return picker
+        }
+    }
+
     // MARK: - Presentation plumbing
 
     @MainActor
