@@ -16,6 +16,10 @@ public final class FrameRouter {
     var onStrapSerial: ((String) -> Void)?
 
     var onSyncTrigger: (() -> Void)?
+    /// tecminds fork: what each WHOOP 4.0 GET_ALARM_TIME readback says about the arm that was just sent.
+    /// BLEManager re-sends the arm on `.notStored`. Fires for EVERY readback; the manager ignores the ones
+    /// that don't answer an arm it sent on this connection.
+    var onAlarmReadback: ((AlarmReadback.ArmOutcome) -> Void)?
     /// #1706: which strap this connection is talking to, so an alarm readback can be attributed to a
     /// device. Set per connection by BLEManager immediately AFTER `family`, whose didSet clears this —
     /// a path that sets the family and forgets the id then attributes nothing rather than carrying the
@@ -231,6 +235,8 @@ public final class FrameRouter {
                     // plausibility-gated) and an unrecognised payload still logs its raw hex - which is
                     // exactly as diagnostic. Labelled "strap reports", not "verified" (one firmware's
                     // answer format must never mislead a triage).
+                    // tecminds fork: the one exception is `onAlarmReadback`, which lets BLEManager re-send an
+                    // arm that the strap provably did not keep.
                     if let epoch = Self.armedAlarmEpoch(in: frame) {
                         // #34: log the RAW response bytes alongside the decoded epoch (previously only the
                         // decode-FAILURE branch below carried them). A successful-but-mismatched decode — the
@@ -249,6 +255,7 @@ public final class FrameRouter {
                         d.set(deviceId, forKey: "alarm.lastReportedDeviceId")
                         d.set(raw, forKey: "alarm.lastReportedRaw")
                         d.set(Date().timeIntervalSince1970, forKey: "alarm.lastReportedAt")
+                        var armOutcome = AlarmReadback.ArmOutcome.inconclusive
                         // #34: count CONSECUTIVE rejections (reported ≠ what we last sent) — the signature of
                         // a corrupted strap alarm register. A matching readback resets it, so a transient
                         // (first read stale, then correct) never trips the warning; only a persistent refusal
@@ -271,6 +278,7 @@ public final class FrameRouter {
                                 // staleness check for free rather than rediscovering the gap.
                                 sentAt: d.object(forKey: "alarm.lastArmAt") as? Double,
                                 reportedAt: Date().timeIntervalSince1970)
+                            armOutcome = AlarmReadback.armOutcome(verdict)
                             if AlarmReadback.countsAsRejection(verdict) {
                                 d.set(d.integer(forKey: "alarm.rejectStreak") + 1, forKey: "alarm.rejectStreak")
                             } else if AlarmReadback.clearsRejectionStreak(verdict) {
@@ -292,6 +300,7 @@ public final class FrameRouter {
                                 d.set(0, forKey: "alarm.rejectStreak")
                             }
                         }
+                        onAlarmReadback?(armOutcome)
                     } else if Self.readbackReportsNoAlarm(in: frame) {
                         // #34 (issue comment 2026-07-12): the strap's "nothing armed" sentinel — the epoch
                         // field decodes to 0. This is NOT an undocumented layout; it's the strap telling us
@@ -300,8 +309,12 @@ public final class FrameRouter {
                         // "didn't buzz" report: SET went out, strap kept nothing. Name it plainly. Log-only.
                         let raw = Self.commandResponsePayloadHex(in: frame) ?? "empty"
                         state.append(log: "Alarm: strap reports NO alarm currently stored (epoch 0) — the arm did not persist on the strap (raw \(raw))")
+                        // tecminds fork: no epoch to attribute, but this connection's strap is the one
+                        // BLEManager armed, and it only acts on a readback while that arm is pending.
+                        onAlarmReadback?(.notStored)
                     } else {
                         state.append(log: "Alarm: strap answered the alarm readback with an unrecognised payload (raw \(Self.commandResponsePayloadHex(in: frame) ?? "empty")) - layout undocumented, log-only")
+                        onAlarmReadback?(.inconclusive)
                     }
                 } else if cmd.hasPrefix("SET_ALARM_TIME") {
                     // #34 (issue comment 2026-07-12): the strap's OWN answer to the arm we just sent — the

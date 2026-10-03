@@ -1371,6 +1371,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // Strap-as-clock: an incoming EVENT packet kicks a rate-limited catch-up sync.
         router.onSyncTrigger = { [weak self] in self?.requestSync(.strap) }
         router.onStrapSerial = { [weak self] serial in self?.noteHarvardSerial(serial) }   // #1193
+        router.onAlarmReadback = { [weak self] outcome in self?.handleArmReadback(outcome) }   // tecminds fork
         // #78 hole-4: a paused-for-bond-loop strap gets one bounded salvage attempt per app-foreground.
         installForegroundSalvageProbe()
     }
@@ -1583,6 +1584,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // Strap-as-clock: an incoming EVENT packet kicks a rate-limited catch-up sync.
         router.onSyncTrigger = { [weak self] in self?.requestSync(.strap) }
         router.onStrapSerial = { [weak self] serial in self?.noteHarvardSerial(serial) }   // #1193
+        router.onAlarmReadback = { [weak self] outcome in self?.handleArmReadback(outcome) }   // tecminds fork
         // #78 hole-4: a paused-for-bond-loop strap gets one bounded salvage attempt per app-foreground.
         installForegroundSalvageProbe()
     }
@@ -5423,8 +5425,11 @@ public final class BLEManager: NSObject, ObservableObject {
         // queued and re-sent on the next connect.
         if commandChannelReady {   // #613: reflect whether send() actually reached the strap, not just a non-nil uuid
             log("Alarm: armed for \(localFmt.string(from: date)) — your local wake time (sent as UTC epoch \(epochSec))")
+            pendingArmEpoch = epochSec
+            armResends = 0
         } else {
             log("Alarm: queued for \(localFmt.string(from: date)) — strap not connected; will send on next connect")
+            pendingArmEpoch = nil
         }
         // Arm READBACK (#401 close-out): ask the strap what it now has armed (GET_ALARM_TIME, cmd 67) so
         // the strap log carries armed + strap-reports + fired as one decidable sequence in any future
@@ -5433,6 +5438,49 @@ public final class BLEManager: NSObject, ObservableObject {
         // Log-only: FrameRouter parses the cmd-67 COMMAND_RESPONSE defensively and NEVER gates behaviour
         // on it (the 4.0 response layout is undocumented; unparseable replies log raw hex).
         send(.getAlarmTime, payload: [0x01])
+    }
+
+    // MARK: Arm re-send on a not-stored readback (tecminds fork)
+    //
+    // On the fork owner's WHOOP 4.0 the strap intermittently ACKs SET_ALARM_TIME without storing it. Upstream
+    // only logs that and re-arms on the next connect, which can be after the wake time. Here the readback
+    // that follows every arm decides: if the strap provably did not keep our time, send the arm again, up to
+    // `AlarmReadback.maxArmResends` times. If it still won't take, raise SmartAlarmView's existing
+    // "strap isn't accepting the alarm" card so the miss is visible.
+
+    /// The WHOOP 4.0 wake epoch armed on THIS connection whose readback is still outstanding.
+    private var pendingArmEpoch: UInt32?
+    /// Re-sends already made for `pendingArmEpoch`.
+    private var armResends = 0
+
+    private func handleArmReadback(_ outcome: AlarmReadback.ArmOutcome) {
+        guard let epoch = pendingArmEpoch else { return }
+        switch outcome {
+        case .stored:
+            pendingArmEpoch = nil
+            log("Alarm: strap stored the arm (readback matches)\(armResends > 0 ? " after \(armResends) re-send(s)" : "")")
+        case .inconclusive:
+            pendingArmEpoch = nil
+        case .notStored:
+            guard AlarmReadback.shouldResendArm(outcome, resendsSoFar: armResends) else {
+                pendingArmEpoch = nil
+                // The no-alarm readback never advances the streak, so lift it to the card's threshold here.
+                let d = UserDefaults.standard
+                d.set(max(d.integer(forKey: "alarm.rejectStreak"), 2), forKey: "alarm.rejectStreak")
+                log("Alarm: strap still did not store the arm after \(armResends) re-send(s) — keep your phone alarm")
+                return
+            }
+            armResends += 1
+            log("Alarm: strap did not store the arm — re-sending (\(armResends)/\(AlarmReadback.maxArmResends))")
+            // Give the strap a beat before writing again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, self.pendingArmEpoch == epoch, self.commandChannelReady else { return }
+                self.sendSetClockBothForms()
+                self.send(.setAlarmTime, payload: WhoopCommand.setAlarmPayload(epochSec: epoch))
+                self.recordAlarmArm(sentEpoch: Int(epoch))
+                self.send(.getAlarmTime, payload: [0x01])
+            }
+        }
     }
 
     /// #34: persist the last alarm arm for the debug export's Alarm block (sent epoch + when + whether the
@@ -5467,6 +5515,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // #34: clear the "strap keeps rejecting the alarm" streak/warning — it's about an ACTIVE arm being
         // refused, and there's nothing armed to refuse once disarmed.
         UserDefaults.standard.set(0, forKey: "alarm.rejectStreak")
+        pendingArmEpoch = nil   // tecminds fork: stop any arm re-send in flight
         // #730: report the OUTCOME, not the intent — using the SAME `commandChannelReady` gate the arm
         // path already uses (it reports "queued" rather than a false "armed"). The disarm never adopted
         // it: `send` drops the write when the link isn't up and logs "ignored — not connected", then this
@@ -6250,6 +6299,7 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         state.historyReady = false
         cmdNotifyConfirmedActive = false   // #34: a fresh connection needs its own notify-confirm + settle
         connectSettledSignaled = false
+        pendingArmEpoch = nil              // tecminds fork: the connect-settle re-arm starts a fresh check
         restoreNeedsResubscribe = false    // #613: a real reconnect isn't a restore — never force-toggle here
         realtimeArmedAt = nil   // cleared after the marginal-radio detector above read it (#80)
         // Reset backfill state so the next connect starts a fresh offload (incl. the syncing pill —

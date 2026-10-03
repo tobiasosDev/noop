@@ -91,4 +91,39 @@ public enum AlarmReadback {
 
     /// Whether this verdict is evidence the strap DID accept, which clears the streak.
     public static func clearsRejectionStreak(_ verdict: Verdict) -> Bool { verdict == .matches }
+
+    // MARK: - Arm re-send on a not-stored readback (tecminds fork, Apple only)
+    //
+    // Upstream keeps the readback log-only. On the fork owner's WHOOP 4.0 the strap intermittently ACKs
+    // SET_ALARM_TIME without storing it, so the alarm silently never fires until the next connect re-arms.
+    // The fork re-sends the arm straight away when the readback proves the strap did not keep it. No Kotlin
+    // twin: this changes when a write is repeated, not a decoded or stored value.
+
+    /// What one GET_ALARM_TIME readback says about the arm that was just sent.
+    public enum ArmOutcome: Equatable {
+        /// The strap holds the time we sent.
+        case stored
+        /// The strap holds a different time, or reports none at all.
+        case notStored
+        /// The readback cannot be tied to this arm, or did not decode. Not evidence either way.
+        case inconclusive
+    }
+
+    /// Re-sends allowed after the first arm before giving up and leaving the warning to the UI.
+    public static let maxArmResends = 3
+
+    /// Maps a decoded readback's verdict onto the arm. Only a proven same-strap, same-arm answer counts.
+    public static func armOutcome(_ verdict: Verdict) -> ArmOutcome {
+        switch verdict {
+        case .matches: return .stored
+        case .mismatch: return .notStored
+        case .differentStrap, .unattributed, .staleReadback: return .inconclusive
+        }
+    }
+
+    /// Whether to send the arm again after this readback, given how many re-sends already went out.
+    public static func shouldResendArm(_ outcome: ArmOutcome, resendsSoFar: Int,
+                                       maxResends: Int = AlarmReadback.maxArmResends) -> Bool {
+        outcome == .notStored && resendsSoFar < maxResends
+    }
 }

@@ -111,4 +111,26 @@ final class AlarmReadbackTests: XCTestCase {
     func testStaleHasItsOwnSuffix() {
         XCTAssertEqual(AlarmReadback.suffix(.staleReadback), "  (readback predates this arm — not comparable)")
     }
+
+    // MARK: tecminds fork: arm re-send
+
+    func testOnlyAProvenAnswerDecidesTheArm() {
+        XCTAssertEqual(AlarmReadback.armOutcome(.matches), .stored)
+        XCTAssertEqual(AlarmReadback.armOutcome(.mismatch), .notStored)
+        XCTAssertEqual(AlarmReadback.armOutcome(.differentStrap), .inconclusive)
+        XCTAssertEqual(AlarmReadback.armOutcome(.unattributed), .inconclusive)
+        XCTAssertEqual(AlarmReadback.armOutcome(.staleReadback), .inconclusive)
+    }
+
+    func testANotStoredArmIsResentUpToTheLimit() {
+        for n in 0..<AlarmReadback.maxArmResends {
+            XCTAssertTrue(AlarmReadback.shouldResendArm(.notStored, resendsSoFar: n))
+        }
+        XCTAssertFalse(AlarmReadback.shouldResendArm(.notStored, resendsSoFar: AlarmReadback.maxArmResends))
+    }
+
+    func testAStoredOrInconclusiveArmIsNeverResent() {
+        XCTAssertFalse(AlarmReadback.shouldResendArm(.stored, resendsSoFar: 0))
+        XCTAssertFalse(AlarmReadback.shouldResendArm(.inconclusive, resendsSoFar: 0))
+    }
 }
