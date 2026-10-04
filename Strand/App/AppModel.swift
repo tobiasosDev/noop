@@ -746,7 +746,9 @@ final class AppModel: ObservableObject {
 
     private func refreshAfterCompletedBackfill() async {
         live.append(log: "Backfill: refreshing dashboard cache from completed sync")
-        await repo.refresh(days: 120)
+        // The dashboard refresh itself runs AFTER the re-score, once, over the full window; see
+        // `refreshDashboardAfterSync` for why this no longer opens with a 120-day refresh.
+        //
         // Score the freshly-offloaded raw data RIGHT NOW rather than waiting for the next 15-minute
         // analyzeRecent tick , otherwise a just-synced night's Charge / Effort / Rest can take up to
         // 15 minutes to appear on a strap-only (no-import) dashboard. analyzeRecent no-ops if a tick is
@@ -763,9 +765,11 @@ final class AppModel: ObservableObject {
         // the #1538 report while never producing a score. Decide first whether this pass can finish here,
         // and hand it to a background-processing task when it cannot. A no-op on macOS, and on iOS a
         // foreground pass is never deferred.
-        await RescoreBackgroundScheduler.run(passInProgress: intelligence.computing,
-                                             log: { [live] line in live.append(log: line) }) {
-            await intelligence.analyzeRecent(skipIfUnchanged: true)
+        await Self.refreshDashboardAfterSync(repo: repo) {
+            await RescoreBackgroundScheduler.run(passInProgress: intelligence.computing,
+                                                 log: { [live] line in live.append(log: line) }) {
+                await intelligence.analyzeRecent(skipIfUnchanged: true)
+            }
         }
         await refreshV5Signals()
         #if os(iOS)
@@ -782,6 +786,28 @@ final class AppModel: ObservableObject {
         // Set by StrandiOSApp; nil on macOS and in tests, where there is no bridge.
         await healthWriteBack?()
         #endif
+    }
+
+    /// The dashboard half of the post-sync cascade: run `rescore`, then ONE full-window `repo.refresh()`.
+    ///
+    /// The cascade used to open with `repo.refresh(days: 120)` and then re-score. `refresh` publishes only
+    /// when its merge differs from the cached caches, and those normally hold the full 4000-day window, so a
+    /// 120-day merge never compared equal on any history longer than 120 days: every sync published a
+    /// 120-day `days` (Trends and the streaks briefly lost everything older), then the re-score's own
+    /// `refresh()` put the 4000 days back. `refreshSeq` moved twice, so every reload keyed on it (Today,
+    /// Sleep, Health, the widget publish, the `repo.$days` sink) ran twice per sync on the main actor.
+    ///
+    /// A re-score that persists anything already ends in a full-window `refresh()`, so the trailing one
+    /// here then diffs equal and publishes nothing. When the re-score does NOT refresh, the trailing one is
+    /// what surfaces the sync, with no wait: `skipIfUnchanged` found nothing new, a pass already running
+    /// queued this one and returned at once, the scheduler deferred it to a background task, or the pass
+    /// persisted no day. Either way a sync publishes at most once, and never a window shorter than the one
+    /// on screen. The cost of the trailing refresh in the common case is one off-main read and merge.
+    /// Rows a sync writes into the caches directly (a ring's own sleep session) now appear together with
+    /// their scores, after the pass, rather than once before it and again after it.
+    static func refreshDashboardAfterSync(repo: Repository, rescore: () async -> Void) async {
+        await rescore()
+        await repo.refresh()
     }
 
     /// Fold a fresh reading into the smoothing window and republish a stable bpm.
@@ -2699,5 +2725,49 @@ final class AppModel: ObservableObject {
             xiaomiImportFailed = failed
         }
         activeImportSource = nil
+    }
+}
+
+/// Collapses dashboard-change widget publishes into one trailing publish (the iOS `refreshSeq` hook).
+///
+/// A sync used to rebuild the Home-screen widget twice: once from the `refreshSeq` hook when the re-score
+/// published, and again moments later from the post-sync cascade's own publish. Each full build reads the
+/// Rest series through `exploreSeries` and today's stress curve on the main actor, so the second was pure
+/// main-thread cost for an identical snapshot. Requests now wait `delayNanoseconds`, a newer request
+/// replaces a waiting one, and a full publish that is about to read the caches calls `satisfyPending()`:
+/// it reads data no older than any request still waiting, so that request has nothing left to publish.
+/// The cascade's own publish therefore absorbs the hook's request, and a burst of refreshes publishes
+/// once, after it settles.
+///
+/// Platform-neutral so the macOS test bundle can pin it; only the iOS app drives it.
+@MainActor
+final class WidgetPublishCoalescer {
+    private let delayNanoseconds: UInt64
+    private var pending: Task<Void, Never>?
+
+    init(delayNanoseconds: UInt64) {
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    /// Whether a request is still waiting to publish.
+    var hasPending: Bool { pending != nil }
+
+    /// Run `publish` after the delay, unless a newer request or a full publish supersedes this one first.
+    func request(_ publish: @escaping @MainActor () async -> Void) {
+        pending?.cancel()
+        let delay = delayNanoseconds
+        pending = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            // Cleared BEFORE publishing, so the publish's own `satisfyPending()` cannot cancel itself.
+            self?.pending = nil
+            await publish()
+        }
+    }
+
+    /// A full publish is about to read the dashboard caches: drop the waiting request it now covers.
+    func satisfyPending() {
+        pending?.cancel()
+        pending = nil
     }
 }

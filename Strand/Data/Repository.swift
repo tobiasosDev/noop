@@ -1043,10 +1043,24 @@ final class Repository: ObservableObject {
         let need = await unionMetricSeries(store: store, key: "sleep_need_min", from: fromDay, to: toDay)
         let debt = await unionMetricSeries(store: store, key: "sleep_debt_min", from: fromDay, to: toDay)
 
+        // The caches as they stand, handed to the detached task below so the publish DIFF runs there too.
+        // Comparing ~4000 `DailyMetric`s, ~12k source rows and every night's `stagesJSON` was a measurable
+        // main-thread hitch on each post-sync refresh (it ran on the main actor after the merge returned).
+        // Read here, after `refreshGen` was claimed, these are exactly the values the publish below would
+        // compare against: `refresh()` is the only writer of these caches, and any refresh that publishes
+        // in between must be NEWER than this one, which the generation guard below then drops. The arrays
+        // are copy-on-write, so this hands over references, not copies.
+        let wasLoaded = loaded
+        let currentDays = days
+        let currentSleeps = sleeps
+        let currentImportedSleep = importedSleep
+        let currentVitalRows = vitalRows
+        let currentFreshness = freshness
+
         // Merge + sort OFF the main actor (FIX 3): the figures build, the two O(n log n) daily/sleep merges,
         // the source-row sort, and the freshness counts are all pure over the rows just read, so they run in
         // a detached task and the main actor stays free for SwiftUI during a deep-history refresh.
-        let merged: MergedCaches = await Task.detached(priority: .utility) {
+        let (merged, unchanged): (MergedCaches, Bool) = await Task.detached(priority: .utility) {
             var fig: [String: ImportedSleepFigures] = [:]
             for p in perf { fig[p.day, default: ImportedSleepFigures()].performancePct = p.value }
             for p in cons { fig[p.day, default: ImportedSleepFigures()].consistencyPct = p.value }
@@ -1057,7 +1071,7 @@ final class Repository: ObservableObject {
             // and IntelligenceEngine re-keys the computed DAILY row from it; collect those edited days so the
             // merge lets the computed row's SLEEP fields win there (imports still win on every un-edited day).
             let editedDays = Self.userEditedDays(compSleep)
-            return MergedCaches(
+            let merged = MergedCaches(
                 importedSleep: fig,
                 days: Self.mergeActivityFileSteps(
                     into: Self.mergeDaily(imported: imported, computed: computed, userEditedDays: editedDays),
@@ -1067,22 +1081,23 @@ final class Repository: ObservableObject {
                 vitalRows: Self.sourceRows(imported: imported, computed: computed, apple: apple),
                 freshness: Self.computeFreshness(imported: imported, computed: computed, apple: apple,
                                                  importedSleeps: impSleep, computedSleeps: compSleep))
+            // DIFF before publishing (FIX 3): if this refresh produced byte-identical caches AND we've already
+            // loaded once, skip the re-publish and the `refreshSeq` bump entirely , assigning an equal value
+            // to an @Published prop still fires objectWillChange, so the skip must cover the assignments too.
+            // This is what stops the analyze-tail's burst of refresh() calls each re-firing
+            // TodayView.loadAll(). Evaluated HERE, off the main actor, against the caches captured above.
+            let unchanged = wasLoaded
+                && merged.days == currentDays
+                && merged.sleeps == currentSleeps
+                && merged.importedSleep == currentImportedSleep
+                && merged.vitalRows == currentVitalRows
+                && merged.freshness == currentFreshness
+            return (merged, unchanged)
         }.value
 
         // Generation guard (#review): if a newer refresh() started while this one merged off-actor, drop
         // this now-stale result so it can't clobber the newer caches or re-fire loadAll out of order.
         guard myGen == refreshGen else { return }
-
-        // DIFF before publishing (FIX 3): if this refresh produced byte-identical caches AND we've already
-        // loaded once, skip the re-publish and the `refreshSeq` bump entirely , assigning an equal value to
-        // an @Published prop still fires objectWillChange, so the skip must cover the assignments too. This
-        // is what stops the analyze-tail's burst of refresh() calls each re-firing TodayView.loadAll().
-        let unchanged = loaded
-            && merged.days == days
-            && merged.sleeps == sleeps
-            && merged.importedSleep == importedSleep
-            && merged.vitalRows == vitalRows
-            && merged.freshness == freshness
         guard !unchanged else { return }
 
         // One consistent publish per refresh: assign every cache, flip `loaded`, then bump `refreshSeq` so

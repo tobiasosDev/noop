@@ -73,6 +73,12 @@ final class WatchSessionBridge: NSObject, ObservableObject {
     /// `async` because Rest (sleep_performance) lives in a computed metric series rather than a
     /// `DailyMetric` column, so it needs an `exploreSeries` read (mirrors `WidgetSnapshot.publish`).
     func sendLatest(from model: AppModel) async {
+        // The spacing half of `shouldPush` depends only on the clock, so check it BEFORE building: the
+        // build reads the whole Rest series (`exploreSeries`) on the main actor, and this runs on every
+        // foreground `refreshSeq` bump while at most one push per 30 minutes can go out. Inside the window
+        // the outcome was always "skip"; now it skips without the read. `shouldPush` still re-checks both
+        // halves after the build, against the clock at that point.
+        if let at = lastPushedAt, Date().timeIntervalSince(at) < Self.minPushInterval { return }
         let snap = await Self.buildSnapshot(from: model)
         // A contentless snapshot (a cold launch races the first repo refresh, so `days` is still empty)
         // must NOT push: it would stomp the watch's last REAL data with the empty state AND burn the
