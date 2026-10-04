@@ -605,8 +605,13 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Newest record unix the strap reports having (from the GET_DATA_RANGE response); refreshed each
     /// offload. Compared against our frontier to tell "stuck" from "off-wrist/caught-up".
     private var strapNewestTs: Int?
-    /// Fires if the strap goes silent mid-offload; re-armed on every frame during backfill.
+    /// Fires if the strap goes silent mid-offload. At most ONE is pending: every frame during backfill
+    /// moves `lastBackfillProgress`, and the pending check re-arms itself for the remainder (see
+    /// `armBackfillTimeout`).
     private var backfillTimeout: DispatchWorkItem?
+    /// When the backfill idle watchdog last saw progress (an offload frame, or the session start). Same
+    /// monotonic clock as the `asyncAfter` deadline it feeds.
+    private var lastBackfillProgress = DispatchTime.now()
     /// Periodic re-trigger of the type-47 historical offload. This is the PRIMARY continuous metric
     /// source (mirrors how WHOOP syncs): the strap's 14-day biometric store is re-offloaded every
     /// `backfillIntervalSeconds` while connected+bonded, rather than once per connect. Started on
@@ -2558,13 +2563,17 @@ public final class BLEManager: NSObject, ObservableObject {
         backfiller.begin(family: selectedModel.deviceFamily, continuedAfterRows: consecutiveAutoContinues > 0)
         backfilling = true
         state.backfilling = true
+        // Written unconditionally: the Live Activity's `$syncChunksThisSession` sink pushes the session's
+        // opening progress on this write, a zero included.
         state.syncChunksThisSession = 0
-        state.rejectedFramesThisSession = 0
-        state.rejectedFramesUnarchived = 0
-        state.decodedChunksThisSession = 0
-        state.consoleChunksThisSession = 0
-        state.r22FlagsAccepted = 0
-        state.deepPacketsThisSession = 0
+        // These have no per-write subscriber, so a counter already at zero is left alone: every `@Published`
+        // write fires `objectWillChange` at each LiveState observer whether or not the value moved.
+        if state.rejectedFramesThisSession != 0 { state.rejectedFramesThisSession = 0 }
+        if state.rejectedFramesUnarchived != 0 { state.rejectedFramesUnarchived = 0 }
+        if state.decodedChunksThisSession != 0 { state.decodedChunksThisSession = 0 }
+        if state.consoleChunksThisSession != 0 { state.consoleChunksThisSession = 0 }
+        if state.r22FlagsAccepted != 0 { state.r22FlagsAccepted = 0 }
+        if state.deepPacketsThisSession != 0 { state.deepPacketsThisSession = 0 }
         historicalAckLogCounter = 0
         // Payload MUST be [0x00], NOT empty: verified on-device that this strap serves type-47 only with
         // [0x00] (empty → 0 frames on a clean stable link with ~2k records pending); the Mac ground-truth
@@ -2640,14 +2649,40 @@ public final class BLEManager: NSObject, ObservableObject {
     /// — a short watchdog cut sessions short mid-drain. Longer = more records drained per session.
     static let backfillIdleTimeoutSeconds = 60
     private func armBackfillTimeout() {
-        backfillTimeout?.cancel()
+        // Stamp the progress and leave one pending check to measure from it. This used to cancel and
+        // re-schedule a fresh 60 s work item on EVERY offload frame, and a cancelled `asyncAfter` item still
+        // sits in the main queue until its deadline, so a long drain left thousands of dead timers there
+        // (main-thread hitch). The deadline is unchanged: the check fires `backfillIdleTimeoutSeconds` after
+        // the last progress, re-arming for the remainder whenever a frame arrived in between.
+        lastBackfillProgress = .now()
+        guard backfillTimeout == nil else { return }
+        scheduleBackfillTimeoutCheck(at: lastBackfillProgress + .seconds(BLEManager.backfillIdleTimeoutSeconds))
+    }
+
+    private func scheduleBackfillTimeoutCheck(at deadline: DispatchTime) {
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            // Running means not cancelled, so this is the pending check; clear it before deciding.
+            self.backfillTimeout = nil
+            if let recheck = BLEManager.backfillTimeoutRecheck(
+                now: .now(), lastProgress: self.lastBackfillProgress,
+                timeoutSeconds: BLEManager.backfillIdleTimeoutSeconds) {
+                self.scheduleBackfillTimeoutCheck(at: recheck)
+                return
+            }
             self.backfiller?.timeoutFired()
             self.exitBackfilling(reason: "timeout")
         }
         backfillTimeout = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(BLEManager.backfillIdleTimeoutSeconds), execute: item)
+        DispatchQueue.main.asyncAfter(deadline: deadline, execute: item)
+    }
+
+    /// What the pending idle check decides when it runs: nil when the strap has sent nothing for the whole
+    /// window (time out now), else when to check again, `timeoutSeconds` after the last progress.
+    nonisolated static func backfillTimeoutRecheck(now: DispatchTime, lastProgress: DispatchTime,
+                                                  timeoutSeconds: Int) -> DispatchTime? {
+        let due = lastProgress + .seconds(timeoutSeconds)
+        return now < due ? due : nil
     }
 
     /// Tear down the backfill session. Does NOT auto-start live HR: the periodic type-47 backfill
@@ -3042,6 +3077,7 @@ public final class BLEManager: NSObject, ObservableObject {
                     && (n - f) > BackfillContinuation.defaultBehindGapSeconds
                 // #2012: say WHY, on the flip only. This half of the Rest "Pending sync" state used to
                 // change in total silence, so a report of it showing hours after waking was unanswerable.
+                // Written on the flip only, like the line: an unchanged write still fires `objectWillChange`.
                 if state.historyPendingSync != pending {
                     log(PendingSyncDiagnostic.line(
                         pending: pending, site: PendingSyncDiagnostic.sitePostOffload,
@@ -3049,8 +3085,8 @@ public final class BLEManager: NSObject, ObservableObject {
                         futureDated: BackfillContinuation.isFutureDatedNewest(n, wallNowUnix: wallNow),
                         persistedRows: persistedSensorRows,
                         thresholdSec: BackfillContinuation.defaultBehindGapSeconds))
+                    state.historyPendingSync = pending
                 }
-                state.historyPendingSync = pending
             }
             let stillConnected = state.connected && state.bonded
             guard BackfillContinuation.shouldAutoContinue(
@@ -6322,7 +6358,7 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         lastSessionEndTrim = nil
         backfilling = false
         state.backfilling = false
-        state.historyPendingSync = false   // #1164: a stale "pending" must not outlive the link
+        if state.historyPendingSync { state.historyPendingSync = false }   // #1164: a stale "pending" must not outlive the link
         state.syncChunksThisSession = 0
         // A mid-sync disconnect bypasses exitBackfilling, so clear the reject counters here too —
         // otherwise a stale non-zero count survives until the next beginBackfill. (#77/#91)
@@ -7242,8 +7278,8 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                                     newestForPending, wallNowUnix: wallNowP),
                                 persistedRows: nil,
                                 thresholdSec: BackfillContinuation.defaultBehindGapSeconds))
+                            state.historyPendingSync = pendingAtConnect
                         }
-                        state.historyPendingSync = pendingAtConnect
                     }
                 }
             }
