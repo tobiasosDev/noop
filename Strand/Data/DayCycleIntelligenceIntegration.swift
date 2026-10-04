@@ -3,7 +3,13 @@ import StrandAnalytics
 import WhoopProtocol
 import WhoopStore
 
-@MainActor enum DayCycleIntelligenceIntegration {
+/// Not main-actor isolated: `IntelligenceEngine.analyzeRecent` runs `compute` inside a detached task
+/// (main-thread hitch round). On a cold cache it reads up to 200k heart-rate rows per owner for each of
+/// the ~21 cycles, merges and sorts them and scores strain and calories, then pages every step sample:
+/// pure work over its inputs plus `WhoopStore` reads, none of it touching main-actor state. Every member
+/// works only on its arguments (the store handle included) or on constants, so dropping the isolation
+/// changes where the work runs, never what it computes.
+enum DayCycleIntelligenceIntegration {
     static let onsetKey = "day_cycle_onset_ts"
     static let pageSize = 10_000
 
@@ -43,6 +49,31 @@ import WhoopStore
     final class Cache {
         fileprivate var cycles: [String: CachedCycle] = [:]
         fileprivate var loads: [String: CachedLoad] = [:]
+
+        /// A value copy of every entry. The engine keeps its cache as one of these between passes and
+        /// hands a copy into the detached task that runs `compute`, so no reference type crosses the task
+        /// boundary; the updated copy comes back with the result and replaces the old one.
+        struct Contents {
+            fileprivate var cycles: [String: CachedCycle] = [:]
+            fileprivate var loads: [String: CachedLoad] = [:]
+
+            init() {}
+
+            fileprivate init(cycles: [String: CachedCycle], loads: [String: CachedLoad]) {
+                self.cycles = cycles
+                self.loads = loads
+            }
+        }
+
+        init() {}
+
+        /// A cache seeded with `contents`, exactly as if those entries had been stored by earlier passes.
+        init(_ contents: Contents) {
+            cycles = contents.cycles
+            loads = contents.loads
+        }
+
+        var contents: Contents { Contents(cycles: cycles, loads: loads) }
     }
     private static func computedId(_ owner: String) -> String { owner + "-noop" }
 
