@@ -1920,6 +1920,12 @@
           }
         }
       }
+    },
+    "NOOP ": {
+      "shouldTranslate": false
+    },
+    "· %@": {
+      "shouldTranslate": false
     }
   },
   "version": "1.0"
