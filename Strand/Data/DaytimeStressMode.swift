@@ -102,9 +102,12 @@ enum DaytimeStressMode {
                 // 30 days of historical R-R reads; they cannot change the selected mode.
                 let dayRR = DaytimeStress.daytimeRMSSDScoringEnabled
                     ? await repo.rrIntervals(from: from, to: to, limit: 200_000) : []
-                aggregates.append(
+                // Reduced OFF the main actor (main-thread hitch): the fold body runs on the main actor and a
+                // worn day is up to 200k HR rows, thirty times over. Same inputs, same pure reduction; the
+                // repository reads above already merge their multi-id unions off-main.
+                aggregates.append(await Task.detached(priority: .utility) {
                     DaytimeStress.dayDaytimeAggregate(hr: dayHR, rr: dayRR, tzOffsetSeconds: dayTz)
-                )
+                }.value)
             }
             return DaytimeStress.scoringModeFromAggregates(aggregates)
         }

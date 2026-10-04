@@ -326,7 +326,14 @@ final class Repository: ObservableObject {
     }
 
     private func rawComputedReadIds(store: WhoopStore) -> [String] {
-        rawPhysiologyReadIds(store: store).map { $0.hasSuffix("-noop") ? $0 : $0 + "-noop" }
+        Self.computedSiblingIds(rawPhysiologyReadIds(store: store))
+    }
+
+    /// The computed ("-noop") sibling of each raw id, order kept. Shared with `rawComputedReadIds` so a
+    /// caller that already holds the raw ids derives the computed ones without a second synchronous
+    /// registry read on the main actor.
+    nonisolated private static func computedSiblingIds(_ rawIds: [String]) -> [String] {
+        rawIds.map { $0.hasSuffix("-noop") ? $0 : $0 + "-noop" }
     }
 
     // Each helper reads the SAME store query across `importedReadIds` (active strap + canonical "my-whoop")
@@ -339,9 +346,22 @@ final class Repository: ObservableObject {
     /// winning over the canonical import (a live/measured row beats an imported one for the same day). The
     /// single returned row per day feeds the existing imported-vs-computed `mergeDaily` unchanged.
     private func unionDailyMetrics(store: WhoopStore, from: String, to: String) async -> [DailyMetric] {
-        var byDay: [String: DailyMetric] = [:]
+        var lists: [[DailyMetric]] = []
         for id in importedReadIds {   // active strap FIRST → it claims each column, canonical fills its gaps
-            for m in (try? await store.dailyMetrics(deviceId: id, from: from, to: to)) ?? [] {
+            lists.append((try? await store.dailyMetrics(deviceId: id, from: from, to: to)) ?? [])
+        }
+        // The coalesce + sort runs OFF the main actor (main-thread hitch): a full-history refresh folds
+        // thousands of rows per id, and Repository is @MainActor.
+        return await Task.detached(priority: .utility) { [lists] in Self.coalesceDailyByDay(lists) }.value
+    }
+
+    /// Per-day fold of daily-metric lists in precedence order: the first list's row claims each column
+    /// and later lists fill only its nil columns (`coalesceDay`), ascending by day. Pure + static so the
+    /// union reads can run it in a detached task; the fold is the loop those reads used to run inline.
+    nonisolated static func coalesceDailyByDay(_ lists: [[DailyMetric]]) -> [DailyMetric] {
+        var byDay: [String: DailyMetric] = [:]
+        for list in lists {
+            for m in list {
                 byDay[m.day] = byDay[m.day].map { Self.coalesceDay($0, m) } ?? m
             }
         }
@@ -364,7 +384,10 @@ final class Repository: ObservableObject {
         for id in rawPhysiologyReadIds(store: store) {   // active strap FIRST → it wins any shared timestamp
             lists.append((try? await store.gravitySamples(deviceId: id, from: from, to: to, limit: limit)) ?? [])
         }
-        return Self.mergeGravityByTs(lists)
+        // A single id is returned unchanged by the merge, so it skips the hop. A multi-id union (up to
+        // 200k rows per id) is deduped and sorted OFF the main actor (main-thread hitch).
+        if lists.count == 1 { return lists[0] }
+        return await Task.detached(priority: .utility) { [lists] in Self.mergeGravityByTs(lists) }.value
     }
 
     /// Merge gravity lists into one time-ordered stream, deduped by timestamp with the FIRST list (the
@@ -456,9 +479,20 @@ final class Repository: ObservableObject {
     /// metricSeries points across the imported union for a key + day range, DEDUPED per day with the active
     /// strap winning (same precedence as `unionDailyMetrics`).
     private func unionMetricSeries(store: WhoopStore, key: String, from: String, to: String) async -> [MetricPoint] {
-        var byDay: [String: MetricPoint] = [:]
+        var lists: [[MetricPoint]] = []
         for id in importedReadIds {
-            for p in (try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [] where byDay[p.day] == nil {
+            lists.append((try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [])
+        }
+        // Dedup + sort OFF the main actor (main-thread hitch): a full-history series is thousands of rows.
+        return await Task.detached(priority: .utility) { [lists] in Self.firstPointPerDay(lists) }.value
+    }
+
+    /// First point per day across `lists` in precedence order (an earlier list, or an earlier row in the
+    /// same list, wins the day), ascending by day. The loop `unionMetricSeries` used to run inline.
+    nonisolated static func firstPointPerDay(_ lists: [[MetricPoint]]) -> [MetricPoint] {
+        var byDay: [String: MetricPoint] = [:]
+        for list in lists {
+            for p in list where byDay[p.day] == nil {
                 byDay[p.day] = p
             }
         }
@@ -469,25 +503,29 @@ final class Repository: ObservableObject {
     /// night both survive) and collapsing near-identical nights recorded under different union ids.
     /// The downstream `mergeSleep`/`userEditedDays` do the per-day collapse, exactly as before.
     private func unionSleepSessions(store: WhoopStore, from: Int, to: Int, limit: Int = 4000) async -> [CachedSleepSession] {
-        Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawPhysiologyReadIds(store: store), from: from, to: to, limit: limit))
+        let blocks = await unionRawSleepBlocks(store: store, ids: rawPhysiologyReadIds(store: store), from: from, to: to, limit: limit)
+        // The cross-source night collapse runs OFF the main actor (main-thread hitch): a 4000-day refresh
+        // over two raw ids is thousands of blocks.
+        return await Task.detached(priority: .utility) { Self.dedupBlocks(blocks) }.value
     }
 
     /// Computed ("-noop") daily-metric rows across the computed union, DEDUPED per day (active strap's
     /// computed sibling wins over the canonical computed sibling).
     private func unionComputedDailyMetrics(store: WhoopStore, from: String, to: String) async -> [DailyMetric] {
-        var byDay: [String: DailyMetric] = [:]
+        var lists: [[DailyMetric]] = []
         for id in computedReadIds {
-            for m in (try? await store.dailyMetrics(deviceId: id, from: from, to: to)) ?? [] {
-                byDay[m.day] = byDay[m.day].map { Self.coalesceDay($0, m) } ?? m
-            }
+            lists.append((try? await store.dailyMetrics(deviceId: id, from: from, to: to)) ?? [])
         }
-        return byDay.values.sorted { $0.day < $1.day }
+        // Same off-main fold as `unionDailyMetrics` (main-thread hitch).
+        return await Task.detached(priority: .utility) { [lists] in Self.coalesceDailyByDay(lists) }.value
     }
 
     /// Computed ("-noop") sleep sessions across every registered WHOOP source, keeping ALL sessions per day
     /// and collapsing near-identical nights recorded under different computed siblings.
     private func unionComputedSleepSessions(store: WhoopStore, from: Int, to: Int, limit: Int = 4000) async -> [CachedSleepSession] {
-        Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawComputedReadIds(store: store), from: from, to: to, limit: limit))
+        let blocks = await unionRawSleepBlocks(store: store, ids: rawComputedReadIds(store: store), from: from, to: to, limit: limit)
+        // Off the main actor, as in `unionSleepSessions` (main-thread hitch).
+        return await Task.detached(priority: .utility) { Self.dedupBlocks(blocks) }.value
     }
 
     /// ALL sleep blocks across `ids` for a ts range, concatenated (NOT collapsed to one per day, used by
@@ -503,26 +541,66 @@ final class Repository: ObservableObject {
     /// Keep the active source's copy of a night when another source recorded nearly the same interval.
     /// Require a majority of BOTH intervals to overlap so a short nap inside a long night survives.
     /// Separate blocks from one source remain distinct, including split sleeps.
+    ///
+    /// Each block used to be tested against EVERY kept block, O(n²) over a 4000-day union of two raw ids,
+    /// on the main actor via `refresh`, `allSleepSessions` and `habitualMidsleepSec`. Only existence
+    /// matters, so the kept blocks are now looked up by onset bucket. A kept block can pass the test only
+    /// when it has a source and a positive span, and only when its onset lies in
+    /// `[b.onset - 2 * b.span, b.end]`: overlap > 0 puts its onset before `b.end`, and
+    /// keptSpan / 2 < overlap <= b.span keeps its span under `2 * b.span`. Every kept block in that window
+    /// is checked with the unchanged pairwise test (`blocksCollapse`), so the kept list is identical to
+    /// the old scan; `DedupBlocksEquivalenceTests` pins that against a verbatim copy of it.
     nonisolated static func dedupBlocks(_ blocks: [CachedSleepSession]) -> [CachedSleepSession] {
-        var seen = Set<[Int]>()
+        struct Bounds: Hashable { let startTs: Int; let endTs: Int }
+        let bucketWidth = 86_400
+        var seen = Set<Bounds>()
         var out: [CachedSleepSession] = []
+        var byBucket: [Int: [Int]] = [:]   // onset bucket -> indices into `out` of blocks the test can match
+        var matchable: [Int] = []          // the same indices, flat, for a window wider than the list itself
         for b in blocks {
-            let key = [b.startTs, b.endTs]
-            guard seen.insert(key).inserted else { continue }
-            let overlapsOtherSource = out.contains { kept in
-                guard let source = b.deviceId, let keptSource = kept.deviceId,
-                      source != keptSource else { return false }
-                let start = max(b.effectiveStartTs, kept.effectiveStartTs)
-                let end = min(b.endTs, kept.endTs)
-                let bDuration = b.endTs - b.effectiveStartTs
-                let keptDuration = kept.endTs - kept.effectiveStartTs
-                let overlap = end - start
-                return bDuration > 0 && keptDuration > 0 &&
-                    overlap > bDuration / 2 && overlap > keptDuration / 2
+            guard seen.insert(Bounds(startTs: b.startTs, endTs: b.endTs)).inserted else { continue }
+            var overlapsOtherSource = false
+            if b.deviceId != nil, b.endTs - b.effectiveStartTs > 0 {
+                let span = b.endTs - b.effectiveStartTs
+                // The lower bound saturates, so a pathological span widens the window instead of trapping.
+                let (twice, o1) = span.multipliedReportingOverflow(by: 2)
+                let (lower, o2) = b.effectiveStartTs.subtractingReportingOverflow(twice)
+                let loBucket = ((o1 || o2) ? Int.min : lower) / bucketWidth
+                let hiBucket = b.endTs / bucketWidth
+                if hiBucket - loBucket >= matchable.count {
+                    overlapsOtherSource = matchable.contains { blocksCollapse(b, out[$0]) }
+                } else {
+                    scan: for bucket in loBucket...hiBucket {
+                        for i in byBucket[bucket] ?? [] where blocksCollapse(b, out[i]) {
+                            overlapsOtherSource = true
+                            break scan
+                        }
+                    }
+                }
             }
-            if !overlapsOtherSource { out.append(b) }
+            if !overlapsOtherSource {
+                out.append(b)
+                if b.deviceId != nil, b.endTs - b.effectiveStartTs > 0 {
+                    byBucket[b.effectiveStartTs / bucketWidth, default: []].append(out.count - 1)
+                    matchable.append(out.count - 1)
+                }
+            }
         }
         return out
+    }
+
+    /// The pairwise test `dedupBlocks` applies, unchanged: two blocks from DIFFERENT known sources, each
+    /// with a positive span, overlapping by more than half of each.
+    nonisolated private static func blocksCollapse(_ b: CachedSleepSession, _ kept: CachedSleepSession) -> Bool {
+        guard let source = b.deviceId, let keptSource = kept.deviceId,
+              source != keptSource else { return false }
+        let start = max(b.effectiveStartTs, kept.effectiveStartTs)
+        let end = min(b.endTs, kept.endTs)
+        let bDuration = b.endTs - b.effectiveStartTs
+        let keptDuration = kept.endTs - kept.effectiveStartTs
+        let overlap = end - start
+        return bDuration > 0 && keptDuration > 0 &&
+            overlap > bDuration / 2 && overlap > keptDuration / 2
     }
 
     /// Drop workout rows that share a (startTs, endTs, sport, source) key, the same session recorded under
@@ -815,19 +893,23 @@ final class Repository: ObservableObject {
         // Whole recordable epoch in unix seconds [0, ~2^31) so every recorded workout row is counted.
         var workouts: [WorkoutRow] = []
         for id in importedReadIds { workouts += (try? await store.workouts(deviceId: id, from: 0, to: 4_102_444_800, limit: 1_000_000)) ?? [] }
-        workouts = Self.dedupWorkoutsByNaturalKey(workouts)
         // lastRenderRows = the size of the merged DAILY set the dashboard list/charts actually render: the
         // union of distinct days across the three daily sources (imported strap + on-device computed + Apple)
         // over the full local-history window. This is the read-set whose size drives the post-import list/
         // chart lag (#797) - so the trace pairs frame stats with "how many rows it was rendering over".
         let computed = await unionComputedDailyMetrics(store: store, from: "0000-01-01", to: "9999-12-31")
         let apple = (try? await store.dailyMetrics(deviceId: Self.appleHealthSource, from: "0000-01-01", to: "9999-12-31")) ?? []
-        var renderDays = Set<String>()
-        for m in imported { renderDays.insert(m.day) }
-        for m in computed { renderDays.insert(m.day) }
-        for m in apple { renderDays.insert(m.day) }
+        // The natural-key dedup (a string key per row, up to 1M rows) and the distinct-day count run OFF the
+        // main actor, so the measuring trace cannot itself hitch the screen it measures.
+        let counts = await Task.detached(priority: .utility) { [workouts] () -> (workouts: Int, renderDays: Int) in
+            var renderDays = Set<String>()
+            for m in imported { renderDays.insert(m.day) }
+            for m in computed { renderDays.insert(m.day) }
+            for m in apple { renderDays.insert(m.day) }
+            return (Self.dedupWorkoutsByNaturalKey(workouts).count, renderDays.count)
+        }.value
         return DataVolume(dbRows: dbRows, importedDays: imported.count,
-                          workouts: workouts.count, lastRenderRows: renderDays.count)
+                          workouts: counts.workouts, lastRenderRows: counts.renderDays)
     }
 
     /// Checkpoint the WAL into the main DB file if the store is already open, so a file-level
@@ -1170,10 +1252,21 @@ final class Repository: ObservableObject {
             return (try? await store.hrSamples(deviceId: deviceIds[0], from: from, to: to,
                                                limit: limit)) ?? []
         }
-        var byTs: [Int: HRSample] = [:]
+        var lists: [[HRSample]] = []
         for id in deviceIds {
-            for s in (try? await store.hrSamples(deviceId: id, from: from, to: to,
-                                                 limit: limit)) ?? [] where byTs[s.ts] == nil {
+            lists.append((try? await store.hrSamples(deviceId: id, from: from, to: to,
+                                                     limit: limit)) ?? [])
+        }
+        // Dedup + sort OFF the main actor (main-thread hitch): each id can return up to `limit` rows.
+        return await Task.detached(priority: .utility) { [lists] in Self.mergeHRByTs(lists) }.value
+    }
+
+    /// First sample per timestamp across `lists` in precedence order (earlier list wins, then earlier
+    /// row), ascending by ts. The loop the multi-id `hrSamples` reads used to run inline on the main actor.
+    nonisolated static func mergeHRByTs(_ lists: [[HRSample]]) -> [HRSample] {
+        var byTs: [Int: HRSample] = [:]
+        for list in lists {
+            for s in list where byTs[s.ts] == nil {
                 byTs[s.ts] = s
             }
         }
@@ -1221,13 +1314,13 @@ final class Repository: ObservableObject {
         guard ids.count != 1 else {
             return (try? await store.hrSamples(deviceId: deviceId, from: from, to: to, limit: limit)) ?? []
         }
-        var byTs: [Int: HRSample] = [:]
+        var lists: [[HRSample]] = []
         for id in ids {
-            for s in (try? await store.hrSamples(deviceId: id, from: from, to: to, limit: limit)) ?? [] where byTs[s.ts] == nil {
-                byTs[s.ts] = s
-            }
+            lists.append((try? await store.hrSamples(deviceId: id, from: from, to: to, limit: limit)) ?? [])
         }
-        return byTs.values.sorted { $0.ts < $1.ts }
+        // Off the main actor (main-thread hitch): a full day is up to 200k rows per id, and the Today,
+        // stress-curve and 30-day stress-lens reads all land here.
+        return await Task.detached(priority: .utility) { [lists] in Self.mergeHRByTs(lists) }.value
     }
 
     /// Cheap change-detector over a window of heart rate: a COUNT and a MAX on an indexed column, no
@@ -1265,7 +1358,8 @@ final class Repository: ObservableObject {
             lists.append((try? await store.rrIntervals(deviceId: id, from: from, to: to, limit: limit,
                 unlabelledAliasOfWhoop5: activeWhoop5 && id == Self.whoopSource)) ?? [])
         }
-        return Self.mergeRRByIdentity(lists)
+        // Identity dedup + sort OFF the main actor (main-thread hitch), up to `limit` beats per id.
+        return await Task.detached(priority: .utility) { [lists] in Self.mergeRRByIdentity(lists) }.value
     }
 
     /// Logical day-start of the most recent day the active device has HR data for, or nil when the store is
@@ -1287,10 +1381,21 @@ final class Repository: ObservableObject {
             return (try? await store.hrBuckets(deviceId: deviceIds[0], from: from, to: to,
                                                bucketSeconds: bucketSeconds)) ?? []
         }
-        var byStart: [Int: HRBucket] = [:]
+        var lists: [[HRBucket]] = []
         for id in deviceIds {
-            for b in (try? await store.hrBuckets(deviceId: id, from: from, to: to,
-                                                 bucketSeconds: bucketSeconds)) ?? [] where byStart[b.ts] == nil {
+            lists.append((try? await store.hrBuckets(deviceId: id, from: from, to: to,
+                                                     bucketSeconds: bucketSeconds)) ?? [])
+        }
+        // Dedup + sort OFF the main actor (main-thread hitch); a wide window is thousands of buckets.
+        return await Task.detached(priority: .utility) { [lists] in Self.mergeHRBucketsByStart(lists) }.value
+    }
+
+    /// First bucket per start across `lists` in precedence order (earlier list wins, then earlier row),
+    /// ascending by start. The loop the multi-id bucket reads used to run inline on the main actor.
+    nonisolated static func mergeHRBucketsByStart(_ lists: [[HRBucket]]) -> [HRBucket] {
+        var byStart: [Int: HRBucket] = [:]
+        for list in lists {
+            for b in list where byStart[b.ts] == nil {
                 byStart[b.ts] = b
             }
         }
@@ -1319,7 +1424,8 @@ final class Repository: ObservableObject {
         for id in importedReadIds {   // active strap FIRST so it wins a ts tie
             perId.append((try? await store.stepSamples(deviceId: id, from: from, to: to, limit: 200_000)) ?? [])
         }
-        return Self.latestActivityClass(perId)
+        // The scan over up to 200k samples per id runs OFF the main actor (main-thread hitch).
+        return await Task.detached(priority: .utility) { [perId] in Self.latestActivityClass(perId) }.value
     }
 
     /// Raw strap step TICKS over `[from, to]` for a manual-workout summary (#398): the wrap-aware
@@ -1332,7 +1438,10 @@ final class Repository: ObservableObject {
         guard let store = await ensureStore() else { return nil }
         for id in importedReadIds {   // active strap FIRST
             let samples = (try? await store.stepSamples(deviceId: id, from: from, to: to, limit: 200_000)) ?? []
-            if let ticks = StepsCounter.stepsInWindow(samples) { return ticks }
+            // The counter walk runs OFF the main actor (main-thread hitch); ids are still tried in order.
+            if let ticks = await Task.detached(priority: .utility, operation: {
+                StepsCounter.stepsInWindow(samples)
+            }).value { return ticks }
         }
         return nil
     }
@@ -1368,8 +1477,9 @@ final class Repository: ObservableObject {
     /// Mirrors Android `WhoopRepository.computedSleepSessionsUnion`.
     func computedSleepSessions(from: Int, to: Int, limit: Int = 100) async -> [CachedSleepSession] {
         guard let store = await ensureStore() else { return [] }
-        return (await unionComputedSleepSessions(store: store, from: from, to: to, limit: limit))
-            .sorted { $0.startTs < $1.startTs }
+        let deduped = await unionComputedSleepSessions(store: store, from: from, to: to, limit: limit)
+        // Sorted OFF the main actor like the collapse before it (main-thread hitch).
+        return await Task.detached(priority: .utility) { deduped.sorted { $0.startTs < $1.startTs } }.value
     }
 
     /// Every sleep BLOCK across BOTH sources, UN-deduplicated , so a split-sleep day (a nap
@@ -1388,13 +1498,27 @@ final class Repository: ObservableObject {
         let now = Int(Date().timeIntervalSince1970)
         let lo = now - days * 86_400, hi = now + 86_400
         let rawIds = rawPhysiologyReadIds(store: store)
-        let rawComputedIds = rawComputedReadIds(store: store)
+        let rawComputedIds = Self.computedSiblingIds(rawIds)
         // UNION the active strap + canonical (imported) and their computed siblings, keeping ALL blocks (not
         // one per day, this view expands split sleeps), but collapsing a night recorded under BOTH union
         // ids even when the recorded bounds differ slightly.
-        let imported = Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawIds, from: lo, to: hi))
-        let computed = Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawComputedIds, from: lo, to: hi))
+        let importedBlocks = await unionRawSleepBlocks(store: store, ids: rawIds, from: lo, to: hi)
+        let computedBlocks = await unionRawSleepBlocks(store: store, ids: rawComputedIds, from: lo, to: hi)
         let cal = Calendar.current
+        // Both collapses, the end-day filter and the sort run OFF the main actor (main-thread hitch): this
+        // is the full 4000-day history the Sleep tab loads.
+        return await Task.detached(priority: .utility) {
+            Self.mergeAllSleepBlocks(imported: importedBlocks, computed: computedBlocks, calendar: cal)
+        }.value
+    }
+
+    /// The pure half of `allSleepSessions`: collapse each side's cross-source twins, keep computed blocks
+    /// only on end-days no imported block covers, oldest onset first. Unchanged from the inline version.
+    nonisolated static func mergeAllSleepBlocks(imported importedBlocks: [CachedSleepSession],
+                                                computed computedBlocks: [CachedSleepSession],
+                                                calendar cal: Calendar) -> [CachedSleepSession] {
+        let imported = dedupBlocks(importedBlocks)
+        let computed = dedupBlocks(computedBlocks)
         func endDay(_ s: CachedSleepSession) -> Date {
             cal.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(s.endTs)))
         }
@@ -1414,7 +1538,7 @@ final class Repository: ObservableObject {
     func sessionMotions(sessions: [CachedSleepSession]) async -> [Int: [Double]] {
         guard !sessions.isEmpty, let store = await ensureStore() else { return [:] }
         let rawIds = rawPhysiologyReadIds(store: store)
-        let computedIds = rawComputedReadIds(store: store)
+        let computedIds = Self.computedSiblingIds(rawIds)
         let starts = sessions.map(\.startTs)
         let lo = starts.min() ?? 0
         let hi = starts.max() ?? 0
@@ -1509,10 +1633,24 @@ final class Repository: ObservableObject {
         // Use the SAME all-registered-WHOOP source set as allSleepSessions. Otherwise a removed/replaced
         // strap's visible retained nights would not teach the selector that chooses their main block.
         let rawIds = rawPhysiologyReadIds(store: store)
-        let rawComputedIds = rawComputedReadIds(store: store)
-        let imported = Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawIds, from: lo, to: hi))
-        let computed = Self.dedupBlocks(await unionRawSleepBlocks(store: store, ids: rawComputedIds, from: lo, to: hi))
+        let rawComputedIds = Self.computedSiblingIds(rawIds)
+        let importedBlocks = await unionRawSleepBlocks(store: store, ids: rawIds, from: lo, to: hi)
+        let computedBlocks = await unionRawSleepBlocks(store: store, ids: rawComputedIds, from: lo, to: hi)
         let offsetSec = TimeZone.current.secondsFromGMT()
+        // The two collapses and the history fold run OFF the main actor (main-thread hitch), over the same
+        // 4000-day union `allSleepSessions` loads. The zone offset is resolved here, where it always was.
+        return await Task.detached(priority: .utility) {
+            Self.habitualMidsleep(imported: importedBlocks, computed: computedBlocks, offsetSec: offsetSec)
+        }.value
+    }
+
+    /// The pure half of `habitualMidsleepSec`, unchanged from the inline version: one `HistoryBlock` per
+    /// collapsed session (effective bounds, dayKey = the local day of the midpoint), then the shared fold.
+    nonisolated static func habitualMidsleep(imported importedBlocks: [CachedSleepSession],
+                                             computed computedBlocks: [CachedSleepSession],
+                                             offsetSec: Int) -> Int? {
+        let imported = dedupBlocks(importedBlocks)
+        let computed = dedupBlocks(computedBlocks)
         let blocks = (imported + computed).compactMap { s -> SleepStageTotals.HistoryBlock? in
             let start = s.effectiveStartTs, end = s.endTs
             guard end > start else { return nil }
@@ -2007,13 +2145,17 @@ final class Repository: ObservableObject {
                 }.value
                 return TimelineSeries(points: points, isRaw: true, bucketSeconds: 1)
             }
-            var byStart: [Int: HRBucket] = [:]
+            var bucketLists: [[HRBucket]] = []
             for id in unionIds {
-                for b in (try? await store.hrBuckets(deviceId: id, from: from, to: to, bucketSeconds: bucket)) ?? [] where byStart[b.ts] == nil { byStart[b.ts] = b }
+                bucketLists.append((try? await store.hrBuckets(deviceId: id, from: from, to: to, bucketSeconds: bucket)) ?? [])
             }
-            return TimelineSeries(points: byStart.values.sorted { $0.ts < $1.ts }.map {
-                TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm)
-            }, isRaw: false, bucketSeconds: bucket)
+            // The per-bucket dedup + sort + map runs OFF the main actor too (main-thread hitch).
+            let points = await Task.detached(priority: .utility) { [bucketLists] in
+                Self.mergeHRBucketsByStart(bucketLists).map {
+                    TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm)
+                }
+            }.value
+            return TimelineSeries(points: points, isRaw: false, bucketSeconds: bucket)
         }
 
         // Non-HR streams: read raw rows (these tables are far sparser than 1 Hz HR, so a day's worth is
@@ -2273,16 +2415,31 @@ final class Repository: ObservableObject {
         }
 
         // First candidate wins per day; later candidates only fill days no earlier one covered.
-        var byDay: [String: ResolvedMetricPoint] = [:]
+        var perCandidate: [(candidate: MetricSourceCandidate, rows: [(day: String, value: Double)])] = []
         for candidate in candidates {
-            let rows = await resolvedRows(store: store, candidate: candidate, from: from, to: to)
+            perCandidate.append((candidate, await resolvedRows(store: store, candidate: candidate, from: from, to: to)))
+        }
+        // The cross-candidate merge + sort runs OFF the main actor (main-thread hitch): Today and Insights
+        // resolve many metrics per load, each over the full history window.
+        let points = await Task.detached(priority: .utility) { [perCandidate] in
+            Self.mergeResolvedCandidates(perCandidate)
+        }.value
+        return MetricSeriesResolution(requestedSource: preferredSource, candidates: candidates, points: points)
+    }
+
+    /// Fold per-candidate rows in precedence order: the first candidate to carry a day wins it and names
+    /// its source; ascending by day. The loop `resolvedSeries` used to run inline on the main actor.
+    nonisolated static func mergeResolvedCandidates(
+        _ perCandidate: [(candidate: MetricSourceCandidate, rows: [(day: String, value: Double)])]
+    ) -> [ResolvedMetricPoint] {
+        var byDay: [String: ResolvedMetricPoint] = [:]
+        for (candidate, rows) in perCandidate {
             for row in rows where byDay[row.day] == nil {
                 byDay[row.day] = ResolvedMetricPoint(day: row.day, value: row.value,
                                                      source: candidate.source, sourceKey: candidate.key)
             }
         }
-        let points = byDay.values.sorted { $0.day < $1.day }
-        return MetricSeriesResolution(requestedSource: preferredSource, candidates: candidates, points: points)
+        return byDay.values.sorted { $0.day < $1.day }
     }
 
     /// Resolve a displayed score back to the provider that supplied its inputs. Direct imported points
@@ -2333,12 +2490,23 @@ final class Repository: ObservableObject {
                              from: String, to: String) async -> [(day: String, value: Double)] {
         let metricRows = (try? await store.metricSeries(deviceId: candidate.source, key: candidate.key,
                                                         from: from, to: to)) ?? []
+        // A failed daily read contributes nothing, exactly as the old `if let` skipped it.
+        let dailyRows = (try? await store.dailyMetrics(deviceId: candidate.source,
+                                                       from: from, to: Self.dayAfter(to))) ?? []
+        let key = candidate.key
+        // The per-day fold (a full-history window per candidate) runs OFF the main actor (main-thread hitch).
+        return await Task.detached(priority: .utility) {
+            Self.resolvedRows(metricRows: metricRows, dailyRows: dailyRows, key: key)
+        }.value
+    }
+
+    /// The pure half of `resolvedRows(store:candidate:from:to:)`: metricSeries values first (a later row
+    /// wins a duplicate day), then the matching DailyMetric column for the days the series lacks; ascending.
+    nonisolated static func resolvedRows(metricRows: [MetricPoint], dailyRows: [DailyMetric],
+                                         key: String) -> [(day: String, value: Double)] {
         var byDay = Dictionary(metricRows.map { ($0.day, $0.value) }, uniquingKeysWith: { _, last in last })
-        if let dailyRows = try? await store.dailyMetrics(deviceId: candidate.source,
-                                                         from: from, to: Self.dayAfter(to)) {
-            for row in dailyRows where byDay[row.day] == nil {
-                if let value = Self.dailyColumn(key: candidate.key, day: row) { byDay[row.day] = value }
-            }
+        for row in dailyRows where byDay[row.day] == nil {
+            if let value = Self.dailyColumn(key: key, day: row) { byDay[row.day] = value }
         }
         return byDay.keys.sorted().compactMap { day in byDay[day].map { (day, $0) } }
     }
@@ -2444,27 +2612,42 @@ final class Repository: ObservableObject {
         let from = fullHistory ? "0000-01-01" : Self.dayString(now.addingTimeInterval(-Double(days) * 86_400))
         let to = fullHistory ? "9999-12-31" : Self.dayString(now.addingTimeInterval(86_400))
 
-        // day → value, lowest-priority source first; higher-priority sources overwrite per day so a
-        // real import always wins over the computed strap value.
-        var byDay: [String: Double] = [:]
-
         // Layer 3 (lowest): merged daily column for keys that have one. `self.days` is the published
-        // imported ∪ computed daily cache (parameter `days` is the lookback window, not this).
-        for d in self.days where byDay[d.day] == nil {
-            if let v = Self.dailyColumn(key: key, day: d) { byDay[d.day] = v }
-        }
+        // imported ∪ computed daily cache (parameter `days` is the lookback window, not this). Copied out
+        // HERE, before the reads, which is the moment the inline fold used to read it.
+        let mergedDays = self.days
         // Layer 2: computed metricSeries (covers sleep_performance, which has no daily column). UNION the
         // active strap's computed sibling + the canonical computed sibling (canonical first so the active
         // strap's value, applied last, wins per day).
+        var overwriteLayers: [[MetricPoint]] = []
         for id in computedReadIds.reversed() {
-            for p in (try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [] { byDay[p.day] = p.value }
+            overwriteLayers.append((try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [])
         }
         // Layer 1 (highest): the imported export's metricSeries. UNION active strap + canonical (canonical
         // first so the active strap's value wins per day).
         for id in importedReadIds.reversed() {
-            for p in (try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [] { byDay[p.day] = p.value }
+            overwriteLayers.append((try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [])
         }
 
+        // The layered fold walks the whole daily cache and every layer, and Explore runs it for each of
+        // ~60 metrics, so it runs OFF the main actor (main-thread hitch).
+        return await Task.detached(priority: .utility) { [overwriteLayers] in
+            Self.exploreLayered(key: key, mergedDays: mergedDays, overwriteLayers: overwriteLayers)
+        }.value
+    }
+
+    /// The pure fold behind the strap branch of `exploreSeries`, unchanged from the inline version: day →
+    /// value, the merged daily column first (first row per day), then each layer in order overwriting per
+    /// day so a real import always wins over the computed strap value; ascending, one skin-temp scale.
+    nonisolated static func exploreLayered(key: String, mergedDays: [DailyMetric],
+                                           overwriteLayers: [[MetricPoint]]) -> [(day: String, value: Double)] {
+        var byDay: [String: Double] = [:]
+        for d in mergedDays where byDay[d.day] == nil {
+            if let v = Self.dailyColumn(key: key, day: d) { byDay[d.day] = v }
+        }
+        for layer in overwriteLayers {
+            for p in layer { byDay[p.day] = p.value }
+        }
         return Self.oneSkinTempScale(key: key, byDay.sorted { $0.key < $1.key }.map { (day: $0.key, value: $0.value) })
     }
 
@@ -2480,7 +2663,7 @@ final class Repository: ObservableObject {
     /// descriptor is `my-whoop`, so the delegating path is unreachable for it — but a guard that is
     /// correct only because of a fact in another file is how this bug happened in the first place.
     /// `series(day:value:)` is ordered ascending by day, which `dominantKind` relies on.
-    private static func oneSkinTempScale(
+    nonisolated private static func oneSkinTempScale(
         key: String,
         _ series: [(day: String, value: Double)]
     ) -> [(day: String, value: Double)] {
@@ -2613,9 +2796,15 @@ final class Repository: ObservableObject {
 
         // The merged daily column, which `exploreSeries` layers under the WHOOP series, is handled by the
         // pure half below: in-memory over the already-published `days`, with `contains` short-circuiting
-        // on the first day that carries the key — nothing like the 60 full merges it replaces.
-        return Self.nonEmptyMetricIDs(catalog, keysBySource: keysBySource, days: days,
-                                      whoopSource: canonicalDeviceId)
+        // on the first day that carries the key — nothing like the 60 full merges it replaces. A metric with
+        // no daily column still walks every day, so the pass runs OFF the main actor (main-thread hitch),
+        // over the `days` and source id read here, where the inline call read them.
+        let mergedDays = days
+        let whoopSource = canonicalDeviceId
+        return await Task.detached(priority: .utility) { [keysBySource] in
+            Self.nonEmptyMetricIDs(catalog, keysBySource: keysBySource, days: mergedDays,
+                                   whoopSource: whoopSource)
+        }.value
     }
 
     /// The decision itself, split out from the queries so it is testable with no store and no app: given
@@ -2660,7 +2849,11 @@ final class Repository: ObservableObject {
         for id in importedReadIds { imported += (try? await store.journalEntries(deviceId: id, from: from, to: to)) ?? [] }
         let native = (try? await store.journalEntries(deviceId: Self.journalDeviceId,
                                                       from: from, to: to)) ?? []
-        return Self.mergeJournal(imported: imported, native: native)
+        // A long WHOOP export is tens of thousands of journal rows; the keyed union + sort runs OFF the
+        // main actor (main-thread hitch).
+        return await Task.detached(priority: .utility) { [imported] in
+            Self.mergeJournal(imported: imported, native: native)
+        }.value
     }
 
     /// Imported journal rows only (used by the logging card to adopt the export's exact question
@@ -2777,26 +2970,43 @@ final class Repository: ObservableObject {
         for id in Self.workoutNamespaces(rawIds: rawPhysiologyReadIds(store: store)) {
             rows += (try? await store.workouts(deviceId: id, from: lo, to: hi, limit: 5000)) ?? []
         }
-        rows = Self.dedupWorkoutsByNaturalKey(rows)
-        let spans = WorkoutSource.parseDismissedSpans(dismissedDetectedSpans)
+        // The dismissed list and the trace gate are read HERE on the main actor, where they always were;
+        // the string-keyed dedup, the dismissed filter, the cross-source collapse and the sort then run OFF
+        // the main actor (main-thread hitch): up to 5000 rows per namespace across 6+ namespaces.
+        let dismissed = dismissedDetectedSpans
+        let trace = TestCentre.active(.workouts) && workoutsLog != nil
+        let collapsed = await Task.detached(priority: .utility) { [rows] in
+            Self.collapseWorkoutRows(rows, dismissedSpans: dismissed, trace: trace)
+        }.value
+        for line in collapsed.trace { emitWorkouts(line) }
+        return await reconcileWorkoutHrWithTrace(collapsed.visible, store: store)
+    }
+
+    /// The pure middle of `workoutRows`, unchanged from the inline version, newest first. `trace` selects
+    /// the Workouts & GPS test-mode dedup twin, whose kept list is BYTE-IDENTICAL to `dedupCrossSource`
+    /// and which adds a trace line per collapsed cross-source pair; the caller emits those lines.
+    nonisolated static func collapseWorkoutRows(_ unionRows: [WorkoutRow], dismissedSpans: [String],
+                                                trace: Bool) -> (visible: [WorkoutRow], trace: [String]) {
+        let rows = dedupWorkoutsByNaturalKey(unionRows)
+        let spans = WorkoutSource.parseDismissedSpans(dismissedSpans)
         // #687: collapse the SAME activity tracked live under the strap AND imported from Health Connect /
         // Apple Health into one richer entry , they sit under different sources so without this they show
         // as two sessions. Dedup runs on the dismissed-filtered set, before the final newest-first sort.
         let filtered = rows.filter { !WorkoutSource.isDismissed($0, spans: spans) }
         // Workouts & GPS test mode: when on, run the dedup twin which returns the BYTE-IDENTICAL kept list
         // plus a trace line per collapsed cross-source pair, tagged `.workouts`. Zero-cost when off (the gate
-        // is one UserDefaults bool read inside emitWorkouts), and the kept list equals dedupCrossSource(...)
+        // is one UserDefaults bool read the caller makes), and the kept list equals dedupCrossSource(...)
         // exactly, so the workout list the screen shows is unchanged.
         let deduped: [WorkoutRow]
-        if TestCentre.active(.workouts), workoutsLog != nil {
-            let (kept, trace) = WorkoutSource.dedupCrossSourceTrace(filtered)
-            for line in trace { emitWorkouts(line) }
+        var lines: [String] = []
+        if trace {
+            let (kept, traceLines) = WorkoutSource.dedupCrossSourceTrace(filtered)
+            lines = traceLines
             deduped = kept
         } else {
             deduped = WorkoutSource.dedupCrossSource(filtered)
         }
-        let visible = deduped.sorted { $0.startTs > $1.startTs }
-        return await reconcileWorkoutHrWithTrace(visible, store: store)
+        return (deduped.sorted { $0.startTs > $1.startTs }, lines)
     }
 
     /// DISPLAY-ONLY: reconcile each workout's shown Avg/Max HR with the strap trace that actually drives
