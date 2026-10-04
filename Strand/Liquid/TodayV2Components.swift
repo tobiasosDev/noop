@@ -457,12 +457,29 @@ struct TodaySegmentedAreaChart: View {
     /// Where value `index` is drawn: evenly spaced across the width, scaled into the series' own extent
     /// with 2 units of headroom either side. Shared with scrub readouts so a crosshair lands on the line.
     static func point(index: Int, values: [Double], size: CGSize) -> CGPoint {
-        let lo = (values.min() ?? 0) - 2
-        let hi = (values.max() ?? 1) + 2
-        let span = max(hi - lo, 1)
+        point(index: index, values: values, size: size, extent: Extent(values))
+    }
+
+    /// The series' vertical extent (the low edge and the span, headroom included), resolved ONCE per draw.
+    /// `point` used to take `min()` and `max()` of the whole series for every point it placed, so drawing a
+    /// day trace cost O(n²) on the main thread on every render of the card.
+    struct Extent {
+        let lo: Double
+        let span: Double
+
+        init(_ values: [Double]) {
+            let lo = (values.min() ?? 0) - 2
+            let hi = (values.max() ?? 1) + 2
+            self.lo = lo
+            self.span = max(hi - lo, 1)
+        }
+    }
+
+    /// `point(index:values:size:)` against an extent the caller already resolved for this series.
+    static func point(index: Int, values: [Double], size: CGSize, extent: Extent) -> CGPoint {
         let n = max(values.count - 1, 1)
         return CGPoint(x: size.width * CGFloat(index) / CGFloat(n),
-                       y: size.height * (1 - CGFloat((values[index] - lo) / span)))
+                       y: size.height * (1 - CGFloat((values[index] - extent.lo) / extent.span)))
     }
 
     /// The index drawn nearest to `x`.
@@ -475,7 +492,10 @@ struct TodaySegmentedAreaChart: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
-            let point: (Int) -> CGPoint = { i in Self.point(index: i, values: values, size: geo.size) }
+            let extent = Extent(values)
+            let point: (Int) -> CGPoint = { i in
+                Self.point(index: i, values: values, size: geo.size, extent: extent)
+            }
             ZStack {
                 ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
                     if run.count >= 2 {

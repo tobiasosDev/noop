@@ -65,6 +65,10 @@ struct TrendsView: View {
     /// Measured width of the heat calendar, so a year of week columns fits the card exactly.
     @State private var heatWidth: CGFloat = 314
 
+    /// The history-wide derivations `body` reads, kept between passes (see `TrendsMemo`). A reference
+    /// held in `@State`, so filling it during `body` invalidates nothing.
+    @State private var memo = TrendsMemo()
+
     // Effort display scale (#268) — routes the Effort small-multiple's numbers + unit. Display-only.
     @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
     // Trend chart style (line vs bar) — display-only; flips every trend card between the gradient line
@@ -108,13 +112,25 @@ struct TrendsView: View {
         var caption: String
     }
 
-    private func resolve(_ value: (DailyMetric) -> Double?) -> ResolvedMetric {
+    /// The identity of the history every memoized derivation reads. `repo.days` is only reassigned by
+    /// `Repository.refresh`, which bumps `refreshSeq` in the same main-actor turn, so (repository,
+    /// refreshSeq) moves whenever the rows do. The count also covers a direct assignment (the previews).
+    private var daysToken: TrendsDaysToken {
+        TrendsDaysToken(repo: ObjectIdentifier(repo), refreshSeq: repo.refreshSeq, count: repo.days.count)
+    }
+
+    private func resolve(_ slot: TrendsMemo.Slot, _ value: (DailyMetric) -> Double?) -> ResolvedMetric {
         // Find the smallest range ≥ selected whose window has ≥1 point, keeping
         // that window's points so we don't re-filter to read them back.
         // The windowing lives in `HostedTrendData` so the Today host cards resolve EXACTLY as this tab
         // does. Shared rather than copied: the widening fallback is what a wearer with two weeks of
         // history depends on, and a second implementation would drift the moment either side was tuned.
-        let r = HostedTrendData.resolve(days: repo.days, selected: range, value: value)
+        // Memoized per (data, range, local day): the window is anchored on today's local day and the
+        // points parse every day string in it, so this only runs again when one of those changes.
+        let selected = range
+        let r = memo.value(slot, key: [daysToken, selected, Repository.localDayKey(Date())] as [AnyHashable]) {
+            TrendsResolvedWindow(HostedTrendData.resolve(days: repo.days, selected: selected, value: value))
+        }
         return ResolvedMetric(points: r.points, effective: r.effective,
                               widened: r.effective != range,
                               caption: caption(count: r.points.count, eff: r.effective))
@@ -180,10 +196,10 @@ struct TrendsView: View {
             } else {
                 // Resolve each metric's window ONCE per body and pass the results down, instead of
                 // re-filtering repo.days in every section on every render.
-                let recovery = resolve { $0.recovery }
-                let hrv = resolve { $0.avgHrv }
-                let rhr = resolve { $0.restingHr.map(Double.init) }
-                let strain = resolve { $0.strain }
+                let recovery = resolve(.recovery) { $0.recovery }
+                let hrv = resolve(.hrv) { $0.avgHrv }
+                let rhr = resolve(.rhr) { $0.restingHr.map(Double.init) }
+                let strain = resolve(.strain) { $0.strain }
                 // Week-in-review recap (#208) with prev/next week browsing (#710).
                 weeklyDigestCard
                 weekGridCard
@@ -224,10 +240,22 @@ struct TrendsView: View {
     /// and this week. Beyond that there's no data to digest, so the back chevron disables. 0 when history
     /// is empty or unparseable (so we stay on this week).
     private var minWeekOffset: Int {
+        // Memoized per (earliest day, today): the walk below formats one day string per week of history,
+        // and the pager reads this on every body pass.
+        let earliest = earliestDay
+        let today = Repository.localDayKey(Date())
+        return memo.value(.minWeekOffset, key: [earliest, today] as [AnyHashable]) {
+            Self.computeMinWeekOffset(earliest: earliest, today: today)
+        }
+    }
+
+    /// The walk behind `minWeekOffset`. Internal (not private) so StrandTests can pin it against the
+    /// pre-memo computation.
+    static func computeMinWeekOffset(earliest: String?, today: String) -> Int {
         guard
-            let earliest = earliestDay,
+            let earliest,
             let earliestMon = WeeklyDigestEngine.mondayOfWeek(containing: earliest),
-            let thisMon = WeeklyDigestEngine.mondayOfWeek(containing: Repository.localDayKey(Date()))
+            let thisMon = WeeklyDigestEngine.mondayOfWeek(containing: today)
         else { return 0 }
         // Walk weeks back from this Monday until we pass the earliest week. Bounded by history length.
         var off = 0
@@ -256,7 +284,13 @@ struct TrendsView: View {
     /// builder the standalone digest uses) so past weeks render in the identical format. An empty PAST
     /// week still shows the pager so the wearer can step to a week that does hold data.
     private var weeklyDigestCard: some View {
-        let digest = WeeklyDigestSource.digest(from: repo.days, anchorDay: weekAnchorDay)
+        // Memoized per (data, week, Effort scale): the digest walks the whole history and recomputes the
+        // Rest composite for every day. The scale factor is read here, as the default argument read it.
+        let anchor = weekAnchorDay
+        let factor = UnitPrefs.currentEffortDisplayFactor()
+        let digest = memo.value(.digest, key: [daysToken, anchor, factor] as [AnyHashable]) {
+            WeeklyDigestSource.digest(from: repo.days, anchorDay: anchor, effortDisplayFactor: factor)
+        }
         return NoopCard {
             VStack(alignment: .leading, spacing: 0) {
                 // Longer languages do not fit the pager, the day count and the labelled share chip on one
@@ -374,8 +408,11 @@ struct TrendsView: View {
         let monday = WeeklyDigestEngine.mondayOfWeek(containing: weekAnchorDay) ?? weekAnchorDay
         let keys = (0..<7).map { WeeklyDigestEngine.addDays(monday, $0) }
         let today = Repository.localDayKey(Date())
-        let byDay = Dictionary(repo.days.filter { $0.day >= keys[0] && $0.day <= keys[6] }.map { ($0.day, $0) },
-                               uniquingKeysWith: { _, last in last })
+        // Memoized per (data, week): the filter walks the whole history for seven rows.
+        let byDay = memo.value(.weekDays, key: [daysToken, keys[0]] as [AnyHashable]) {
+            Dictionary(repo.days.filter { $0.day >= keys[0] && $0.day <= keys[6] }.map { ($0.day, $0) },
+                       uniquingKeysWith: { _, last in last })
+        }
         func row(_ label: String, _ value: (String) -> Double?, _ text: (Double) -> String) -> TrendsWeekRow {
             TrendsWeekRow(label: label, cells: keys.map { k in
                 let v = k <= today ? value(k) : nil
@@ -440,11 +477,16 @@ struct TrendsView: View {
     private func comparisonLine(_ r: Range, mean avg: Double?) -> String? {
         guard let n = r.days, let avg else { return nil }
         let today = Repository.localDayKey(Date())
-        let end = WeeklyDigestEngine.addDays(today, -n)
-        let start = WeeklyDigestEngine.addDays(today, -(2 * n - 1))
-        let prev = repo.days.filter { $0.day >= start && $0.day <= end }.compactMap(\.recovery)
-        guard !prev.isEmpty else { return nil }
-        let d = Int((avg - prev.reduce(0, +) / Double(prev.count)).rounded())
+        // The earlier window's mean, memoized per (data, window, local day): it filters the whole history.
+        let prevMean: Double? = memo.value(.comparison, key: [daysToken, n, today] as [AnyHashable]) {
+            let end = WeeklyDigestEngine.addDays(today, -n)
+            let start = WeeklyDigestEngine.addDays(today, -(2 * n - 1))
+            let prev = repo.days.filter { $0.day >= start && $0.day <= end }.compactMap(\.recovery)
+            guard !prev.isEmpty else { return nil }
+            return prev.reduce(0, +) / Double(prev.count)
+        }
+        guard let prevMean else { return nil }
+        let d = Int((avg - prevMean).rounded())
         if d > 0 { return String(localized: "Up \(d) on the previous \(n) days.") }
         if d < 0 { return String(localized: "Down \(abs(d)) on the previous \(n) days.") }
         return String(localized: "Level with the previous \(n) days.")
@@ -663,11 +705,17 @@ struct TrendsView: View {
     private var yearSection: some View {
         // Always show at least a full year for context; expand to all history on ALL.
         let stripDays = max(range.days ?? repo.days.count, 365)
-        let recent = repo.days.suffix(stripDays)
-        let recoveryDays: [RecoveryDay] = recent.compactMap { d in
-            guard let dt = date(d.day) else { return nil }
-            return RecoveryDay(date: dt, score: d.recovery)
+        // Memoized per (data, strip length): parsing 365-4000 day strings and grouping them by month ran
+        // on every body pass, the "lazy" column notwithstanding, since this section is built eagerly.
+        let year = memo.value(.year, key: [daysToken, stripDays] as [AnyHashable]) { () -> TrendsYearData in
+            let recent = repo.days.suffix(stripDays)
+            let recoveryDays: [RecoveryDay] = recent.compactMap { d in
+                guard let dt = date(d.day) else { return nil }
+                return RecoveryDay(date: dt, score: d.recovery)
+            }
+            return TrendsYearData(recoveryDays: recoveryDays, months: Self.strongestAndWeakestMonths(recent))
         }
+        let recoveryDays = year.recoveryDays
         let span: String? = {
             guard let a = recoveryDays.first?.date, let b = recoveryDays.last?.date else { return nil }
             return "\(TrendsDayFormat.monthYear(a)) – \(TrendsDayFormat.monthYear(b))"
@@ -682,9 +730,9 @@ struct TrendsView: View {
                         .foregroundStyle(StrandPalette.textTertiary)
                         .frame(maxWidth: .infinity, minHeight: 80)
                 } else {
-                    heatCalendar(recoveryDays)
+                    heatCalendar(recoveryDays, stripDays: stripDays)
                     heatLegend.padding(.top, 14)
-                    if let line = strongestMonthLine(recent) {
+                    if let line = Self.strongestMonthLine(year.months) {
                         NoopInsightRow(verbatim: line)
                             .padding(.top, 14)
                             .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
@@ -695,11 +743,15 @@ struct TrendsView: View {
         }
     }
 
-    private func heatCalendar(_ days: [RecoveryDay]) -> some View {
+    private func heatCalendar(_ days: [RecoveryDay], stripDays: Int) -> some View {
         let weeks = days.count / 7 + 2
         let cell = heatCell(weeks: weeks)
-        let strip = YearHeatStrip(days: days, cellSize: cell, spacing: 1, showsMonthLabels: true,
-                                  style: .v2)
+        // The strip lays out its week columns in `init` (two calendar lookups per day); keep the built value
+        // per (data, strip length, cell size) so a body pass reuses it instead of laying it out again.
+        let strip = memo.value(.heatStrip, key: [daysToken, stripDays, cell] as [AnyHashable]) {
+            YearHeatStrip(days: days, cellSize: cell, spacing: 1, showsMonthLabels: true,
+                          style: .v2)
+        }
         return Group {
             if CGFloat(weeks) * (cell + 1) > heatWidth + 8 {
                 // All history: a fixed cell size, scrolled to the latest weeks.
@@ -749,20 +801,30 @@ struct TrendsView: View {
 
     /// The strongest and weakest calendar months in the strip, by mean Charge, with how many of their
     /// days reached PRIMED or better. Needs two months with at least ten scored days each.
-    private func strongestMonthLine(_ days: ArraySlice<DailyMetric>) -> String? {
+    static func strongestMonthLine(_ months: TrendsMonthPair?) -> String? {
+        guard let months,
+              let bestDate = TrendsDayFormat.date(months.best.key + "-01"),
+              let worstDate = TrendsDayFormat.date(months.worst.key + "-01") else { return nil }
+        let best = months.best, worst = months.worst
+        let bestName = TrendsDayFormat.monthName(bestDate), worstName = TrendsDayFormat.monthName(worstDate)
+        return String(localized: "\(bestName) was your strongest month: \(best.primed) of \(best.n) days primed or better, against \(worst.primed) of \(worst.n) in \(worstName).")
+    }
+
+    /// The month statistics behind `strongestMonthLine`, split from its wording so the history walk can be
+    /// memoized with the year strip while the sentence is still formatted per pass in the app language.
+    /// Internal (not private), with `strongestMonthLine`, so StrandTests can pin the pair against the
+    /// single function they replaced.
+    static func strongestAndWeakestMonths(_ days: ArraySlice<DailyMetric>) -> TrendsMonthPair? {
         var byMonth: [String: [Double]] = [:]
         for d in days { if let r = d.recovery { byMonth[String(d.day.prefix(7)), default: []].append(r) } }
         let months = byMonth.filter { $0.value.count >= 10 }
-            .map { (key: $0.key, mean: $0.value.reduce(0, +) / Double($0.value.count),
-                    n: $0.value.count, primed: $0.value.filter { $0 >= 70 }.count) }
+            .map { TrendsMonthStat(key: $0.key, mean: $0.value.reduce(0, +) / Double($0.value.count),
+                                   n: $0.value.count, primed: $0.value.filter { $0 >= 70 }.count) }
         guard months.count >= 2,
               let best = months.max(by: { $0.mean < $1.mean }),
               let worst = months.min(by: { $0.mean < $1.mean }),
-              best.key != worst.key,
-              let bestDate = TrendsDayFormat.date(best.key + "-01"),
-              let worstDate = TrendsDayFormat.date(worst.key + "-01") else { return nil }
-        let bestName = TrendsDayFormat.monthName(bestDate), worstName = TrendsDayFormat.monthName(worstDate)
-        return String(localized: "\(bestName) was your strongest month: \(best.primed) of \(best.n) days primed or better, against \(worst.primed) of \(worst.n) in \(worstName).")
+              best.key != worst.key else { return nil }
+        return TrendsMonthPair(best: best, worst: worst)
     }
 
     // MARK: Export + footer
@@ -779,7 +841,9 @@ struct TrendsView: View {
     }
 
     private var historyFooter: some View {
-        let nights = repo.days.reduce(0) { $0 + (($1.totalSleepMin ?? 0) > 0 ? 1 : 0) }
+        let nights = memo.value(.nights, key: daysToken) {
+            repo.days.reduce(0) { $0 + (($1.totalSleepMin ?? 0) > 0 ? 1 : 0) }
+        }
         return Text("Computed on \(Platform.deviceNounPhrase) · \(nights) nights of history")
             .font(StrandFont.footnote)
             .foregroundStyle(StrandPalette.textTertiary)
@@ -787,6 +851,71 @@ struct TrendsView: View {
             .multilineTextAlignment(.center)
             .padding(.top, 8)
     }
+}
+
+// MARK: - Body-pass memo
+
+/// Keeps TrendsView's history-wide derivations between body passes.
+///
+/// The body re-runs on every `Repository` publish (a sync publishes many times), and every section is
+/// built eagerly even in the lazy column, so each pass used to re-run four trend-window resolves (each
+/// parsing every day string in its window), the weekly digest over the whole history, the year strip's
+/// 365-4000 date parses and week layout, and several full-history filters: a main-thread hitch while
+/// scrolling during a sync. Each slot keeps its most recent result together with the key it was computed
+/// for, and recomputes when the key differs. The keys carry every input the computation reads, so a
+/// hit returns exactly what a fresh computation would. A plain class held in `@State`: filling it during
+/// `body` writes no observed state.
+private final class TrendsMemo {
+    enum Slot: Hashable {
+        case recovery, hrv, rhr, strain, digest, weekDays, minWeekOffset, comparison, year, heatStrip, nights
+    }
+
+    private var entries: [Slot: (key: AnyHashable, value: Any)] = [:]
+
+    func value<Key: Hashable, Value>(_ slot: Slot, key: Key, _ make: () -> Value) -> Value {
+        let boxed = AnyHashable(key)
+        if let entry = entries[slot], entry.key == boxed, let hit = entry.value as? Value { return hit }
+        let made = make()
+        entries[slot] = (boxed, made)
+        return made
+    }
+}
+
+/// See `TrendsView.daysToken`.
+private struct TrendsDaysToken: Hashable {
+    let repo: ObjectIdentifier
+    let refreshSeq: Int
+    let count: Int
+}
+
+/// `HostedTrendData.resolve`'s result, as a named type the memo can hold.
+private struct TrendsResolvedWindow {
+    let points: [TrendPoint]
+    let effective: TrendsView.Range
+    init(_ r: (points: [TrendPoint], effective: TrendsView.Range)) {
+        points = r.points
+        effective = r.effective
+    }
+}
+
+/// The year section's parsed days and month statistics.
+private struct TrendsYearData {
+    let recoveryDays: [RecoveryDay]
+    let months: TrendsMonthPair?
+}
+
+/// One calendar month's Charge summary for the strongest-month line.
+struct TrendsMonthStat {
+    let key: String
+    let mean: Double
+    let n: Int
+    let primed: Int
+}
+
+/// The strongest and weakest months, as `strongestAndWeakestMonths` picked them.
+struct TrendsMonthPair {
+    let best: TrendsMonthStat
+    let worst: TrendsMonthStat
 }
 
 #if DEBUG

@@ -12,7 +12,9 @@ import SwiftUI
 
 /// A day's recovery datum for the heat strip.
 public struct RecoveryDay: Identifiable, Sendable {
-    public let id = UUID()
+    /// The day itself. Stable across inits: the old `UUID()` was regenerated every time the Trends body
+    /// rebuilt its 365-4000 days, which also made two identical strips never compare equal.
+    public var id: Date { date }
     public var date: Date
     /// Recovery 0...100, or nil if no data for that day.
     public var score: Double?
@@ -75,12 +77,24 @@ public struct YearHeatStrip: View {
     /// The v2 Charge ramp, five steps on the recovery-state bands (DEPLETED · LOW · MODERATE · PRIMED · PEAK).
     public static func v2Color(_ score: Double) -> Color {
         switch score {
-        case ..<25: return Color(light: "#D9D8D4", dark: "#232328")
-        case ..<50: return Color(light: "#BFDCCB", dark: "#20402F")
-        case ..<70: return Color(light: "#8CC7A4", dark: "#27603F")
-        case ..<88: return Color(light: "#4FAE76", dark: "#349055")
-        default:    return Color(light: "#2E9A5E", dark: "#56D08A")
+        case ..<25: return V2Ramp.depleted
+        case ..<50: return V2Ramp.low
+        case ..<70: return V2Ramp.moderate
+        case ..<88: return V2Ramp.primed
+        default:    return V2Ramp.peak
         }
+    }
+
+    // The five ramp colours, built once. `v2Color` runs per cell per body pass (365 cells, thousands on
+    // "All history"), and each `Color(light:dark:)` parses two hex strings and allocates a new dynamic
+    // provider that never compares equal to the previous pass's, so the old per-call construction was
+    // main-thread work on every Trends pass. Same hexes, same dynamic light/dark resolution.
+    private enum V2Ramp {
+        static let depleted = Color(light: "#D9D8D4", dark: "#232328")
+        static let low = Color(light: "#BFDCCB", dark: "#20402F")
+        static let moderate = Color(light: "#8CC7A4", dark: "#27603F")
+        static let primed = Color(light: "#4FAE76", dark: "#349055")
+        static let peak = Color(light: "#2E9A5E", dark: "#56D08A")
     }
 
     /// The outline of a day that exists in the history but carries no Charge (strap not worn).
@@ -100,8 +114,10 @@ public struct YearHeatStrip: View {
     }()
 
     // Group days into week columns. weekday 0 = Monday ... 6 = Sunday.
+    // `id` is the column index, assigned in `buildWeeks`. It was `UUID()`, regenerated on every init, so
+    // each Trends pass tore down and rebuilt every column and cell (~371, thousands on "All history").
     private struct Week: Identifiable {
-        let id = UUID()
+        var id: Int
         var cells: [RecoveryDay?] // length 7, indexed by weekday row
         var monthLabel: String?
     }
@@ -111,7 +127,7 @@ public struct YearHeatStrip: View {
     private static func buildWeeks(from days: [RecoveryDay]) -> [Week] {
         guard let first = days.first?.date else { return [] }
         var weeks: [Week] = []
-        var current = Week(cells: Array(repeating: nil, count: 7), monthLabel: nil)
+        var current = Week(id: 0, cells: Array(repeating: nil, count: 7), monthLabel: nil)
         var lastMonth = -1
         // Pad the first week so the first day lands on its weekday row.
         let firstRow = weekdayRow(first)
@@ -122,7 +138,7 @@ public struct YearHeatStrip: View {
             let row = weekdayRow(day.date)
             if row == 0 && filledThisWeek > 0 {
                 weeks.append(current)
-                current = Week(cells: Array(repeating: nil, count: 7), monthLabel: nil)
+                current = Week(id: weeks.count, cells: Array(repeating: nil, count: 7), monthLabel: nil)
                 filledThisWeek = 0
             }
             current.cells[row] = day

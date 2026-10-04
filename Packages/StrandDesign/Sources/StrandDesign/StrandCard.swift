@@ -62,22 +62,23 @@ public struct StrandCard<Content: View>: View {
     public var padding: CGFloat
     public var cornerRadius: CGFloat
     public var tint: Color?
-    @ViewBuilder public var content: () -> Content
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    public var content: Content
 
     public init(
         padding: CGFloat = 16,
         cornerRadius: CGFloat = 22,
         tint: Color? = nil,
-        @ViewBuilder content: @escaping () -> Content
+        @ViewBuilder content: () -> Content
     ) {
         self.padding = padding
         self.cornerRadius = cornerRadius
         self.tint = tint
-        self.content = content
+        self.content = content()
     }
 
     public var body: some View {
-        content()
+        content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frostedCardSurface(tint: tint, cornerRadius: cornerRadius)

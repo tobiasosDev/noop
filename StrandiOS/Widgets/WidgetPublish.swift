@@ -42,6 +42,9 @@ extension WidgetSnapshot {
     @MainActor
     static func publish(from model: AppModel) async {
         await refreshWidgetPresence()
+        // Everything below reads the caches as they are now, so a `refreshSeq` request still waiting in the
+        // coalescer is covered by this build and would only repeat it.
+        refreshCoalescer.satisfyPending()
         let days = model.repo.days
         let now = Date()
         // The recovery-derived anchor: today's row when it's scored, else the freshest STRICTLY-PRIOR
@@ -117,6 +120,20 @@ extension WidgetSnapshot {
             stressDay: stress?.day ?? storedStress?.stressDay
         )
         saveAndReloadIfChanged(snap)
+    }
+
+    /// The coalescer behind `requestPublish`. Two seconds: long enough to span what follows a re-score's
+    /// `refreshSeq` bump in the post-sync cascade (its trailing refresh and the v5 signals) before the
+    /// cascade's own publish absorbs the request, and short against the widget's own 15-minute timeline.
+    @MainActor
+    static let refreshCoalescer = WidgetPublishCoalescer(delayNanoseconds: 2_000_000_000)
+
+    /// A full publish for a dashboard-cache change (`refreshSeq`), coalesced: see `WidgetPublishCoalescer`.
+    /// A post-sync cascade bumps `refreshSeq` and then publishes itself, so publishing here at once built
+    /// the same snapshot twice per sync, `exploreSeries` and the stress curve included.
+    @MainActor
+    static func requestPublish(from model: AppModel) {
+        refreshCoalescer.request { await publish(from: model) }
     }
 
     /// Publish fields that come directly from the live BLE state without re-reading the Rest metric

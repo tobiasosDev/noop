@@ -5,6 +5,10 @@ import UserNotifications
 @main
 struct StrandApp: App {
     init() {
+        // Main-thread hitch: load the Phosphor icon table and register the bundled fonts on a background
+        // queue rather than inside the first render that needs them (see StrandiOSApp.init).
+        PhIcon.prewarm()
+        NoopFonts.prewarm()
         // #1008: pin the pre-change Overnight-only default for existing installs before
         // anything reads it. Idempotent; a no-op on fresh installs and after the first launch.
         PuffinExperiment.migrateContinuousHrvOvernightDefault()

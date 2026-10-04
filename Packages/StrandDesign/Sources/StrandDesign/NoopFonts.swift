@@ -37,6 +37,21 @@ public enum NoopFonts {
         _ = registration
     }
 
+    /// Registers the bundled fonts on a background queue, so the first text drawn on screen does not
+    /// pay the registration (two `CTFontManagerRegisterFontsForURL` calls plus the descriptor reads) on
+    /// the main thread. Call once at launch; further calls do nothing, and it returns immediately.
+    /// CoreText registration is thread-safe, and `registration` is a static stored property, so Swift
+    /// runs it exactly once: a main-thread caller that arrives first registers as before, and one that
+    /// arrives during the background run waits for that single run. The resulting fonts are identical.
+    public static func prewarm() {
+        _ = prewarmOnce
+    }
+
+    /// Swift runs a static stored property's initialiser exactly once, thread-safely.
+    private static let prewarmOnce: Void = {
+        DispatchQueue.global(qos: .userInitiated).async { registerIfNeeded() }
+    }()
+
     /// True when `face` is registered and resolves to the bundled font rather than a fallback.
     public static func isAvailable(_ face: NoopFontFace) -> Bool {
         registration[face] != nil
@@ -48,8 +63,17 @@ public enum NoopFonts {
     /// system font of the same size if the bundled font is unavailable; never traps.
     public static func ctFont(_ face: NoopFontFace, size: CGFloat, weight: CGFloat,
                               round: CGFloat = 100, tabular: Bool = false) -> CTFont {
-        let key = CacheKey(face: face, size: size, weight: clamp(weight, 100, 900),
-                           round: face == .dot ? clamp(round, 0, 100) : 0, tabular: tabular)
+        ctFont(cacheKey(face, size: size, weight: weight, round: round, tabular: tabular))
+    }
+
+    /// The cache key for an argument set: weight clamped to the axis, roundness only for `.dot`.
+    private static func cacheKey(_ face: NoopFontFace, size: CGFloat, weight: CGFloat,
+                                 round: CGFloat, tabular: Bool) -> CacheKey {
+        CacheKey(face: face, size: size, weight: clamp(weight, 100, 900),
+                 round: face == .dot ? clamp(round, 0, 100) : 0, tabular: tabular)
+    }
+
+    private static func ctFont(_ key: CacheKey) -> CTFont {
         cacheLock.lock()
         if let hit = cache[key] {
             cacheLock.unlock()
@@ -66,11 +90,29 @@ public enum NoopFonts {
 
     /// A SwiftUI font for `face`. With `relativeTo`, the point size follows Dynamic Type for that
     /// text style where UIKit's font metrics exist (iOS, watchOS); macOS uses `size` as given.
+    ///
+    /// Every v2 text style resolves through here on every body pass, so the `Font` is cached too, keyed
+    /// on the SCALED size: the Dynamic Type category is folded into the key by `scaledSize`, which still
+    /// runs per call, so a category change lands on a different key. A hit returns the same `Font` value
+    /// that wraps the same cached `CTFont`, so the rendered font is identical, and every pass hands
+    /// SwiftUI the same `Font` instead of a freshly built one per text.
     public static func font(_ face: NoopFontFace, size: CGFloat, weight: CGFloat,
                             round: CGFloat = 100, relativeTo style: Font.TextStyle? = nil,
                             tabular: Bool = false) -> Font {
-        Font(ctFont(face, size: scaledSize(size, relativeTo: style),
-                    weight: weight, round: round, tabular: tabular))
+        let key = cacheKey(face, size: scaledSize(size, relativeTo: style),
+                           weight: weight, round: round, tabular: tabular)
+        cacheLock.lock()
+        if let hit = fontCache[key] {
+            cacheLock.unlock()
+            return hit
+        }
+        cacheLock.unlock()
+
+        let made = Font(ctFont(key))
+        cacheLock.lock()
+        fontCache[key] = made
+        cacheLock.unlock()
+        return made
     }
 
     /// Hanken Grotesk at `size`, light (300) by default. Its default figures are already tabular,
@@ -145,6 +187,8 @@ public enum NoopFonts {
 
     private static let cacheLock = NSLock()
     private static var cache: [CacheKey: CTFont] = [:]
+    /// The SwiftUI wrapper per key, guarded by `cacheLock` (see `font`).
+    private static var fontCache: [CacheKey: Font] = [:]
 
     private static func make(_ key: CacheKey) -> CTFont {
         guard let base = registration[key.face] else {
@@ -199,13 +243,23 @@ public enum NoopFonts {
     private static func scaledSize(_ size: CGFloat, relativeTo style: Font.TextStyle?) -> CGFloat {
         #if canImport(UIKit)
         guard let style else { return size }
-        return UIFontMetrics(forTextStyle: uiTextStyle(style)).scaledValue(for: size)
+        return metrics[uiTextStyle(style)]?.scaledValue(for: size)
+            ?? UIFontMetrics(forTextStyle: uiTextStyle(style)).scaledValue(for: size)
         #else
         return size
         #endif
     }
 
     #if canImport(UIKit)
+    /// One `UIFontMetrics` per text style, built once instead of per call. A metrics object holds only
+    /// its text style; `scaledValue(for:)` reads the current content size category on every call, so a
+    /// Dynamic Type change still scales immediately. Covers every style `uiTextStyle` returns.
+    private static let metrics: [UIFont.TextStyle: UIFontMetrics] = {
+        let styles: [UIFont.TextStyle] = [.largeTitle, .title1, .title2, .title3, .headline, .subheadline,
+                                          .body, .callout, .footnote, .caption1, .caption2]
+        return Dictionary(uniqueKeysWithValues: styles.map { ($0, UIFontMetrics(forTextStyle: $0)) })
+    }()
+
     private static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
         switch style {
         case .largeTitle: return .largeTitle

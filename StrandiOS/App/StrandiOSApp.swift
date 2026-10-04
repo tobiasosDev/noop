@@ -52,6 +52,12 @@ struct StrandiOSApp: App {
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
 
     init() {
+        // Main-thread hitch: the first PhIcon body decoded the 1.26 MB phosphor.json and the first v2 text
+        // registered the bundled fonts, both on the main thread mid-render. Start both on a background
+        // queue now; a view that renders before they finish still loads them itself, so this only moves
+        // the cost, never the result.
+        PhIcon.prewarm()
+        NoopFonts.prewarm()
         // #1008: pin the pre-change Overnight-only default for existing installs before
         // anything reads it. Idempotent; a no-op on fresh installs and after the first launch.
         PuffinExperiment.migrateContinuousHrvOvernightDefault()
@@ -271,9 +277,14 @@ struct StrandiOSApp: App {
                 // foreground gate: publish only while .active (foreground-initiated reloads are budget
                 // exempt); a background bump is covered by the widget's own 15-minute timeline policy and
                 // by the .active republish on return.
+                // COALESCED: a sync bumps the seq from inside its re-score and then publishes on its own
+                // (AppModel.refreshAfterCompletedBackfill), and so do the foreground and deferred-rescore
+                // paths. Publishing here at once built the same snapshot twice, `exploreSeries` and the
+                // stress curve included, on the main actor. The request waits briefly and is dropped when
+                // one of those full publishes reads the caches first (`WidgetSnapshot.requestPublish`).
                 .onReceive(model.repo.$refreshSeq.dropFirst()) { _ in
                     guard scenePhase == .active else { return }
-                    Task { await WidgetSnapshot.publish(from: model) }
+                    WidgetSnapshot.requestPublish(from: model)
                     // The watch rides the same active-only hook because the bridge now SELF-THROTTLES
                     // (30-minute spacing + headline-change dedup, both must pass, see WatchSessionBridge),
                     // so a refresh storm can't burn the ~50/day complication transfer budget.

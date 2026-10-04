@@ -187,9 +187,12 @@ struct LiftChipFlow: Layout {
         let ls = lines(subviews, width: width)
         let height = ls.reduce(CGFloat(0)) { $0 + ($1.map(\.1.height).max() ?? 0) }
             + lineSpacing * CGFloat(max(ls.count - 1, 0))
-        let widest = ls.map { line in
-            line.reduce(CGFloat(0)) { $0 + $1.1.width } + spacing * CGFloat(max(line.count - 1, 0))
-        }.max() ?? 0
+        let lineWidths: [CGFloat] = ls.map { line in
+            let contentWidth: CGFloat = line.reduce(0) { $0 + $1.1.width }
+            let gapWidth: CGFloat = spacing * CGFloat(max(line.count - 1, 0))
+            return contentWidth + gapWidth
+        }
+        let widest: CGFloat = lineWidths.max() ?? 0
         return CGSize(width: proposal.width ?? widest, height: height)
     }
 

@@ -359,7 +359,7 @@ final class Backfiller {
 
     /// Feed one raw BLE frame into the state machine. May trigger async store operations.
     func ingest(_ frame: [UInt8]) async {
-        switch classifyHistoricalMeta(parseFrame(frame, family: family)) {
+        switch Backfiller.classifyOffloadFrame(frame, family: family) {
         case .start:
             isBackfilling = true
             chunk.removeAll(keepingCapacity: true)
@@ -373,6 +373,21 @@ final class Backfiller {
         case .other:
             if chunkOpen { chunk.append(frame) }
         }
+    }
+
+    /// `classifyHistoricalMeta(parseFrame(frame, family:))`, without the full parse for the frames that
+    /// can only classify as `.other`.
+    ///
+    /// The classifier answers `.other` for every frame whose parsed type is not METADATA, and
+    /// `frameTypeName` reads the type through the same lookup and the same INVALID guard as `parseFrame`,
+    /// so a frame it does not name METADATA is one the full parse classifies `.other` too. That is nearly
+    /// every frame of an offload, the type-47 records, whose full field decode ran here on the main actor
+    /// once per record only to be discarded (main-thread hitch); the records are decoded off the main
+    /// actor at chunk end regardless. A METADATA frame still takes the full parse, integrity verdict
+    /// included. `BackfillerClassifyOffloadFrameTests` holds this to the full parse.
+    nonisolated static func classifyOffloadFrame(_ frame: [UInt8], family: DeviceFamily) -> HistoricalMeta {
+        guard frameTypeName(frame, family: family) == "METADATA" else { return .other }
+        return classifyHistoricalMeta(parseFrame(frame, family: family))
     }
 
     /// The 8-byte `end_data` the high-freq-sync ack requires: metadata.data[10:18].
@@ -574,11 +589,76 @@ final class Backfiller {
     /// TRUE so the records following this END become the next chunk. An END with no accumulated
     /// records is still acked (it advances the strap's trim) — that's how the offload progresses.
     /// `endFrame` carries the 8-byte `end_data` the ack requires.
-    /// The pure decode result of one offload chunk, produced OFF the main actor (see finishChunk).
+    /// The pure decode result of one offload chunk, produced OFF the main actor (see finishChunk), with
+    /// everything `finishChunk` reads from the parsed records already read out of them. The parsed
+    /// records stay behind with the detached task, so their per-record field dictionaries, the bulk of a
+    /// chunk's allocations, are freed off the main actor as well (main-thread hitch).
     private struct DecodedChunk {
-        let parsed: [ParsedFrame]
         let decoded: Streams
         let rejected: [[UInt8]]
+        /// The first `hist_version` any record decoded, for the once-per-layout line.
+        let firstLayoutVersion: Int?
+        /// Whether any record decoded a signature field (heart_rate / gravity_x / ppg_waveform).
+        let anyRecordCarriesSignal: Bool
+        /// #1992: per layout version, whether ANY of its records carried a signature field.
+        let signalByVersion: [Int: Bool]
+        /// Each record's packet type, in frame order (#891's first-sighting dump).
+        let typeNames: [String]
+        /// Each record's SpO2 RE dump inputs, in frame order.
+        let spo2: [Spo2Record]
+        /// Wall seconds of every decoded R-R interval, in emission order.
+        let rrTimestamps: [Int]
+        let rrMinTs: Int?
+        let rrMaxTs: Int?
+        /// #1008/#1118: the pre-storage census of the decoded R-R.
+        let rrCensus: RrEmissionStats.Result
+        /// What `chunkTally` keys the chunk's nights on: gravity timestamps, then HR.
+        let tallyTimestamps: [Int]
+        /// #1008: the per-chunk clock line, built for chunk number `clockLineChunk`.
+        let clockLineChunk: Int
+        let clockLine: String?
+
+        init(parsed: [ParsedFrame], decoded: Streams, rejected: [[UInt8]],
+             clockLineChunk: Int, deviceClockRef: Int, wallClockRef: Int) {
+            self.decoded = decoded
+            self.rejected = rejected
+            firstLayoutVersion = parsed.lazy.compactMap({ $0.parsed["hist_version"]?.intValue }).first
+            let carriesSignal: (ParsedFrame) -> Bool = {
+                $0.parsed["heart_rate"] != nil || $0.parsed["gravity_x"] != nil || $0.parsed["ppg_waveform"] != nil
+            }
+            anyRecordCarriesSignal = parsed.contains(where: carriesSignal)
+            // Asked of the LAYOUT, not of one record: a layout counts as carrying a signal when ANY of its
+            // records did (see the #1992 note in finishChunk).
+            var byVersion: [Int: Bool] = [:]
+            for p in parsed {
+                guard let v = p.parsed["hist_version"]?.intValue else { continue }
+                byVersion[v] = (byVersion[v] ?? false) || carriesSignal(p)
+            }
+            signalByVersion = byVersion
+            typeNames = parsed.map(\.typeName)
+            spo2 = parsed.map {
+                Spo2Record(unix: $0.parsed["unix"]?.intValue, version: $0.parsed["hist_version"]?.intValue,
+                           red: $0.parsed["spo2_red"]?.intValue, ir: $0.parsed["spo2_ir"]?.intValue,
+                           skinRaw: $0.parsed["skin_temp_raw"]?.intValue)
+            }
+            rrTimestamps = decoded.rr.map(\.ts)
+            rrMinTs = rrTimestamps.min()
+            rrMaxTs = rrTimestamps.max()
+            rrCensus = RrEmissionStats.compute(decoded.rr.map { (ts: $0.ts, rrMs: $0.rrMs) })
+            tallyTimestamps = decoded.gravity.map(\.ts) + decoded.hr.map(\.ts)
+            self.clockLineChunk = clockLineChunk
+            clockLine = ChunkClockDiag.line(chunk: clockLineChunk, deviceClockRef: deviceClockRef,
+                                            wallClockRef: wallClockRef, rrTimestamps: rrTimestamps)
+        }
+    }
+
+    /// The fields of one record the SpO2 RE dump reads.
+    private struct Spo2Record {
+        let unix: Int?
+        let version: Int?
+        let red: Int?
+        let ir: Int?
+        let skinRaw: Int?
     }
 
     private func finishChunk(unix: UInt32, trim: UInt32, endFrame: [UInt8]) async {
@@ -625,27 +705,32 @@ final class Backfiller {
             let dev = ref.device, wall = ref.wall
             let oldest = sessionOldestUnix, newest = sessionNewestUnix
             let extractFn = extract   // keep the injected Extractor seam (tests override it); prod == extractHistoricalStreams
+            // The chunk number the #1008 line below is built for, off the main actor with the rest.
+            let expectedChunk = chunkIndex + 1
             let d = await Task.detached(priority: .utility) { () -> DecodedChunk in
                 let parsed = frames.map { parseFrame($0, family: fam) }
                 let decoded = extractFn(parsed, dev, wall, fam, oldest, newest)
                 let rejected = rejectedHistoricalRecords(frames, family: fam)
-                return DecodedChunk(parsed: parsed, decoded: decoded, rejected: rejected)
+                return DecodedChunk(parsed: parsed, decoded: decoded, rejected: rejected,
+                                    clockLineChunk: expectedChunk, deviceClockRef: dev, wallClockRef: wall)
             }.value
-            let parsed = d.parsed
             // #1008: per-chunk clock basis + R-R packing. The session summary logs only the FIRST chunk's
             // correlation, which cannot show the offset moving across a long offload nor separate "the same
             // beats arrived twice" from "one record stamped 8 intervals on one second". Log-only.
             chunkIndex += 1
-            if let l = ChunkClockDiag.line(chunk: chunkIndex,
-                                           deviceClockRef: ref.device,
-                                           wallClockRef: ref.wall,
-                                           rrTimestamps: d.decoded.rr.map(\.ts)) {
+            // A `begin()` while the decode ran resets the counter; the line is then rebuilt with the number
+            // this chunk actually got, exactly as it was when the line was built here.
+            let clockLine = chunkIndex == d.clockLineChunk
+                ? d.clockLine
+                : ChunkClockDiag.line(chunk: chunkIndex, deviceClockRef: ref.device, wallClockRef: ref.wall,
+                                      rrTimestamps: d.rrTimestamps)
+            if let l = clockLine {
                 log?(l)
             }
             // Observability (PR #241): log which layout this strap emits on a HEALTHY sync too — the
             // unmapped-version path below only fires for layouts NOOP can't decode, so a normal log
             // never revealed v18/v24/v25/v26. Once per distinct layout this session.
-            if let v = parsed.lazy.compactMap({ $0.parsed["hist_version"]?.intValue }).first,
+            if let v = d.firstLayoutVersion,
                loggedLayoutVersions.insert(v).inserted {
                 log?("Backfill: historical records use layout v\(v)")
                 // UNIVERSAL clock-drift: bank the layout so the export's universal clock-drift line is
@@ -654,13 +739,7 @@ final class Backfiller {
                 // Connection test mode: the firmware layout as a compact tagged line. A layout that decoded
                 // a signature field (heart_rate / gravity_x / ppg_waveform) is decodable; otherwise the
                 // unmapped-version path below fires too. Gated zero-cost.
-                emitConnection({
-                    let decodable = parsed.contains {
-                        $0.parsed["heart_rate"] != nil || $0.parsed["gravity_x"] != nil
-                            || $0.parsed["ppg_waveform"] != nil
-                    }
-                    return ConnectionTrace.firmwareLine(version: v, decodable: decodable)
-                }())
+                emitConnection(ConnectionTrace.firmwareLine(version: v, decodable: d.anyRecordCarriesSignal))
             }
             // SpO2 RE dump (PR #945, reimplemented): while the Connection test mode is on, dump a few FULL
             // historical records + their mapped raw SpO2 channels so an offline pass can tell whether the
@@ -673,22 +752,22 @@ final class Backfiller {
             // the #194 lesson). Twin of the Android Backfiller emit.
             if spo2Dumped < Spo2ReTrace.maxSamples, spo2Examined < Spo2ReTrace.maxExamined,
                connectionActive(), let connectionLog {
-                for (raw, p) in zip(frames, parsed) where spo2Dumped < Spo2ReTrace.maxSamples {
+                for (raw, p) in zip(frames, d.spo2) where spo2Dumped < Spo2ReTrace.maxSamples {
                     if spo2Examined >= Spo2ReTrace.maxExamined { break }
                     spo2Examined += 1
-                    guard let unix = p.parsed["unix"]?.intValue else { continue }
+                    guard let unix = p.unix else { continue }
                     // Stratify by layout: without this the first chunk's dominant layout eats the whole
                     // budget and the rare, still-unmapped one never gets a frame. See `maxPerVersion`.
-                    let ver = p.parsed["hist_version"]?.intValue ?? -1
+                    let ver = p.version ?? -1
                     let dumpedForVer = spo2DumpedByVersion[ver] ?? 0
                     if dumpedForVer >= Spo2ReTrace.maxPerVersion { continue }
                     connectionLog(Spo2ReTrace.recordLine(
                         frame: raw,
-                        version: p.parsed["hist_version"]?.intValue,
+                        version: p.version,
                         unix: unix,
-                        red: p.parsed["spo2_red"]?.intValue,
-                        ir: p.parsed["spo2_ir"]?.intValue,
-                        skinRaw: p.parsed["skin_temp_raw"]?.intValue))
+                        red: p.red,
+                        ir: p.ir,
+                        skinRaw: p.skinRaw))
                     spo2DumpedByVersion[ver] = dumpedForVer + 1
                     spo2Dumped += 1
                 }
@@ -708,16 +787,9 @@ final class Backfiller {
             // taken over every record of that version in the chunk: a layout counts as carrying a signal
             // when ANY of its records did. Judging it on whichever record happened to come first would let
             // one thin or off-wrist v18 record condemn v18 for the rest of the session — the old form had
-            // that same hole, and it is worse now that the verdict names a specific reason.
-            var signalByVersion: [Int: Bool] = [:]
-            for p in parsed {
-                guard let v = p.parsed["hist_version"]?.intValue else { continue }
-                let carries = p.parsed["heart_rate"] != nil
-                    || p.parsed["gravity_x"] != nil
-                    || p.parsed["ppg_waveform"] != nil
-                signalByVersion[v] = (signalByVersion[v] ?? false) || carries
-            }
-            for (v, carriesSignal) in signalByVersion.sorted(by: { $0.key < $1.key }) {
+            // that same hole, and it is worse now that the verdict names a specific reason. The per-version
+            // fold itself is taken off the main actor, in `DecodedChunk`.
+            for (v, carriesSignal) in d.signalByVersion.sorted(by: { $0.key < $1.key }) {
                 guard !loggedUnmappedVersions.contains(v) else { continue }
                 let support = historicalLayoutSupport(
                     version: v, family: family,
@@ -789,7 +861,7 @@ final class Backfiller {
                     // builds its own ParsedFrame. The raw bytes only exist at this level. Same log line on
                     // both platforms; no prefix cap, for the reason the reject dump has none.
                     if let line = Backfiller.unmappedTypeDumpLine(typeName: typeName, frames: frames,
-                                                                  typeNames: parsed.map(\.typeName)) {
+                                                                  typeNames: d.typeNames) {
                         log?(line)
                     }
                 }
@@ -853,7 +925,7 @@ final class Backfiller {
             // #1008/#1118: census the batch BEFORE it is stored — the only place the decoder's own
             // emission can be measured, since every existing R-R number is taken after the ON CONFLICT key
             // has already absorbed part of it.
-            let rrCensus = RrEmissionStats.compute(decoded.rr.map { (ts: $0.ts, rrMs: $0.rrMs) })
+            let rrCensus = d.rrCensus
             do {
                 counts = try await store.insert(decoded, deviceId: deviceId)
                 onBankedOffload(counts)
@@ -867,15 +939,15 @@ final class Backfiller {
             }
             // Success-side observability (#150): tally what actually persisted so the session can emit
             // "persisted N rows (M with motion) across K night(s)" — the win-rate signal a log never had.
-            let tally = Backfiller.chunkTally(counts: counts, timestamps: decoded.gravity.map(\.ts) + decoded.hr.map(\.ts))
+            let tally = Backfiller.chunkTally(counts: counts, timestamps: d.tallyTimestamps)
             sessionRowsPersisted += tally.rows
             // #1008/#1118 census accumulation (pre-storage `offered` vs post-key `inserted`).
             sessionRrOffered += rrCensus.intervals
             sessionRrInserted += counts.rr
             sessionRrSumMs += rrCensus.sumRrMs
             if rrCensus.intervals > 0 {
-                let lo = decoded.rr.map(\.ts).min() ?? 0
-                let hi = decoded.rr.map(\.ts).max() ?? 0
+                let lo = d.rrMinTs ?? 0
+                let hi = d.rrMaxTs ?? 0
                 sessionRrMinTs = min(sessionRrMinTs ?? lo, lo)
                 sessionRrMaxTs = max(sessionRrMaxTs ?? hi, hi)
                 for i in 0..<4 { sessionRrHist[i] += rrCensus.perSecond[i] }
