@@ -73,6 +73,25 @@ enum PhosphorLibrary {
         return paths
     }
 
+    /// Loads the icon map on a background queue so the first `PhIcon` body does not decode it on the
+    /// main thread. The decode of the 1.26 MB `phosphor.json` (about 3,000 icons) ran inside `lock` on the
+    /// first icon body, a main-thread hitch on launch. Idempotent: the dispatch happens at most once per
+    /// process, and the load goes through `lock` and `loadedSource()`, so it fills the same cache a body
+    /// would and a body that arrives first simply does the load itself. A body that arrives while the
+    /// background load runs waits on `lock` for that one load instead of starting a second.
+    static func prewarm() {
+        _ = prewarmOnce
+    }
+
+    /// Swift runs a static stored property's initialiser exactly once, thread-safely.
+    private static let prewarmOnce: Void = {
+        DispatchQueue.global(qos: .userInitiated).async {
+            lock.lock()
+            defer { lock.unlock() }
+            _ = loadedSource()
+        }
+    }()
+
     /// Caller holds `lock`.
     private static func loadedSource() -> [String: [String]] {
         if let source { return source }
@@ -166,6 +185,13 @@ public struct PhIcon: View {
     /// True when `name` (with or without a weight suffix) is bundled in `weight`.
     public static func exists(_ name: String, weight: PhosphorWeight = .light) -> Bool {
         PhosphorLibrary.exists(name, weight: weight)
+    }
+
+    /// Starts loading the bundled icon map on a background queue, so the first icon drawn on screen
+    /// does not pay the JSON decode on the main thread. Call once at launch; further calls do nothing.
+    /// Returns immediately; drawing an icon before the load finishes is still correct.
+    public static func prewarm() {
+        PhosphorLibrary.prewarm()
     }
 
     public var body: some View {

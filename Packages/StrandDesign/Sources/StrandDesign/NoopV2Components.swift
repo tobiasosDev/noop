@@ -143,10 +143,11 @@ public struct NoopMetric: View {
 
 /// A `.mrow`: metrics side by side in equal columns.
 public struct NoopMetricRow<Content: View>: View {
-    @ViewBuilder public var content: () -> Content
-    public init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    public var content: Content
+    public init(@ViewBuilder content: () -> Content) { self.content = content() }
     public var body: some View {
-        HStack(alignment: .top, spacing: 0) { content() }
+        HStack(alignment: .top, spacing: 0) { content }
     }
 }
 
@@ -156,17 +157,18 @@ public struct NoopMetricRow<Content: View>: View {
 public struct NoopCardHeader<Trailing: View>: View {
     private let icon: String?
     private let title: Text
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
 
-    public init(_ title: LocalizedStringKey, icon: String? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(_ title: LocalizedStringKey, icon: String? = nil, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
         self.icon = icon
-        self.trailing = trailing
+        self.trailing = trailing()
     }
-    public init(verbatim title: String, icon: String? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(verbatim title: String, icon: String? = nil, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(verbatim: title)
         self.icon = icon
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -180,7 +182,7 @@ public struct NoopCardHeader<Trailing: View>: View {
                 .lineLimit(1)
                 .layoutPriority(1)
             Spacer(minLength: 8)
-            trailing()
+            trailing
                 .font(StrandFont.light(12, relativeTo: .caption))
                 .foregroundStyle(StrandPalette.textTertiary)
                 .lineLimit(2)
@@ -204,18 +206,19 @@ public extension NoopCardHeader where Trailing == Text? {
 /// visible gaps the kit's 30 pt before a section title and 14 pt after it.
 public struct NoopSectionTitle<Trailing: View>: View {
     private let title: Text
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
     public var topPadding: CGFloat
 
-    public init(_ title: LocalizedStringKey, topPadding: CGFloat = 18, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(_ title: LocalizedStringKey, topPadding: CGFloat = 18, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
         self.topPadding = topPadding
-        self.trailing = trailing
+        self.trailing = trailing()
     }
-    public init(verbatim title: String, topPadding: CGFloat = 18, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(verbatim title: String, topPadding: CGFloat = 18, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(verbatim: title)
         self.topPadding = topPadding
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -226,7 +229,7 @@ public struct NoopSectionTitle<Trailing: View>: View {
                 .accessibilityAddTraits(.isHeader)
                 .layoutPriority(1)
             Spacer(minLength: 8)
-            trailing()
+            trailing
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .lineLimit(2)
@@ -251,13 +254,14 @@ public extension NoopSectionTitle where Trailing == Text? {
 public struct NoopPageTitle<Trailing: View>: View {
     private let title: Text
     private let subtitle: Text?
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
 
     public init(_ title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil,
-                @ViewBuilder trailing: @escaping () -> Trailing) {
+                @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
         self.subtitle = subtitle.map { Text($0) }
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -272,7 +276,7 @@ public struct NoopPageTitle<Trailing: View>: View {
                 }
             }
             Spacer(minLength: 0)
-            trailing()
+            trailing
         }
     }
 }
@@ -505,11 +509,12 @@ public struct NoopArcGauge: View {
 /// The `.list` container: rows stacked with hairline dividers between them, on the near-black surface
 /// with a 24 pt radius. Dividers are inserted automatically between the direct children.
 public struct NoopList<Content: View>: View {
-    @ViewBuilder public var content: () -> Content
-    public init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    public var content: Content
+    public init(@ViewBuilder content: () -> Content) { self.content = content() }
 
     public var body: some View {
-        _VariadicView.Tree(NoopListLayout()) { content() }
+        _VariadicView.Tree(NoopListLayout()) { content }
             .background(
                 RoundedRectangle(cornerRadius: NoopVisualStyle.listRadius, style: .continuous)
                     .fill(NoopVisualStyle.surface)
@@ -542,31 +547,32 @@ public struct NoopRow<Trailing: View>: View {
     private let title: Text
     private let caption: Text?
     public var chevron: Bool
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
 
     public init(_ title: LocalizedStringKey, caption: LocalizedStringKey? = nil, icon: String? = nil,
-                chevron: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing) {
+                chevron: Bool = false, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
         self.caption = caption.map { Text($0) }
         self.icon = icon
         self.chevron = chevron
-        self.trailing = trailing
+        self.trailing = trailing()
     }
     public init(verbatim title: String, caption: String? = nil, icon: String? = nil,
-                chevron: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing) {
+                chevron: Bool = false, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(verbatim: title)
         self.caption = caption.map { Text(verbatim: $0) }
         self.icon = icon
         self.chevron = chevron
-        self.trailing = trailing
+        self.trailing = trailing()
     }
     public init(title: Text, caption: Text? = nil, icon: String? = nil,
-                chevron: Bool = false, @ViewBuilder trailing: @escaping () -> Trailing) {
+                chevron: Bool = false, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.caption = caption
         self.icon = icon
         self.chevron = chevron
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -582,7 +588,7 @@ public struct NoopRow<Trailing: View>: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            trailing()
+            trailing
                 .font(StrandFont.light(14, relativeTo: .subheadline))
                 .foregroundStyle(StrandPalette.textSecondary)
             if chevron {
@@ -890,17 +896,18 @@ public struct NoopPager: View {
 public struct NoopDetailHeader<Trailing: View>: View {
     private let title: Text
     public var onBack: (() -> Void)?
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
 
-    public init(_ title: LocalizedStringKey, onBack: (() -> Void)?, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(_ title: LocalizedStringKey, onBack: (() -> Void)?, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
         self.onBack = onBack
-        self.trailing = trailing
+        self.trailing = trailing()
     }
-    public init(verbatim title: String, onBack: (() -> Void)?, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(verbatim title: String, onBack: (() -> Void)?, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(verbatim: title)
         self.onBack = onBack
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -913,7 +920,7 @@ public struct NoopDetailHeader<Trailing: View>: View {
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
-            trailing()
+            trailing
         }
     }
 }
@@ -1124,17 +1131,18 @@ public struct NoopAreaChart: View {
 /// Pair with `noopHidesSystemNavBar()` so the system bar does not draw a second header above it.
 public struct NoopScreenHeader<Trailing: View>: View {
     private let title: Text
-    @ViewBuilder private var trailing: () -> Trailing
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    private let trailing: Trailing
     @Environment(\.isPresented) private var isPresented
     @Environment(\.dismiss) private var dismiss
 
-    public init(_ title: LocalizedStringKey, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(_ title: LocalizedStringKey, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(title)
-        self.trailing = trailing
+        self.trailing = trailing()
     }
-    public init(verbatim title: String, @ViewBuilder trailing: @escaping () -> Trailing) {
+    public init(verbatim title: String, @ViewBuilder trailing: () -> Trailing) {
         self.title = Text(verbatim: title)
-        self.trailing = trailing
+        self.trailing = trailing()
     }
 
     public var body: some View {
@@ -1147,7 +1155,7 @@ public struct NoopScreenHeader<Trailing: View>: View {
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
-            trailing()
+            trailing
         }
     }
 }

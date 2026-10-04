@@ -233,21 +233,22 @@ public struct NoopHeroCard<Content: View>: View {
     public var cornerRadius: CGFloat
     public var bleed: Bool
     public var minHeight: CGFloat?
-    @ViewBuilder public var content: () -> Content
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    public var content: Content
 
     public init(glow: NoopGlow, padding: CGFloat = NoopVisualStyle.heroPadding,
                 cornerRadius: CGFloat = NoopVisualStyle.heroRadius, bleed: Bool = false,
-                minHeight: CGFloat? = nil, @ViewBuilder content: @escaping () -> Content) {
+                minHeight: CGFloat? = nil, @ViewBuilder content: () -> Content) {
         self.glow = glow
         self.padding = padding
         self.cornerRadius = cornerRadius
         self.bleed = bleed
         self.minHeight = minHeight
-        self.content = content
+        self.content = content()
     }
 
     public var body: some View {
-        content()
+        content
             .padding(padding)
             .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
             .background { NoopHeroSurface(glow: glow, cornerRadius: cornerRadius, bleed: bleed) }

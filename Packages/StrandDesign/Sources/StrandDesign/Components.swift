@@ -143,19 +143,24 @@ public extension View {
 public struct NoopCard<Content: View>: View {
     private let padding: CGFloat
     private let tint: Color?
-    @ViewBuilder private let content: () -> Content
+    // The content is built ONCE in `init` and stored as a value, not as the builder closure. A stored
+    // closure never compares equal to the previous one (each parent pass allocates a fresh context), so
+    // SwiftUI could never prove the card unchanged and re-ran the whole subtree on every parent pass, a
+    // main-thread hitch amplifier on long scrolling screens. A stored value is compared field by field.
+    // The same applies to every v2 container in this package.
+    private let content: Content
     #if os(macOS)
     @State private var hover = false
     #endif
-    public init(padding: CGFloat = NoopMetrics.cardPadding, tint: Color? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self.padding = padding; self.tint = tint; self.content = content
+    public init(padding: CGFloat = NoopMetrics.cardPadding, tint: Color? = nil, @ViewBuilder content: () -> Content) {
+        self.padding = padding; self.tint = tint; self.content = content()
     }
     public var body: some View {
-        content()
+        content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Hover chrome (fill + border + shadow) lives in the background so its animation is
-            // scoped to the card surface ONLY. It must never animate the content() subtree, or a
+            // scoped to the card surface ONLY. It must never animate the content subtree, or a
             // chart inside re-animates its line every time the cursor crosses the card. (#104)
             .background { cardSurface }
         #if os(macOS)
@@ -218,16 +223,17 @@ public struct StatTile<Accessory: View>: View {
     /// An optional trailing accessory laid out INLINE in the header row beside the label (e.g. a small
     /// ⓘ that opens a scoring guide). Inline placement — not a corner overlay — so it can never sit on
     /// top of the value, sparkline or trend chip on a narrow tile (#495). Defaults to nothing.
-    @ViewBuilder var accessory: () -> Accessory
+    /// Built once in `init` and stored as a value (see `NoopCard`).
+    let accessory: Accessory
 
     public init(label: LocalizedStringKey, value: String, caption: String? = nil,
                 accent: Color = StrandPalette.textPrimary, delta: String? = nil,
                 deltaColor: Color = StrandPalette.textTertiary,
                 sparkline: [Double]? = nil, sparkColor: Color = StrandPalette.accent,
-                @ViewBuilder accessory: @escaping () -> Accessory) {
+                @ViewBuilder accessory: () -> Accessory) {
         self.label = label; self.value = value; self.caption = caption; self.accent = accent
         self.delta = delta; self.deltaColor = deltaColor; self.sparkline = sparkline; self.sparkColor = sparkColor
-        self.accessory = accessory
+        self.accessory = accessory()
     }
 
     public var body: some View {
@@ -241,7 +247,7 @@ public struct StatTile<Accessory: View>: View {
                 HStack(alignment: .top, spacing: 4) {
                     Text(label).font(StrandFont.book(14)).foregroundStyle(StrandPalette.textPrimary)
                     Spacer(minLength: 0)
-                    accessory()
+                    accessory
                 }
                 Spacer(minLength: 14)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -334,15 +340,16 @@ public struct ChartCard<ChartBody: View, Footer: View>: View {
     var trailing: String? = nil
     var height: CGFloat = NoopMetrics.chartHeight
     var tint: Color? = nil
-    @ViewBuilder let chart: () -> ChartBody
-    @ViewBuilder let footer: () -> Footer
+    // Chart and footer are built once in `init` and stored as values (see `NoopCard`).
+    let chart: ChartBody
+    let footer: Footer
 
     public init(title: LocalizedStringKey, subtitle: String? = nil, trailing: String? = nil,
                 height: CGFloat = NoopMetrics.chartHeight, tint: Color? = nil,
-                @ViewBuilder chart: @escaping () -> ChartBody,
-                @ViewBuilder footer: @escaping () -> Footer = { EmptyView() }) {
+                @ViewBuilder chart: () -> ChartBody,
+                @ViewBuilder footer: () -> Footer = { EmptyView() }) {
         self.title = title; self.subtitle = subtitle; self.trailing = trailing
-        self.height = height; self.tint = tint; self.chart = chart; self.footer = footer
+        self.height = height; self.tint = tint; self.chart = chart(); self.footer = footer()
     }
 
     public var body: some View {
@@ -355,8 +362,8 @@ public struct ChartCard<ChartBody: View, Footer: View>: View {
                     if let subtitle { Text(subtitle).font(StrandFont.light(12)).foregroundStyle(StrandPalette.textTertiary) }
                     if let trailing { Text(trailing).font(StrandFont.value(15)).foregroundStyle(StrandPalette.textPrimary) }
                 }
-                chart().frame(height: height)
-                let f = footer()
+                chart.frame(height: height)
+                let f = footer
                 if !(f is EmptyView) {
                     Divider().overlay(StrandPalette.hairline)
                     f
