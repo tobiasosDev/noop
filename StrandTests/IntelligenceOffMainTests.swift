@@ -106,18 +106,27 @@ final class IntelligenceOffMainTests: XCTestCase {
         _ = try await store.upsertWorkouts([manual], deviceId: source)
 
         // Apple Health dailies (watch fold) and an older imported history (baseline seed).
-        let apple = (5..<17).map { i in
-            DailyMetric(day: AnalyticsEngine.dayString(today - i * 86_400, offsetSec: tz),
-                totalSleepMin: 420 + Double(i), efficiency: 0.9, deepMin: nil, remMin: nil, lightMin: nil,
-                disturbances: nil, restingHr: 54 + i % 3, avgHrv: 40 + Double(i % 5), recovery: nil,
-                strain: nil, exerciseCount: nil)
+        var apple: [DailyMetric] = []
+        for i in 5..<17 {
+            let day = AnalyticsEngine.dayString(today - i * 86_400, offsetSec: tz)
+            let sleepMinutes: Double = 420 + Double(i)
+            let restingHr: Int = 54 + i % 3
+            let avgHrv: Double = 40 + Double(i % 5)
+            apple.append(DailyMetric(day: day,
+                totalSleepMin: sleepMinutes, efficiency: 0.9, deepMin: nil, remMin: nil, lightMin: nil,
+                disturbances: nil, restingHr: restingHr, avgHrv: avgHrv, recovery: nil,
+                strain: nil, exerciseCount: nil))
         }
         _ = try await store.upsertDailyMetrics(apple, deviceId: Repository.appleHealthSource)
-        let imported = (20..<30).map { i in
-            DailyMetric(day: AnalyticsEngine.dayString(today - i * 86_400, offsetSec: tz),
+        var imported: [DailyMetric] = []
+        for i in 20..<30 {
+            let day = AnalyticsEngine.dayString(today - i * 86_400, offsetSec: tz)
+            let restingHr: Int = 53 + i % 4
+            let avgHrv: Double = 60 + Double(i % 7)
+            imported.append(DailyMetric(day: day,
                 totalSleepMin: 430, efficiency: 0.88, deepMin: 80, remMin: 90, lightMin: 260,
-                disturbances: 2, restingHr: 53 + i % 4, avgHrv: 60 + Double(i % 7), recovery: 60,
-                strain: 9, exerciseCount: 0)
+                disturbances: 2, restingHr: restingHr, avgHrv: avgHrv, recovery: 60,
+                strain: 9, exerciseCount: 0))
         }
         _ = try await store.upsertDailyMetrics(imported, deviceId: source)
     }
