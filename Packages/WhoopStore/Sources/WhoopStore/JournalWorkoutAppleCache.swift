@@ -24,6 +24,26 @@ public struct JournalEntry: Equatable, Codable {
     }
 }
 
+extension JournalEntry {
+    /// One row per day/identity. A canonical row wins over aliases within the same source because
+    /// new native writes use that key. Otherwise the last row wins, matching existing read order.
+    /// Notes and numeric values travel with the winning answer; answers are never averaged.
+    /// Kotlin twin: `canonicalJournalEntries`.
+    public static func canonicalEntries(_ rows: [JournalEntry]) -> [JournalEntry] {
+        var byKey: [String: JournalEntry] = [:]
+        var canonicalKeys = Set<String>()
+        for row in rows {
+            let question = JournalQuestionIdentity.canonical(row.question)
+            let key = row.day + "\u{1F}" + question
+            if canonicalKeys.contains(key), row.question != question { continue }
+            byKey[key] = JournalEntry(day: row.day, question: question, answeredYes: row.answeredYes,
+                                      notes: row.notes, numericValue: row.numericValue)
+            if row.question == question { canonicalKeys.insert(key) }
+        }
+        return byKey.values.sorted { ($0.day, $0.question) < ($1.day, $1.question) }
+    }
+}
+
 /// One workout. Natural key (deviceId, startTs, sport). All metric columns nullable.
 /// `zonesJSON` is verbatim JSON of HR-zone percentages, stored as a string so the cache stays
 /// schema-agnostic about the zone shape.
@@ -105,16 +125,44 @@ extension WhoopStore {
         }
     }
 
-    /// Delete one journal answer by natural key (the native logging card's "clear"). Source-scoped
-    /// by deviceId, so clearing a native ("noop-journal") answer never removes an identical imported
-    /// row. Returns rows deleted.
+    /// Save an editable answer under its shared identity, removing older language variants in the
+    /// same source/day atomically. Imported history in other sources remains unchanged.
+    /// Kotlin twin: `WhoopDao.saveJournalAnswers`.
+    @discardableResult
+    public func saveJournalAnswer(_ row: JournalEntry, deviceId: String) async throws -> Int {
+        try syncWrite { db in
+            _ = try Self.deleteJournalAliases(db, deviceId: deviceId, day: row.day, question: row.question)
+            try db.execute(sql: """
+                INSERT INTO journal (deviceId, day, question, answeredYes, notes, numericValue)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: [deviceId, row.day, JournalQuestionIdentity.canonical(row.question),
+                                  row.answeredYes ? 1 : 0, row.notes, row.numericValue])
+            return db.changesCount
+        }
+    }
+
+    /// Kotlin twin: `WhoopDao.deleteJournalAliases`.
+    private static func deleteJournalAliases(_ db: Database, deviceId: String, day: String,
+                                             question: String) throws -> Int {
+        let canonical = JournalQuestionIdentity.canonical(question)
+        let questions = try String.fetchAll(db, sql: "SELECT question FROM journal WHERE deviceId = ? AND day = ?",
+                                            arguments: [deviceId, day])
+        var deleted = 0
+        for q in questions where JournalQuestionIdentity.canonical(q) == canonical {
+            try db.execute(sql: "DELETE FROM journal WHERE deviceId = ? AND day = ? AND question = ?",
+                           arguments: [deviceId, day, q])
+            deleted += db.changesCount
+        }
+        return deleted
+    }
+
+    /// Clear every language variant of an answer in one source/day. Other questions, days, and
+    /// sources remain untouched, so imported history survives a native clear.
+    /// Kotlin twin: `WhoopDao.deleteJournalAnswers`.
     @discardableResult
     public func deleteJournal(deviceId: String, day: String, question: String) async throws -> Int {
         try syncWrite { db in
-            try db.execute(sql: """
-                DELETE FROM journal WHERE deviceId = ? AND day = ? AND question = ?
-                """, arguments: [deviceId, day, question])
-            return db.changesCount
+            try Self.deleteJournalAliases(db, deviceId: deviceId, day: day, question: question)
         }
     }
 

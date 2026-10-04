@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.data.DailyMetric
 import com.noop.data.JournalEntry
+import com.noop.data.JournalQuestionIdentity
+import com.noop.data.canonicalJournalEntries
 import com.noop.data.WorkoutRow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -221,7 +223,7 @@ fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
 
     androidx.compose.runtime.LaunchedEffect(journalSeq, dayOffset, currentDayKey) {
         val imported = vm.repo.journal("my-whoop", "0000-01-01", "9999-12-31")
-        val native = vm.repo.journal(JOURNAL_DEVICE_ID, "0000-01-01", "9999-12-31")
+        val native = canonicalJournalEntries(vm.repo.journal(JOURNAL_DEVICE_ID, "0000-01-01", "9999-12-31"))
         val entries = mergeJournalEntries(imported, native)
         val byBehaviour = mutableMapOf<String, MutableSet<String>>()
         val controlsByBehaviour = mutableMapOf<String, MutableSet<String>>()
@@ -1291,23 +1293,12 @@ private fun experimentCandidates(
     hidden: List<String>,
     saved: String,
 ): List<String> {
-    val hiddenSet = hidden.map { it.trim().lowercase(Locale.US) }.toHashSet()
-    val savedTrim = saved.trim()
-    val raw = behaviours.keys.sorted() + importedQuestions +
-        (if (savedTrim.isEmpty()) emptyList() else listOf(savedTrim))
-    val seen = HashSet<String>()
-    val out = mutableListOf<String>()
-    for (q in raw) {
-        val t = q.trim()
-        val key = t.lowercase(Locale.US)
-        if (t.isNotEmpty() && key !in hiddenSet && seen.add(key)) out.add(t)
-    }
-    return out
+    return JournalQuestionIdentity.candidates(behaviours.keys.toList(), importedQuestions, hidden, saved)
 }
 
 /** The saved behaviour if still eligible, else the first candidate (or null when empty). */
 private fun resolveExperimentBehaviour(candidates: List<String>, saved: String): String? {
-    val savedTrim = saved.trim()
+    val savedTrim = JournalQuestionIdentity.canonical(saved.trim())
     if (savedTrim.isNotEmpty() && candidates.contains(savedTrim)) return savedTrim
     return candidates.firstOrNull()
 }

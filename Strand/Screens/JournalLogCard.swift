@@ -1,5 +1,6 @@
 import SwiftUI
 import StrandDesign
+import WhoopStore
 
 /// Native journal logging, yes/no chips and numeric fields for the merged behaviour catalog plus a
 /// custom-question field, hosted at the top of Insights. Answers write under
@@ -202,7 +203,7 @@ struct JournalLogCard: View {
     /// A Phosphor glyph for a journal item, matched on keywords in its (canonical) question; the
     /// group's glyph when nothing matches. Display only — the question text is never changed.
     static func icon(for item: JournalCatalogItem) -> String {
-        let q = (item.canonical + " " + item.display).lowercased()
+        let q = (JournalQuestionIdentity.canonical(item.canonical) + " " + item.display).lowercased()
         let table: [(keys: [String], icon: String)] = [
             (["alcohol", "drink", "wine", "beer"], "wine"),
             (["caffeine", "coffee", "tea"], "coffee"),
@@ -248,7 +249,7 @@ struct JournalLogCard: View {
     // MARK: - Numeric field
 
     private func numericField(_ item: JournalCatalogItem) -> some View {
-        let current = numericAnswers[item.canonical]
+        let current = numericAnswers[JournalQuestionIdentity.canonical(item.canonical)]
         return HStack(spacing: 4) {
             stepperButton("minus", q: item.canonical, current: current)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -474,7 +475,7 @@ struct JournalLogCard: View {
     }
 
     private func answerPill(_ label: LocalizedStringKey, q: String, value: Bool) -> some View {
-        let selected = answers[q] == value
+        let selected = answers[JournalQuestionIdentity.canonical(q)] == value
         return Button {
             Task {
                 // Tri-state: re-tapping the filled side clears the answer (natural-key delete,

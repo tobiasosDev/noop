@@ -185,4 +185,56 @@ final class JournalLogicTests: XCTestCase {
         XCTAssertNotEqual(key, "recovery")
         XCTAssertNotEqual(key, "hrv")
     }
+    func testLanguageVariantsJoinHistoryAndNativeAnswerWins() {
+        let imported = [e("2026-10-01", "Dein Bett geteilt?", true),
+                        e("2026-10-02", "Did you share your bed?", true)]
+        let native = [e("2026-10-02", "Dein Bett geteilt?", false)]
+        let merged = Repository.mergeJournal(imported: imported, native: native)
+        XCTAssertEqual(merged.map(\.question), ["Did you share your bed?", "Did you share your bed?"])
+        XCTAssertEqual(merged.map(\.answeredYes), [true, false])
+    }
+
+    @MainActor
+    func testGermanCatalogDedupesGroupsAndKeepsImportedLabel() {
+        let store = JournalCatalogStore()
+        store.items = []
+        let imported = ["Alkohol konsumiert?", "Dein Bett geteilt?", "Dich krank gefühlt?",
+                        "Magnesium eingenommen?", "Did you share your bed?"]
+        let catalog = JournalCatalogStore.mergeCatalog(imported: imported, custom: [])
+        XCTAssertEqual(catalog.count, JournalCatalogStore.starterQuestions.count)
+        XCTAssertEqual(Array(catalog.prefix(4)), Array(imported.prefix(4)))
+        let resolved = store.resolvedItems(imported: imported)
+        XCTAssertEqual(resolved.count, JournalCatalogStore.starterQuestions.count)
+        XCTAssertEqual(resolved.first { $0.canonical == "Alkohol konsumiert?" }?.group, .nutrition)
+        XCTAssertEqual(resolved.first { $0.canonical == "Dein Bett geteilt?" }?.group, .lifestyle)
+        XCTAssertEqual(resolved.first { $0.canonical == "Dich krank gefühlt?" }?.group, .health)
+        XCTAssertEqual(resolved.first { $0.canonical == "Magnesium eingenommen?" }?.group, .supplements)
+        store.remove("Did you share your bed?")
+        XCTAssertFalse(store.resolvedItems(imported: imported).contains {
+            JournalCatalogStore.norm($0.canonical) == JournalCatalogStore.norm("Dein Bett geteilt?")
+        })
+        store.restore("Dein Bett geteilt?")
+        XCTAssertEqual(store.resolvedItems(imported: imported).count, JournalCatalogStore.starterQuestions.count)
+    }
+
+    @MainActor
+    func testAliasCustomisationsRemainEditableAfterCatalogMerge() {
+        let store = JournalCatalogStore()
+        store.items = [
+            JournalCatalogItem(canonical: "Did you take magnesium?", displayName: "Old label", kind: .bool,
+                               group: .other, sortIndex: 1, hidden: true, custom: false),
+            JournalCatalogItem(canonical: "Magnesium eingenommen?", displayName: "Magnesium", kind: .numeric(unitLabel: "mg"),
+                               group: .supplements, sortIndex: 2, hidden: false, custom: false),
+        ]
+        let resolved = store.resolvedItems(imported: ["Magnesium eingenommen?", "Did you take magnesium?"])
+        let magnesium = resolved.filter { JournalCatalogStore.norm($0.canonical) == JournalCatalogStore.norm("Did you take magnesium?") }
+        XCTAssertEqual(magnesium.count, 1)
+        XCTAssertEqual(magnesium[0].display, "Magnesium")
+        XCTAssertEqual(magnesium[0].kind.unitLabel, "mg")
+        store.rename("Did you take magnesium?", to: "Daily magnesium")
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(store.item(for: "Magnesium eingenommen?")?.display, "Daily magnesium")
+        XCTAssertEqual(store.item(for: "Did you take magnesium?")?.kind.unitLabel, "mg")
+    }
+
 }

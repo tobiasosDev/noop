@@ -857,24 +857,13 @@ struct InsightsView: View {
     /// the whole starter catalog (and re-surface hidden behaviours) as eligible, so the
     /// empty-state guard is real and only behaviours with history can be tested.
     private var experimentCandidates: [String] {
-        let saved = experimentBehaviour.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hidden = Set(catalog.hiddenQuestions.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
-        // Logged behaviours first (most relevant), then imported wording, then the saved
-        // selection so an in-flight pick never vanishes mid-edit.
-        let raw = behaviours.keys.sorted() + importedQuestions + (saved.isEmpty ? [] : [saved])
-        var seen = Set<String>()
-        var out: [String] = []
-        for q in raw {
-            let t = q.trimmingCharacters(in: .whitespaces)
-            let key = t.lowercased()
-            if !t.isEmpty, !hidden.contains(key), seen.insert(key).inserted { out.append(t) }
-        }
-        return out
+        JournalQuestionIdentity.candidates(logged: Array(behaviours.keys), imported: importedQuestions,
+                                            hidden: catalog.hiddenQuestions, saved: experimentBehaviour)
     }
 
     private var resolvedExperimentBehaviour: String? {
         let candidates = experimentCandidates
-        let saved = experimentBehaviour.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = JournalQuestionIdentity.canonical(experimentBehaviour.trimmingCharacters(in: .whitespacesAndNewlines))
         if !saved.isEmpty, candidates.contains(saved) { return saved }
         return candidates.first
     }

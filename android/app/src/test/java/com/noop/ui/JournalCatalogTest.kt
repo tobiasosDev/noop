@@ -142,4 +142,42 @@ class JournalCatalogTest {
         assertTrue(e.answeredYes)
         assertEquals(180.0, e.numericValue!!, 0.0001)
     }
+    @Test
+    fun germanCatalogDedupesGroupsAndKeepsImportedLabel() {
+        val imported = listOf("Alkohol konsumiert?", "Dein Bett geteilt?", "Dich krank gefühlt?",
+            "Magnesium eingenommen?", "Did you share your bed?")
+        val catalog = mergeJournalCatalog(imported, emptyList())
+        assertEquals(STARTER_JOURNAL_QUESTIONS.size, catalog.size)
+        assertEquals(imported.take(4), catalog.take(4))
+        val resolved = resolveJournalItems(imported, emptyList())
+        assertEquals(STARTER_JOURNAL_QUESTIONS.size, resolved.size)
+        assertEquals(JournalGroup.Nutrition, resolved.first { it.canonical == "Alkohol konsumiert?" }.group)
+        assertEquals(JournalGroup.Lifestyle, resolved.first { it.canonical == "Dein Bett geteilt?" }.group)
+        assertEquals(JournalGroup.Health, resolved.first { it.canonical == "Dich krank gefühlt?" }.group)
+        assertEquals(JournalGroup.Supplements, resolved.first { it.canonical == "Magnesium eingenommen?" }.group)
+        var saved = removeJournalItem(emptyList(), "Did you share your bed?")
+        assertFalse(resolveJournalItems(imported, saved).any { normJournalKey(it.canonical) == normJournalKey("Dein Bett geteilt?") })
+        saved = restoreJournalItem(saved, "Dein Bett geteilt?")
+        assertEquals(STARTER_JOURNAL_QUESTIONS.size, resolveJournalItems(imported, saved).size)
+    }
+
+    @Test
+    fun aliasCustomisationsRemainEditableAfterCatalogMerge() {
+        var saved = listOf(
+            JournalCatalogItem("Did you take magnesium?", displayName = "Old label", group = JournalGroup.Other,
+                sortIndex = 1, hidden = true),
+            JournalCatalogItem("Magnesium eingenommen?", displayName = "Magnesium", kind = JournalKind.Numeric("mg"),
+                group = JournalGroup.Supplements, sortIndex = 2),
+        )
+        val resolved = resolveJournalItems(listOf("Magnesium eingenommen?", "Did you take magnesium?"), saved)
+            .filter { normJournalKey(it.canonical) == normJournalKey("Did you take magnesium?") }
+        assertEquals(1, resolved.size)
+        assertEquals("Magnesium", resolved[0].display)
+        assertEquals("mg", resolved[0].kind.unitLabel)
+        saved = renameJournalItem(saved, "Did you take magnesium?", "Daily magnesium")
+        assertEquals(1, saved.size)
+        assertEquals("Daily magnesium", journalDisplayName(saved, "Magnesium eingenommen?"))
+        assertEquals("mg", saved[0].kind.unitLabel)
+    }
+
 }
