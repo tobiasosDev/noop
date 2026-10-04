@@ -472,7 +472,7 @@ struct RhythmView: View {
                     .padding(.top, 6)
                     .padding(.leading, 24)
                 HStack(alignment: .center, spacing: 10) {
-                    NoopTag(verbatim: chipLabel(regularity), size: 12).fixedSize()
+                    statusChip
                     Text(headlineDetail)
                         .font(StrandFont.light(14, relativeTo: .subheadline))
                         .foregroundStyle(Color.white.opacity(0.85))
@@ -486,6 +486,12 @@ struct RhythmView: View {
     }
 
     private var regularity: RhythmRegularity { night?.overall ?? headlineWindow?.label ?? .unreadable }
+
+    /// The neutral regularity status as a dot-matrix tag: wording only, never an alarm colour (§11).
+    /// Twin of Android `StatusChip`.
+    private var statusChip: some View {
+        NoopTag(verbatim: chipLabel(regularity), size: 12).fixedSize()
+    }
 
     /// The SHORT neutral status word for the tag (the sentence-length `headlineDetail` reads beside it).
     /// Non-diagnostic wording.
