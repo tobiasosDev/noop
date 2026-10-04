@@ -3128,46 +3128,18 @@ private struct AppearancePreviewHero: View {
     /// cards, all at the chosen card transparency.
     private var phone: some View {
         let cardOpacity = Double(100 - transparency) / 100
+        let sleepValue = sleepMinutes.map { "\(Int($0) / 60)h \(Int($0) % 60)m" } ?? "—"
+        let effortValue = effort.map { "\(Int($0.rounded()))" } ?? "—"
         return VStack(alignment: .leading, spacing: 6) {
             Text(Date().formatted(.dateTime.weekday(.wide).day().month(.wide)))
                 .font(StrandFont.light(7))
                 .foregroundStyle(StrandPalette.textTertiary)
                 .padding(.horizontal, 12)
                 .padding(.top, 14)
-            VStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    PhIcon("lightning", size: 7)
-                        .frame(width: 12, height: 12)
-                        .background(Circle().fill(Color.white.opacity(0.1)))
-                    Text("Charge")
-                    Spacer(minLength: 0)
-                }
-                .font(StrandFont.light(7))
-                .foregroundStyle(StrandPalette.textSecondary)
-                NoopDotNumber(charge.map { "\(Int($0.rounded()))" } ?? "--", unit: charge == nil ? nil : "%",
-                              size: 40, unitSize: 16)
-                ZStack(alignment: .leading) {
-                    NoopTickScale(height: 12, tickSpacing: 3)
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(accent)
-                            .frame(width: 1.5, height: 18)
-                            .shadow(color: accent, radius: 3)
-                            .offset(x: geo.size.width * min(max((charge ?? 0) / 100, 0), 1), y: -3)
-                    }
-                    .frame(height: 12)
-                }
-            }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.06 * cardOpacity + 0.02)))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-            .padding(.horizontal, 10)
+            phoneChargeCard(opacity: cardOpacity)
             HStack(spacing: 6) {
-                miniCard(Text("Sleep"), value: sleepMinutes.map { "\(Int($0) / 60)h \(Int($0) % 60)m" } ?? "—",
-                         opacity: cardOpacity)
-                miniCard(Text("Effort"), value: effort.map { "\(Int($0.rounded()))" } ?? "—", opacity: cardOpacity)
+                miniCard(Text("Sleep"), value: sleepValue, opacity: cardOpacity)
+                miniCard(Text("Effort"), value: effortValue, opacity: cardOpacity)
             }
             .padding(.horizontal, 10)
             Spacer(minLength: 0)
@@ -3178,6 +3150,45 @@ private struct AppearancePreviewHero: View {
             .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .accessibilityHidden(true)
+    }
+
+    private func phoneChargeCard(opacity: Double) -> some View {
+        let chargeValue = charge.map { "\(Int($0.rounded()))" } ?? "--"
+        let chargeUnit: String? = charge == nil ? nil : "%"
+        return VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                PhIcon("lightning", size: 7)
+                    .frame(width: 12, height: 12)
+                    .background(Circle().fill(Color.white.opacity(0.1)))
+                Text("Charge")
+                Spacer(minLength: 0)
+            }
+            .font(StrandFont.light(7))
+            .foregroundStyle(StrandPalette.textSecondary)
+            NoopDotNumber(chargeValue, unit: chargeUnit, size: 40, unitSize: 16)
+            phoneChargeScale
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.white.opacity(0.06 * opacity + 0.02)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+        .padding(.horizontal, 10)
+    }
+
+    private var phoneChargeScale: some View {
+        let fraction = min(max((charge ?? 0) / 100, 0), 1)
+        return ZStack(alignment: .leading) {
+            NoopTickScale(height: 12, tickSpacing: 3)
+            GeometryReader { geo in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(accent)
+                    .frame(width: 1.5, height: 18)
+                    .shadow(color: accent, radius: 3)
+                    .offset(x: geo.size.width * fraction, y: -3)
+            }
+            .frame(height: 12)
+        }
     }
 
     private func miniCard(_ title: Text, value: String, opacity: Double) -> some View {
