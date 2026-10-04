@@ -109,6 +109,9 @@ final class AppModel: ObservableObject {
     /// True while the active workout is a GPS-type session (drives the End-time route persist). Mirrors
     /// Android's `ActiveWorkout.gpsEnabled`.
     private var activeWorkoutIsGps = false
+    /// Encodes and writes the in-flight workout's durable snapshot (#529) off the main actor; see
+    /// `ActiveWorkoutSnapshotWriter`.
+    private let activeWorkoutWriter = ActiveWorkoutSnapshotWriter()
 
     /// A manual workout in progress. `samples` accumulate from the smoothed live `bpm`; `liveStrain`
     /// is recomputed as the window grows so the active card can show strain building in real time.
@@ -917,7 +920,9 @@ final class AppModel: ObservableObject {
     /// a small per-sample write instead of rewriting a growing route on every beat.
     private func persistActiveWorkout() {
         guard let w = activeWorkout else { return }
-        ActiveWorkoutPersistence.store(
+        // Only the snapshot VALUE is built here (the sample array is copy-on-write, so this is a reference
+        // hand-off); the JSON encode of the whole array runs on the writer's queue.
+        activeWorkoutWriter.store(
             ActiveWorkoutPersistence.Snapshot(
                 startSec: Int(w.start.timeIntervalSince1970),
                 sport: w.sport,
@@ -980,7 +985,7 @@ final class AppModel: ObservableObject {
         activeWorkout = nil
         if activeWorkoutIsGps { gpsRecorder.stop() }
         activeWorkoutIsGps = false
-        ActiveWorkoutPersistence.clear()
+        activeWorkoutWriter.clear()
         lastWorkout = nil
     }
 
@@ -1006,7 +1011,7 @@ final class AppModel: ObservableObject {
         activeWorkoutIsGps = false
         // Drop the durable snapshot the instant the session ends , whether it saves below or is discarded
         // as too-short , so a relaunch never rehydrates an already-finished session (#529).
-        ActiveWorkoutPersistence.clear()
+        activeWorkoutWriter.clear()
         // #524: finalize the GPS route. Stop the recorder and take its captured route , it kept
         // accumulating from CoreLocation independently of the HR window. `capturedRoute()` is nil unless
         // ≥2 points actually landed (honest: no route, no distance, when nothing was captured , e.g. a
@@ -2232,38 +2237,57 @@ final class AppModel: ObservableObject {
     /// night is z-scored against the personal baseline, then `CyclePhaseEngine.classify` reads the run.
     /// Gated behind the opt-in flag; clears the published result the moment it's turned off.
     private func computeCyclePhase() async {
+        // Claimed before either branch, so an opt-out also drops a computation that was still in flight
+        // and could otherwise publish a phase after the clear.
+        cyclePhaseGen &+= 1
+        let gen = cyclePhaseGen
         guard cycleAwarenessEnabled else { cyclePhase = nil; cycleCurve = []; return }
         let days = repo.days
         guard let tempCfg = Baselines.metricCfg["skin_temp"],
               let rhrCfg = Baselines.metricCfg["resting_hr"],
               let hrvCfg = Baselines.metricCfg["hrv"] else { return }
 
-        // The nightly absolute skin-temp mean isn't in repo.days (only the °C DEVIATION is), so z-score
-        // the deviation against its own folded spread , a zero-centred personal baseline. RHR + HRV
-        // z-score their raw columns. Oldest→newest.
-        let sorted = days.sorted { $0.day < $1.day }
-        let skinState = Baselines.foldHistory(sorted.map { $0.skinTempDevC }, cfg: tempCfg)
-        let rhrState = Baselines.foldHistory(sorted.map { $0.restingHr.map(Double.init) }, cfg: rhrCfg)
-        let hrvState = Baselines.foldHistory(sorted.map { $0.avgHrv }, cfg: hrvCfg)
-
-        var nights: [CyclePhaseEngine.Night] = []
-        var curve: [Double] = []
-        for d in sorted {
-            let tempZ = d.skinTempDevC.map { skinState.usable ? Baselines.deviation($0, state: skinState).z : $0 / 0.3 }
-            let rhrZ = (rhrState.usable ? d.restingHr.map { Baselines.deviation(Double($0), state: rhrState).z } : nil)
-            let hrvZ = (hrvState.usable ? d.avgHrv.map { Baselines.deviation($0, state: hrvState).z } : nil)
-            nights.append(CyclePhaseEngine.Night(day: d.day, tempZ: tempZ, rhrZ: rhrZ, hrvZ: hrvZ))
-            if let fused = CyclePhaseEngine.fusedIndex(tempZ: tempZ, rhrZ: rhrZ, hrvZ: hrvZ) { curve.append(fused) }
-        }
         // Optional user-entered cycle-day-1 anchors live under the isolated `noop-cycle` source.
         // The pure engine cross-validates them against the temperature shift rather than trusting a
-        // mistimed log blindly.
+        // mistimed log blindly. Read first now, because the detached computation below takes it as an
+        // input; the folds never read it, so reading it before them rather than after changes nothing.
         let loggedPeriodStarts = await repo.periodStarts()
-        cyclePhase = CyclePhaseEngine.classify(nights,
-                                               baselineUsable: skinState.usable,
-                                               loggedPeriodStarts: loggedPeriodStarts)
+
+        // The sort, the three baseline folds and the per-night z-scores walk the whole merged history
+        // (thousands of days on an imported library). They are pure over the `days` captured above, and
+        // ran on the main actor in the post-sync cascade (a main-thread hitch), so they run detached.
+        let (phase, curve) = await Task.detached(priority: .utility) {
+            // The nightly absolute skin-temp mean isn't in repo.days (only the °C DEVIATION is), so z-score
+            // the deviation against its own folded spread , a zero-centred personal baseline. RHR + HRV
+            // z-score their raw columns. Oldest→newest.
+            let sorted = days.sorted { $0.day < $1.day }
+            let skinState = Baselines.foldHistory(sorted.map { $0.skinTempDevC }, cfg: tempCfg)
+            let rhrState = Baselines.foldHistory(sorted.map { $0.restingHr.map(Double.init) }, cfg: rhrCfg)
+            let hrvState = Baselines.foldHistory(sorted.map { $0.avgHrv }, cfg: hrvCfg)
+
+            var nights: [CyclePhaseEngine.Night] = []
+            var curve: [Double] = []
+            for d in sorted {
+                let tempZ = d.skinTempDevC.map { skinState.usable ? Baselines.deviation($0, state: skinState).z : $0 / 0.3 }
+                let rhrZ = (rhrState.usable ? d.restingHr.map { Baselines.deviation(Double($0), state: rhrState).z } : nil)
+                let hrvZ = (hrvState.usable ? d.avgHrv.map { Baselines.deviation($0, state: hrvState).z } : nil)
+                nights.append(CyclePhaseEngine.Night(day: d.day, tempZ: tempZ, rhrZ: rhrZ, hrvZ: hrvZ))
+                if let fused = CyclePhaseEngine.fusedIndex(tempZ: tempZ, rhrZ: rhrZ, hrvZ: hrvZ) { curve.append(fused) }
+            }
+            let phase = CyclePhaseEngine.classify(nights,
+                                                  baselineUsable: skinState.usable,
+                                                  loggedPeriodStarts: loggedPeriodStarts)
+            return (phase, curve)
+        }.value
+        // A newer computation (or an opt-out) started while this one ran: its result wins.
+        guard gen == cyclePhaseGen else { return }
+        cyclePhase = phase
         cycleCurve = curve
     }
+
+    /// Ordering token for `computeCyclePhase`, whose result now arrives from a detached task: two
+    /// overlapping calls (the post-sync cascade and the 30-minute backstop) must not publish out of order.
+    private var cyclePhaseGen = 0
 
     /// Body-clock phase estimate. Builds a coarse per-hour activity profile from the last ~14 days of
     /// downsampled HR buckets (HR amplitude is a usable rest/activity rhythm proxy when raw motion isn't
@@ -2725,6 +2749,76 @@ final class AppModel: ObservableObject {
             xiaomiImportFailed = failed
         }
         activeImportSource = nil
+    }
+}
+
+/// Writes the in-flight manual workout's durable snapshot (#529) off the main actor.
+///
+/// `AppModel.persistActiveWorkout` runs on every captured sample, about once a second, and each write
+/// JSON-encodes the WHOLE sample array: an hour into a session that is 3,600 samples re-encoded on the main
+/// thread every second, and the cost keeps growing for as long as the workout runs. That is a main-thread
+/// hitch once a second during exactly the session a wearer is watching. The encode and the `UserDefaults`
+/// write now run on a serial utility queue; the bytes written are the ones `ActiveWorkoutPersistence.store`
+/// writes, under the same key.
+///
+/// Crash recovery keeps its meaning. Every snapshot is the complete session, so when samples arrive faster
+/// than the queue drains only the NEWEST pending snapshot is encoded: it contains every sample of the ones
+/// it replaces. What a kill can lose is what it could lose before, the snapshot not yet written, now
+/// bounded by one encode instead of none. `clear` stays synchronous and is serialised with the writes
+/// under one lock, so a write that was still encoding when a session ended can never land after the clear
+/// and resurrect a finished workout on the next launch.
+final class ActiveWorkoutSnapshotWriter: @unchecked Sendable {
+    private let defaults: UserDefaults
+    private let queue = DispatchQueue(label: "noop.activeWorkout.persist", qos: .utility)
+    /// Guards `pending`, `generation` and the write itself.
+    private let lock = NSLock()
+    /// The newest snapshot the queue has not taken yet. nil when no drain is owed.
+    private var pending: ActiveWorkoutPersistence.Snapshot?
+    /// Bumped by `clear`. A snapshot taken under an older generation is never written.
+    private var generation = 0
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    /// Queue `snapshot` as the session's durable state. Replaces a snapshot still waiting to be encoded.
+    func store(_ snapshot: ActiveWorkoutPersistence.Snapshot) {
+        lock.lock()
+        let drainQueued = pending != nil
+        pending = snapshot
+        lock.unlock()
+        // A drain already queued will take this newer snapshot when it runs.
+        guard !drainQueued else { return }
+        queue.async { [self] in drain() }
+    }
+
+    /// Drop the durable snapshot now, and any write still in flight with it.
+    func clear() {
+        lock.lock()
+        pending = nil
+        generation &+= 1
+        ActiveWorkoutPersistence.clear(from: defaults)
+        lock.unlock()
+    }
+
+    /// Block until every write queued so far has landed. For tests.
+    func waitForPendingWrites() {
+        queue.sync {}
+    }
+
+    private func drain() {
+        lock.lock()
+        let snapshot = pending
+        pending = nil
+        let takenAt = generation
+        lock.unlock()
+        // Encoded outside the lock, so a `clear` on the main actor never waits for an encode.
+        guard let snapshot, let data = ActiveWorkoutPersistence.encode(snapshot) else { return }
+        lock.lock()
+        if takenAt == generation {
+            defaults.set(data, forKey: ActiveWorkoutPersistence.defaultsKey)
+        }
+        lock.unlock()
     }
 }
 
