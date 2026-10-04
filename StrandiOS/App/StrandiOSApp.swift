@@ -52,6 +52,12 @@ struct StrandiOSApp: App {
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
 
     init() {
+        // Main-thread hitch: the first PhIcon body decoded the 1.26 MB phosphor.json and the first v2 text
+        // registered the bundled fonts, both on the main thread mid-render. Start both on a background
+        // queue now; a view that renders before they finish still loads them itself, so this only moves
+        // the cost, never the result.
+        PhIcon.prewarm()
+        NoopFonts.prewarm()
         // #1008: pin the pre-change Overnight-only default for existing installs before
         // anything reads it. Idempotent; a no-op on fresh installs and after the first launch.
         PuffinExperiment.migrateContinuousHrvOvernightDefault()
