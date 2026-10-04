@@ -101,6 +101,14 @@ enum AppleWatchDevice {
             && !currentHasRecentData
     }
 
+    /// True when `device` differs from `existing` in nothing but `lastSeenAt`, or not at all: a refresh
+    /// that only records a sighting, which `registerIfAuthorized` hands to the deferred registry write.
+    static func isSightingOnly(_ device: PairedDevice, existing: PairedDevice) -> Bool {
+        var sighted = existing
+        sighted.lastSeenAt = device.lastSeenAt
+        return sighted == device
+    }
+
     /// Shared calendar window used by the registry and the active-source recency check.
     static func recentDayRange(now: Date = Date()) -> (from: String, to: String) {
         let fromDate = Calendar.current.date(byAdding: .day, value: -recentWindowDays, to: now) ?? now
@@ -128,7 +136,17 @@ enum AppleWatchDevice {
         let existing = registry.devices.first(where: { $0.id == deviceId })
         guard let device = device(daily: daily, apple: apple, authorized: authorized,
                                   existing: existing, now: now) else { return }
-        registry.add(device)
+        // Main-thread hitch: this runs on every foreground while Health is authorized, and on nearly all of
+        // them the row already holds this capability set and only `lastSeenAt` moves. That refresh is
+        // deferred off the main thread (and skipped outright when the stored row is identical), because a
+        // synchronous upsert here waited for the backfill's write lock. A new row or a changed capability
+        // set still lands synchronously: the refresh `AppModel.refreshAfterAppleHealthSync` runs straight
+        // after this returns reads the registry back from the store, not from `registry.devices`.
+        if let existing, isSightingOnly(device, existing: existing) {
+            registry.refreshSighting(device)
+        } else {
+            registry.add(device)
+        }
     }
 
     // MARK: - Day helpers

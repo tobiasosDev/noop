@@ -515,9 +515,12 @@ final class SourceCoordinator: ObservableObject {
     /// another strap active while this one is live, and stamping "the active row" would record a sighting
     /// of a strap that was never connected — the same mis-mapping the peripheralId guard above exists to
     /// prevent. A uuid no row has adopted stamps nothing. (#1527)
+    ///
+    /// The lookup is the store's exact `device(forPeripheralId:)`, run on the registry's write lane rather
+    /// than here: this fires on every link drop, and the lane keeps it behind the connect-time adoption
+    /// below, which may still be queued when a drop follows quickly while the backfill holds the writer.
     private func touchLastSeen(forStrap uuid: String) {
-        guard let device = registry.device(forPeripheralId: uuid) else { return }
-        registry.touchLastSeen(device.id)
+        registry.touchLastSeenForPeripheral(uuid)
     }
 
     /// The BLE engine connected to a WHOOP peripheral (`uuid`). Persist that stable identity onto the
@@ -550,6 +553,8 @@ final class SourceCoordinator: ObservableObject {
             return
         }
 
+        // The writes below are deferred off the main thread by the registry, which edits `devices` at call
+        // time, so a reconnect arriving before the adoption has landed in the store still reads it here.
         let activeId = registry.activeDeviceId
         guard isWhoop(activeId),
               let device = registry.devices.first(where: { $0.id == activeId }) else { return }

@@ -5284,11 +5284,18 @@ public final class BLEManager: NSObject, ObservableObject {
         else { return }
         let currentId = active.id
         Task { @MainActor [weak self] in
-            guard let self, let rs = self.registryStore,
-                  (try? rs.all().first(where: { $0.status == .active }))?.id == currentId
-            else { return }
-            guard (try? rs.adoptSerialIdentity(from: currentId, to: serialId)) == true else { return }
-            try? rs.setActive(serialId)
+            guard let self, let rs = self.registryStore else { return }
+            // Still synchronous (a once-per-pairing identity move), but run behind the registry's deferred
+            // writes: the connect-time `setPeripheralId` must be on the provisional row before
+            // `adoptSerialIdentity` copies that row onto the serial id.
+            let adopted = DeviceRegistryWriteLane.afterQueuedWrites { () -> Bool in
+                guard (try? rs.all().first(where: { $0.status == .active }))?.id == currentId,
+                      (try? rs.adoptSerialIdentity(from: currentId, to: serialId)) == true
+                else { return false }
+                try? rs.setActive(serialId)
+                return true
+            }
+            guard adopted else { return }
             // The rows have MOVED to the serial id and the old registry row is gone, so the live persist
             // paths must follow in the same turn: `deviceId`, the Collector and the Backfiller all stamp
             // rows at write time, and leaving them on the now-deleted id would write new samples into a
@@ -5343,7 +5350,9 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         guard DeviceFamily.forRegistryDevice(model: attesting.model, brand: attesting.brand) == .whoop4
         else { return }
-        try? rs.setModel(attesting.id, model: "WHOOP 5.0 / MG")
+        // Deferred to the registry's write lane: a synchronous write here waits on the main thread for the
+        // backfill's write lock (main-thread hitch).
+        DeviceRegistryWriteLane.enqueue(rs) { try $0.setModel(attesting.id, model: "WHOOP 5.0 / MG") }
         log("Corrected device model \"\(attesting.model ?? "nil")\" → \"WHOOP 5.0 / MG\" from DIS attestation (variant=\(variant.label))")
     }
 
@@ -5881,7 +5890,9 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
         if !modelStamped, let rs = registryStore,
            let stale = try? rs.all().first(where: { $0.status == .active && $0.model == "WHOOP" }) {
             let correct = selectedModel == .whoop4 ? "WHOOP 4.0" : "WHOOP 5.0 / MG"
-            try? rs.setModel(stale.id, model: correct)
+            // Deferred to the registry's write lane: discovery runs on the main thread while a backfill can
+            // hold the write lock, and a synchronous write would wait for it there (main-thread hitch).
+            DeviceRegistryWriteLane.enqueue(rs) { try $0.setModel(stale.id, model: correct) }
             log("Updated device model from \"WHOOP\" to \"\(correct)\" (#716)")
             modelStamped = true
         }
