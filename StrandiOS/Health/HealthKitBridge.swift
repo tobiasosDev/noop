@@ -1135,18 +1135,12 @@ final class HealthKitBridge: ObservableObject {
         ])
         _ = try? await store.deleteObjects(of: type, predicate: pred)
 
-        let unit = HKUnit.count().unitDivided(by: .minute())
-        var samples: [HKQuantitySample] = []
-        samples.reserveCapacity(buckets.count)
-        for b in buckets {
-            let start = Date(timeIntervalSince1970: TimeInterval(b.ts))
-            // Span the bucket, clamped so a bucket at the window edge can't end in the future
-            // (HealthKit rejects future-dated samples).
-            let end = Date(timeIntervalSince1970: TimeInterval(min(b.ts + 60, nowTs)))
-            samples.append(HKQuantitySample(type: type,
-                                            quantity: .init(unit: unit, doubleValue: b.bpm),
-                                            start: start, end: max(start, end)))
-        }
+        // Main-thread hitch: the bridge is @MainActor and this loop allocates one HealthKit object per
+        // minute bucket (~2,880 on a routine pass, ~20k on the first). Built off the main actor; the
+        // save below is already async.
+        let samples = await Task.detached(priority: .utility) {
+            HealthKitBridge.heartRateSamples(buckets: buckets, type: type, nowTs: nowTs)
+        }.value
         // First run backfills ~20k samples (14 d × 1440/day); chunk the saves so no single HealthKit
         // transaction is oversized. Cursor only advances past what actually saved.
         var lastSaved = cursor
@@ -1161,6 +1155,24 @@ final class HealthKitBridge: ObservableObject {
             lastSaved = max(lastSaved, chunkTs.last ?? lastSaved)
             UserDefaults.standard.set(lastSaved, forKey: hrWriteCursorKey)
         }
+    }
+
+    /// One `HKQuantitySample` per 1-minute bucket, each spanning its bucket but clamped so a bucket at
+    /// the window edge cannot end in the future (HealthKit rejects future-dated samples). `nonisolated`
+    /// so `writeHeartRate` can build the batch off the main actor.
+    nonisolated static func heartRateSamples(buckets: [HRBucket], type: HKQuantityType,
+                                             nowTs: Int) -> [HKQuantitySample] {
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        var samples: [HKQuantitySample] = []
+        samples.reserveCapacity(buckets.count)
+        for b in buckets {
+            let start = Date(timeIntervalSince1970: TimeInterval(b.ts))
+            let end = Date(timeIntervalSince1970: TimeInterval(min(b.ts + 60, nowTs)))
+            samples.append(HKQuantitySample(type: type,
+                                            quantity: .init(unit: unit, doubleValue: b.bpm),
+                                            start: start, end: max(start, end)))
+        }
+        return samples
     }
 
     /// Write strap-detected and manual workouts into Health via `HKWorkoutBuilder`, with an
