@@ -24,7 +24,7 @@ public enum NoopMetrics {
     /// Canonical compact provenance-chip height; shared with overlays that align the chip to a border.
     public static let sourceBadgeHeight: CGFloat = 18
     public static let hypnogramBandMinThickness: CGFloat = 14  // floor so short stages read as bars, not ticks
-    public static let tabBarClearance: CGFloat = 76  // iOS: extra bottom scroll room so the last card clears the floating tab bar
+    public static let tabBarClearance: CGFloat = 128  // iOS: bottom scroll room so the last card clears the floating v2 tab bar and its fade
     /// Canonical diameter for compact circular controls in dense header chrome.
     public static let compactControlSize: CGFloat = 36
     /// Expanded width of the compact charge-to-sync status capsule.
@@ -71,13 +71,13 @@ public enum NoopMetrics {
     /// Vertical gap between top-level page sections.
     public static let sectionSpacing: CGFloat = NoopVisualStyle.sectionGap
     /// Interior padding inside a card's content (matches `cardPadding`).
-    public static let cardInnerPadding: CGFloat = 16
+    public static let cardInnerPadding: CGFloat = 18
     /// Vertical gap between stacked elements INSIDE a card.
     public static let cardInnerSpacing: CGFloat = 12
     /// Vertical gap between rows in a list-style card.
     public static let rowSpacing: CGFloat = 10
     /// Standard interactive-control height (buttons, fields, segmented controls).
-    public static let controlHeight: CGFloat = 48
+    public static let controlHeight: CGFloat = 52
     /// Standard one-pixel edge used by cards and compact controls.
     public static let hairlineWidth: CGFloat = 1
     /// Profile form dimensions shared by avatar and numeric controls.
@@ -87,8 +87,8 @@ public enum NoopMetrics {
     /// Compact metadata and explanatory-footer heights.
     public static let compactMetadataMinHeight: CGFloat = 24
     public static let compactHintMinHeight: CGFloat = 18
-    /// Canonical thickness for compact horizontal indicator tracks.
-    public static let indicatorTrackHeight: CGFloat = 8
+    /// Canonical thickness for compact horizontal indicator tracks (the v2 `.track` at its slim size).
+    public static let indicatorTrackHeight: CGFloat = 10
     /// Fully-rounded corner radius — pills, chips, capsule buttons.
     public static let pillRadius: CGFloat = NoopVisualStyle.pillRadius
     /// Minimum desktop size for a navigation-based customization sheet.
@@ -116,10 +116,21 @@ public extension View {
     /// NOT receive this, so the helper is iOS-only and call sites stay shared via #if.
     /// `largeFirst == false` opens at .medium with .large reachable by dragging up (short
     /// forms); `true` opens full-height (long scrolls).
+    ///
+    /// v2: the sheet rises on the near-black sheet gradient with the 38 pt top radius of the kit.
+    @ViewBuilder
     func noopSheetPresentation(largeFirst: Bool) -> some View {
-        self
-            .presentationDragIndicator(.visible)
-            .presentationDetents(largeFirst ? [.large] : [.medium, .large])
+        if #available(iOS 16.4, *) {
+            self
+                .presentationDragIndicator(.visible)
+                .presentationDetents(largeFirst ? [.large] : [.medium, .large])
+                .presentationBackground { NoopSheetBackground() }
+                .presentationCornerRadius(NoopVisualStyle.heroRadius)
+        } else {
+            self
+                .presentationDragIndicator(.visible)
+                .presentationDetents(largeFirst ? [.large] : [.medium, .large])
+        }
     }
 }
 #endif
@@ -178,6 +189,8 @@ public struct SectionHeader: View {
         self.title = title; self.overline = overline; self.trailing = trailing
     }
     public var body: some View {
+        // v2 `.st`: a 21 pt Book section title with a quiet 11 pt caption on the right. The 18 pt above
+        // plus a 12 pt column gap gives the kit's 30 pt before a section.
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 if let overline { Text(overline).strandOverline() }
@@ -185,9 +198,10 @@ public struct SectionHeader: View {
             }
             Spacer()
             if let trailing {
-                Text(trailing).font(StrandFont.footnote).foregroundStyle(StrandPalette.textSecondary)
+                Text(trailing).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
             }
         }
+        .padding(.top, 18)
     }
 }
 
@@ -219,18 +233,20 @@ public struct StatTile<Accessory: View>: View {
     public var body: some View {
         // The tile borrows its accent as a faint card wash, so each metric tile reads as
         // part of its colour world while staying legible on the deep blue-black.
-        NoopCard(padding: 14, tint: accent) {
+        // v2 mini card: a 14 pt Book title, a 26 pt Light value, an 10.5 pt caption below.
+        NoopCard(padding: NoopMetrics.cardPadding) {
             VStack(alignment: .leading, spacing: 0) {
                 // Header row: the metric label, and (right-aligned) the optional accessory laid out in
                 // flow so it reserves its own space rather than floating over the value below (#495).
                 HStack(alignment: .top, spacing: 4) {
-                    Text(label).strandOverline()
+                    Text(label).font(StrandFont.book(14)).foregroundStyle(StrandPalette.textPrimary)
                     Spacer(minLength: 0)
                     accessory()
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: 14)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(value).font(StrandFont.number(26)).foregroundStyle(accent).lineLimit(1).minimumScaleFactor(0.6)
+                    Text(value).font(StrandFont.value(26, weight: 300)).tracking(-0.5)
+                        .foregroundStyle(StrandPalette.textPrimary).lineLimit(1).minimumScaleFactor(0.6)
                     Spacer(minLength: 0)
                     // Trend chip — the delta as a tinted pill with a direction arrow.
                     if let delta { TrendChip(text: delta, color: deltaColor) }
@@ -245,8 +261,8 @@ public struct StatTile<Accessory: View>: View {
                 }
                 #endif
                 if let caption {
-                    Text(caption).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary).lineLimit(1)
-                        .padding(.top, 2)
+                    Text(caption).font(StrandFont.light(10.5)).foregroundStyle(StrandPalette.textTertiary).lineLimit(1)
+                        .padding(.top, 3)
                 }
             }
         }
@@ -297,14 +313,15 @@ public struct TrendChip: View {
     }
     public var body: some View {
         HStack(spacing: 3) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 8, weight: .bold)) }
+            if let symbol { Image(systemName: symbol).font(.system(size: 8, weight: .regular)) }
             // One line, always: a long chip (e.g. a workout's kcal) truncates rather than wraps, so
             // the pill never grows a tile past its floor. Matches Android's unconditional ellipsize (#934).
             Text(text).font(StrandFont.captionNumber).lineLimit(1)
         }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(color.opacity(0.14), in: Capsule(style: .continuous))
+        .foregroundStyle(color == StrandPalette.textTertiary ? StrandPalette.textSecondary : color)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(Color.white.opacity(0.05), in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
         .accessibilityHidden(true)
     }
 }
@@ -331,13 +348,12 @@ public struct ChartCard<ChartBody: View, Footer: View>: View {
     public var body: some View {
         NoopCard(tint: tint) {
             VStack(alignment: .leading, spacing: 12) {
+                // v2 `.ct`: a 14 pt Book card title, the subtitle as a quiet caption at the right.
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).strandOverline()
-                        if let subtitle { Text(subtitle).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary) }
-                    }
+                    Text(title).font(StrandFont.book(14)).foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
-                    if let trailing { Text(trailing).font(StrandFont.bodyNumber).foregroundStyle(StrandPalette.textPrimary) }
+                    if let subtitle { Text(subtitle).font(StrandFont.light(12)).foregroundStyle(StrandPalette.textTertiary) }
+                    if let trailing { Text(trailing).font(StrandFont.value(15)).foregroundStyle(StrandPalette.textPrimary) }
                 }
                 chart().frame(height: height)
                 let f = footer()
@@ -358,8 +374,9 @@ public struct ChartFooter: View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, it in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(it.0).textCase(.uppercase).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                    Text(it.1).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textSecondary)
+                    Text(it.1).font(StrandFont.value(21)).tracking(-0.4).foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Text(it.0).font(StrandFont.light(10.5)).foregroundStyle(StrandPalette.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -392,7 +409,7 @@ public struct InsightCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(category).strandOverline()
                     .padding(.trailing, titleTrailingInset)
-                Text(status).font(StrandFont.rounded(28, weight: .bold)).foregroundStyle(statusColor)
+                Text(status).font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.trailing, titleTrailingInset)
                 Text(detail).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
@@ -469,7 +486,7 @@ public struct SegmentedPillControl<T: Hashable>: View {
                     withAnimation(StrandMotion.interactive) { selection = item }
                 } label: {
                     Text(label(item))
-                        .font(StrandFont.captionNumber)
+                        .font(StrandFont.book(13, relativeTo: .caption))
                         .lineLimit(equalWidth ? 1 : nil)
                         // Range selection stays deliberately neutral so the control works above charts
                         // from every metric colour world without borrowing their green/blue/amber tint.
@@ -484,57 +501,36 @@ public struct SegmentedPillControl<T: Hashable>: View {
                                maxHeight: .infinity)
                         .padding(.horizontal, equalWidth ? NoopMetrics.space1 : 9)
                         .background {
+                            // v2 `.seg span.on`: a raised grey capsule lit by an inner top highlight.
                             if sel {
-                                let selectedShape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                selectedShape
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [NoopVisualStyle.surfaceTop, NoopVisualStyle.surface],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
+                                Capsule(style: .continuous)
+                                    .fill(NoopVisualStyle.raised)
                                     .overlay(
-                                        selectedShape.strokeBorder(
-                                            NoopVisualStyle.borderHighlight.opacity(0.62),
-                                            lineWidth: 0.75
+                                        Capsule(style: .continuous).strokeBorder(
+                                            LinearGradient(colors: [NoopVisualStyle.topHighlight, .clear],
+                                                           startPoint: .top, endPoint: .center),
+                                            lineWidth: 1
                                         )
                                     )
-                                    .shadow(color: .black.opacity(0.20), radius: 4, x: 0, y: 2)
                             }
                         }
-                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .contentShape(Capsule(style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: equalWidth ? .infinity : nil)
-                .frame(height: 32)   // segment height; the pill fills it for an even inset
+                .frame(height: 34)   // segment height; the pill fills it for an even inset
                 .disabled(!enabled)
                 // Announce the active range to VoiceOver and give a non-colour cue.
                 .accessibilityAddTraits(sel ? .isSelected : [])
             }
         }
-        .padding(3)
+        .padding(4)
         .frame(maxWidth: equalWidth ? .infinity : nil)
         .background {
-            let trackShape = RoundedRectangle(cornerRadius: 13, style: .continuous)
-            trackShape
-                .fill(
-                    LinearGradient(
-                        colors: [NoopVisualStyle.inset, NoopVisualStyle.canvas.opacity(0.78)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .overlay(
-                    trackShape.strokeBorder(
-                        LinearGradient(
-                            colors: [NoopVisualStyle.borderHighlight.opacity(0.48), NoopVisualStyle.border],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 0.8
-                    )
-                )
+            // v2 `.seg`: a near-black capsule track behind a 1 pt hairline.
+            Capsule(style: .continuous)
+                .fill(NoopVisualStyle.surface)
+                .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
         }
     }
 }
@@ -548,11 +544,13 @@ public struct SourceBadge: View {
         // `.frame(height:)` centres its content by default, so the label sits mid-capsule for free. Noted
         // because the Android twin pinned the same 18 with `heightIn` applied to the label itself, which
         // top-aligns — same number, different render. That one is matched to this, not the reverse.
-        Text(text).textCase(.uppercase).font(.system(size: 10, weight: .semibold, design: .rounded)).tracking(0.5)
+        // v2: a neutral capsule (hairline + 5 % white) with the label in secondary ink — colour stays
+        // in the hero, so a provenance badge never adds a second accent to a screen.
+        Text(text).textCase(.uppercase).font(StrandFont.book(9.5)).tracking(0.8)
             .padding(.horizontal, 9).frame(height: NoopMetrics.sourceBadgeHeight)
-            .background(tint.opacity(0.16), in: Capsule(style: .continuous))
-            .foregroundStyle(tint)
-            .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.34), lineWidth: 1))
+            .background(Color.white.opacity(0.05), in: Capsule(style: .continuous))
+            .foregroundStyle(StrandPalette.textSecondary)
+            .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
     }
 }
 
@@ -591,49 +589,42 @@ public extension View {
     }
 }
 
-// MARK: - Buttons (Titanium & Gold) — ADDED additively, no existing API touched.
+// MARK: - Buttons (v2 pills)
 //
-// Three house button styles for primary actions, secondary chrome and ghost/gold
-// CTAs. Drop in via `.buttonStyle(.noopPrimary)` etc. on any `Button`. All read off
-// the new gold tokens so they match Apple ⇄ Android. Pressed = subtle dim + scale.
+// Three house button styles for primary actions, secondary chrome and ghost CTAs. Drop in via
+// `.buttonStyle(.noopPrimary)` etc. on any `Button`. Pressed = subtle dim + scale.
 
-/// Primary call-to-action: gold-gradient fill, dark gold-deep ink (700), rounded 13.
+/// Primary call-to-action: the ink pill (white with black text on the dark ground), 52 pt.
 public struct NoopPrimaryButtonStyle: ButtonStyle {
     public init() {}
     public func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
         return configuration.label
-            .font(StrandFont.body.weight(.bold))
+            .font(StrandFont.medium(15, relativeTo: .body))
             .foregroundStyle(StrandPalette.goldDeepText)
-            .padding(.vertical, 11).padding(.horizontal, 18)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            // A crisp, subtle NEUTRAL elevation — the gold cast-glow read as too much against the
-            // clean design, so it's a soft dark lift now, no bloom.
-            .shadow(color: .black.opacity(pressed ? 0.08 : 0.16), radius: 6, x: 0, y: 3)
-            .opacity(pressed ? 0.9 : 1)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(Capsule(style: .continuous).fill(StrandPalette.gold))
+            .opacity(pressed ? 0.86 : 1)
             .scaleEffect(pressed ? 0.98 : 1)
             .animation(StrandMotion.interactive, value: pressed)
             .contentShape(Rectangle())
     }
 }
 
-/// Secondary: inset well + 1px white-12 border + primary text. Quieter than gold.
+/// Secondary: a raised grey pill behind the stronger hairline, ink text.
 public struct NoopSecondaryButtonStyle: ButtonStyle {
     public init() {}
     public func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
-        let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
+        let shape = Capsule(style: .continuous)
         return configuration.label
-            .font(StrandFont.body.weight(.semibold))
+            .font(StrandFont.medium(15, relativeTo: .body))
             .foregroundStyle(StrandPalette.textPrimary)
-            .padding(.vertical, 11).padding(.horizontal, 18)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 52)
             .background(shape.fill(StrandPalette.surfaceInset))
-            .overlay(shape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
+            .overlay(shape.strokeBorder(StrandPalette.hairlineStrong, lineWidth: 1))
             .opacity(pressed ? 0.82 : 1)
             .scaleEffect(pressed ? 0.98 : 1)
             .animation(StrandMotion.interactive, value: pressed)
@@ -641,19 +632,19 @@ public struct NoopSecondaryButtonStyle: ButtonStyle {
     }
 }
 
-/// Ghost / gold: transparent + 1px gold@.3 hairline + gold text. Tertiary CTA.
+/// Ghost: transparent pill with the stronger hairline and ink text. Tertiary CTA.
 public struct NoopGhostButtonStyle: ButtonStyle {
     public init() {}
     public func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
-        let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
+        let shape = Capsule(style: .continuous)
         return configuration.label
-            .font(StrandFont.body.weight(.semibold))
-            .foregroundStyle(StrandPalette.gold)
-            .padding(.vertical, 11).padding(.horizontal, 18)
-            .frame(maxWidth: .infinity)
-            .background(shape.fill(StrandPalette.gold.opacity(pressed ? 0.10 : 0)))
-            .overlay(shape.strokeBorder(StrandPalette.gold.opacity(0.3), lineWidth: 1))
+            .font(StrandFont.medium(15, relativeTo: .body))
+            .foregroundStyle(StrandPalette.textPrimary)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(shape.fill(Color.white.opacity(pressed ? 0.06 : 0)))
+            .overlay(shape.strokeBorder(StrandPalette.hairlineStrong, lineWidth: 1))
             .scaleEffect(pressed ? 0.98 : 1)
             .animation(StrandMotion.interactive, value: pressed)
             .contentShape(Rectangle())
@@ -715,16 +706,17 @@ public struct ScoreStatePill: View {
     }
     public var body: some View {
         let hue = state.color
+        // v2 `.pill` (small): a translucent white capsule with a 12 pt label. Only LIVE keeps a coloured
+        // dot — the lifecycle reads from the word, not from a second accent.
         return HStack(spacing: 6) {
-            PulseDot(color: hue, pulsing: state.pulsing, size: 7)
+            if state.pulsing { PulseDot(color: hue, pulsing: true, size: 6) }
             Text(text ?? state.label)
-                .font(StrandFont.overline)
-                .tracking(0.4)
-                .foregroundStyle(hue)
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .foregroundStyle(StrandPalette.textPrimary)
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(Capsule(style: .continuous).fill(hue.opacity(0.12)))
-        .overlay(Capsule(style: .continuous).stroke(hue.opacity(0.32), lineWidth: 1))
+        .padding(.horizontal, 12).frame(height: 30)
+        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.07)))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text ?? state.label)
     }

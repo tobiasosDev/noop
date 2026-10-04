@@ -17,9 +17,26 @@ final class StrandDesignTests: XCTestCase {
     }
 
     func testRecoveryGradientStops() {
-        XCTAssertEqual(StrandPalette.recoveryStops.count, 5)
+        // v2: three flat bands (< 50 low, 50–69 mid, ≥ 70 high), two stops per band.
+        XCTAssertEqual(StrandPalette.recoveryStops.count, 6)
         XCTAssertEqual(StrandPalette.recoveryStops.first?.location, 0.0)
         XCTAssertEqual(StrandPalette.recoveryStops.last?.location, 1.0)
+    }
+
+    func testRecoveryColorFollowsTheV2Bands() {
+        XCTAssertEqual(NoopGlow.charge(49), .low)
+        XCTAssertEqual(NoopGlow.charge(50), .moderate)
+        XCTAssertEqual(NoopGlow.charge(69.9), .moderate)
+        XCTAssertEqual(NoopGlow.charge(70), .recovery)
+        func rgb(_ c: Color) -> (Double, Double, Double) { let x = c.rgbaComponents; return (x.r, x.g, x.b) }
+        let low = rgb(StrandPalette.recovery000), mid = rgb(StrandPalette.recovery055), high = rgb(StrandPalette.recovery100)
+        // The bands match the Charge state words: LOW below 50, MODERATE 50–69, PRIMED from 70.
+        for (score, band) in [(10.0, low), (49.0, low), (50.5, mid), (69.0, mid), (70.5, high), (90.0, high)] {
+            let got = rgb(StrandPalette.recoveryColor(score))
+            XCTAssertEqual(got.0, band.0, accuracy: 0.02, "score \(score)")
+            XCTAssertEqual(got.1, band.1, accuracy: 0.02, "score \(score)")
+            XCTAssertEqual(got.2, band.2, accuracy: 0.02, "score \(score)")
+        }
     }
 
     func testRecoveryColorEndpoints() {

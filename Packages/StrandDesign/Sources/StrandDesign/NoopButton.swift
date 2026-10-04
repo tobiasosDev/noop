@@ -1,9 +1,10 @@
 import SwiftUI
 
-// MARK: - NoopButton — the unified button system (Design Reset, 2026-06-22)
+// MARK: - NoopButton — the unified button system (v2)
 //
-// One button, four kinds, no glow. Beauty comes from a crisp filled accent, honest
-// surface fills, restrained spacing and a subtle press — never neon, bloom or a halo.
+// One button, four kinds, no glow. v2 buttons are full pills: the primary action is an INK pill
+// (white with black text on the dark ground), secondary actions a raised grey pill behind a hairline,
+// tertiary a bare ink label. Never neon, bloom or a halo.
 // Every colour is a token from `StrandPalette`; every dimension reads off `NoopMetrics`.
 //
 // Two front doors:
@@ -17,13 +18,13 @@ import SwiftUI
 
 /// The four button roles. Colour + emphasis differ; geometry is identical across all four.
 public enum NoopButtonKind: Sendable {
-    /// Filled accent (blue), white label — the one primary action on a screen.
+    /// Ink pill (white on dark), black label — the one primary action on a screen.
     case primary
-    /// Raised-surface fill, primary-text label, hairline edge — secondary actions.
+    /// Raised grey pill, ink label, hairline edge — secondary actions.
     case secondary
-    /// No fill, accent label — low-emphasis / inline actions.
+    /// No fill, ink label — low-emphasis / inline actions.
     case tertiary
-    /// Filled critical (red), white label — destructive / irreversible actions.
+    /// Raised grey pill with a red label — destructive / irreversible actions.
     case destructive
 }
 
@@ -32,16 +33,16 @@ public enum NoopButtonKind: Sendable {
 /// Fixed geometry shared by the convenience view and the ButtonStyle so the two paths
 /// are pixel-identical. The single source of truth for button shape.
 public enum NoopButtonMetrics {
-    /// Standard control height (48) — also the source for the min hit target floor.
-    public static let height: CGFloat = NoopMetrics.controlHeight
-    /// Corner radius (14) — softer than a card, not a pill.
-    public static let cornerRadius: CGFloat = 14
+    /// Standard control height (52, the v2 `.btn`).
+    public static let height: CGFloat = 52
+    /// Fully round — v2 buttons are pills.
+    public static let cornerRadius: CGFloat = 26
     /// Horizontal label inset.
     public static let hPadding: CGFloat = 18
     /// Spacing between a leading icon and the label.
     public static let iconSpacing: CGFloat = 8
-    /// Label tracking — a hair of openness on the semibold face.
-    public static let tracking: CGFloat = 0.2
+    /// Label tracking — none; Hanken Medium is already open.
+    public static let tracking: CGFloat = 0
     /// Apple's minimum touch target. The button never reports a hit area below this.
     public static let minHitTarget: CGFloat = 44
     /// Pressed scale (spec: subtle 0.97). Reduce-Motion collapses this to 1 (dim only).
@@ -63,24 +64,24 @@ struct NoopButtonAppearance {
     init(_ kind: NoopButtonKind) {
         switch kind {
         case .primary:
-            fill = StrandPalette.accent
-            label = StrandPalette.goldDeepText   // designated crisp white for text on accent fills
+            fill = StrandPalette.gold            // the v2 ink fill
+            label = StrandPalette.goldDeepText   // black on the white pill
             border = nil
             usesPanelSurface = false
         case .secondary:
+            fill = NoopVisualStyle.inset
+            label = StrandPalette.textPrimary
+            border = NoopVisualStyle.borderHighlight
+            usesPanelSurface = false
+        case .tertiary:
             fill = nil
             label = StrandPalette.textPrimary
             border = nil
-            usesPanelSurface = true
-        case .tertiary:
-            fill = nil
-            label = StrandPalette.accent
-            border = nil
             usesPanelSurface = false
         case .destructive:
-            fill = StrandPalette.statusCritical
-            label = StrandPalette.goldDeepText   // crisp white on the critical fill
-            border = nil
+            fill = NoopVisualStyle.inset
+            label = StrandPalette.statusCritical
+            border = NoopVisualStyle.borderHighlight
             usesPanelSurface = false
         }
     }
@@ -134,7 +135,7 @@ public struct NoopButtonStyle: ButtonStyle {
 
         configuration.label
             .labelStyle(.titleAndIcon)
-            .font(StrandFont.headline.weight(.semibold))
+            .font(StrandFont.medium(15, relativeTo: .body))
             .tracking(NoopButtonMetrics.tracking)
             .lineLimit(1)
             .minimumScaleFactor(0.9)

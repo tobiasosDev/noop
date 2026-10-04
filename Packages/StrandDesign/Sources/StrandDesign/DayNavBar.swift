@@ -53,10 +53,10 @@ public struct DayNavBar: View {
         HStack(spacing: 12) {
             Spacer(minLength: 0)
             Button { onSelect(selectedOffset + 1) } label: {
-                Image(systemName: "chevron.left")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.accent)
-                    .frame(width: 44, height: 44)        // ≥44pt hit target (HIG); glyph stays 17pt
+                PhIcon("caret-left", size: 16)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .opacity(0.8)
+                    .frame(width: 44, height: 44)        // ≥44pt hit target (HIG)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -76,18 +76,19 @@ public struct DayNavBar: View {
                             .dateTime.day().month(.abbreviated).year().locale(locale)
                         ))
                             .font(StrandFont.captionNumber)
-                            .foregroundStyle(StrandPalette.accent)
+                            .foregroundStyle(StrandPalette.textSecondary)
                             .lineLimit(1)
                     }
                 }
-                .padding(.vertical, 9)
-                .padding(.horizontal, 20)
+                .padding(.vertical, 7)
+                .padding(.horizontal, 18)
+                .frame(minHeight: 38)
                 // Reads as one of the flat WHOOP-grey cards, not a black bar. On macOS the full-width
                 // pill sits over the bright Today day-scene, where the darker inset well read as black;
                 // surfaceRaised (the card fill) lifts it to card level so it matches the dashboard
                 // cards. No gold wash behind the date — the gold pop lives only on the date text.
                 .background(blockFill, in: blockShape)
-                .overlay(blockShape.strokeBorder(StrandPalette.hairline, lineWidth: 1))
+                .overlay(blockShape.strokeBorder(NoopVisualStyle.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text("Pick a date", bundle: .module))
@@ -96,10 +97,10 @@ public struct DayNavBar: View {
             }
 
             Button { if canGoNewer { onSelect(selectedOffset - 1) } } label: {
-                Image(systemName: "chevron.right")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(canGoNewer ? StrandPalette.accent : StrandPalette.textTertiary)
-                    .frame(width: 44, height: 44)        // ≥44pt hit target (HIG); glyph stays 17pt
+                PhIcon("caret-right", size: 16)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .opacity(canGoNewer ? 0.8 : 0.25)
+                    .frame(width: 44, height: 44)        // ≥44pt hit target (HIG)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -135,20 +136,11 @@ public struct DayNavBar: View {
             .frame(minWidth: 320, minHeight: 360)
     }
 
-    private var blockShape: RoundedRectangle { RoundedRectangle(cornerRadius: 14, style: .continuous) }
+    /// The v2 `.pager` pill.
+    private var blockShape: Capsule { Capsule(style: .continuous) }
 
-    /// Fill for the centre day block. On macOS the bar spans the bright Today day-scene, so it uses the
-    /// raised WHOOP-grey card fill to read as a card rather than a black bar; iOS (which uses the compact
-    /// top-bar day-nav, not this control) keeps the inset well fill unchanged.
-    private var blockFill: Color {
-        #if os(macOS)
-        // Compact translucent pill (not a full-width bar) — the scene shows through so it reads as a
-        // floating control over the day-scene, never a solid black bar; white label stays legible at 0.72.
-        StrandPalette.surfaceBase.opacity(0.72)
-        #else
-        StrandPalette.surfaceInset
-        #endif
-    }
+    /// Fill for the centre day block: the v2 inset pill fill on both platforms.
+    private var blockFill: Color { NoopVisualStyle.inset }
 
 }
 #endif

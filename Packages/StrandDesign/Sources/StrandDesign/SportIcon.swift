@@ -509,6 +509,54 @@ public enum WorkoutTypeIconography {
         }
     }
 
+    /// The v2 Phosphor glyph for a type, where the bundled Phosphor set has a faithful, unique one (the
+    /// sport picker and workout lists of the v2 design draw these). nil for the rest, which keep their SF
+    /// Symbol or custom vector, so no two types ever share a Phosphor glyph either.
+    public static func phosphorName(for type: KnownWorkoutType) -> String? {
+        switch type {
+        case .running:          return "person-simple-run"
+        case .walking:          return "person-simple-walk"
+        case .hiking:           return "person-simple-hike"
+        case .cycling:          return "person-simple-bike"
+        case .indoorCycle:      return "bicycle"
+        case .treadmillRun:     return "sneaker-move"
+        case .treadmillWalk:    return "sneaker"
+        case .calisthenics:     return "person-arms-spread"
+        case .openWaterSwim:    return "waves"
+        case .poolSwim:         return "swimming-pool"
+        case .rowing:           return "boat"
+        case .sailing:          return "sailboat"
+        case .strength:         return "barbell"
+        case .yoga:             return "person-simple-tai-chi"
+        case .meditation:       return "flower-lotus"
+        case .hiit:             return "lightning"
+        case .tennis:           return "tennis-ball"
+        case .soccer:           return "soccer-ball"
+        case .basketball:       return "basketball"
+        case .baseball:         return "baseball"
+        case .volleyball:       return "volleyball"
+        case .sandVolleyball:   return "beach-ball"
+        case .americanFootball: return "football"
+        case .golf:             return "golf"
+        case .iceHockey:        return "hockey"
+        case .tableTennis:      return "ping-pong"
+        case .bowling:          return "bowling-ball"
+        case .boxing:           return "boxing-glove"
+        case .martialArts:      return "hand-fist"
+        case .fencing:          return "sword"
+        case .archery:          return "target"
+        case .fishing:          return "fish"
+        case .horsebackRiding:  return "horse"
+        case .wheelchair:       return "wheelchair-motion"
+        case .skiing:           return "person-simple-ski"
+        case .snowboarding:     return "person-simple-snowboard"
+        case .stairClimber:     return "stairs"
+        case .climbing:         return "mountains"
+        case .dancing:          return "music-notes"
+        default:                return nil
+        }
+    }
+
     /// SF Symbol name for call sites that still need `Image(systemName:)`. Custom-only types return
     /// the nearest system stand-in so charts/lists stay populated.
     public static func systemSymbolName(for sport: String) -> String {
@@ -595,6 +643,20 @@ public struct WorkoutTypeIcon: View {
     public var body: some View {
         let type = KnownWorkoutType.resolving(sport) ?? .other
         Group {
+            if let phosphor = WorkoutTypeIconography.phosphorName(for: type), PhIcon.exists(phosphor) {
+                PhIcon(phosphor, size: size)
+            } else {
+                legacyGlyph(type)
+            }
+        }
+        .foregroundStyle(color)
+        .frame(width: size, height: size, alignment: .center)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func legacyGlyph(_ type: KnownWorkoutType) -> some View {
+        Group {
             switch WorkoutTypeIconography.glyph(for: type) {
             case .system(let name):
                 Image(systemName: name)
@@ -604,9 +666,6 @@ public struct WorkoutTypeIcon: View {
                 customStroke(custom)
             }
         }
-        .foregroundStyle(color)
-        .frame(width: size, height: size, alignment: .center)
-        .accessibilityHidden(true)
     }
 
     private var strokeWidth: CGFloat { max(1.35, size * 0.085) }

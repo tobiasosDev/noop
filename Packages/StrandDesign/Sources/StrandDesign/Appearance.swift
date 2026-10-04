@@ -226,7 +226,7 @@ public enum ThemePreset: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// The user's appearance preference for the whole app. Persisted via
-/// `@AppStorage(AppearanceMode.storageKey)`. `.system` follows the OS (the default);
+/// `@AppStorage(AppearanceMode.storageKey)`. `.system` follows the OS; `defaultMode` (dark) is the default;
 /// `.light` / `.dark` force a scheme regardless of the system setting.
 ///
 /// Applied once at each app root via `.preferredColorScheme(mode.colorScheme)`. Because every
@@ -241,6 +241,9 @@ public enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
 
     /// The @AppStorage key shared by the app roots and the Settings picker.
     public static let storageKey = "theme.appearance"
+    /// The appearance an install starts in. v2 is designed dark-first (a true-black instrument panel),
+    /// so a wearer who never touched the setting sees the designed look; System and Light stay selectable.
+    public static let defaultMode: AppearanceMode = .dark
 
     /// Human label for the Settings control.
     ///
@@ -277,9 +280,9 @@ public enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Resolve a stored raw value (tolerant of an unknown/missing value → `.system`).
+    /// Resolve a stored raw value (tolerant of an unknown/missing value → `defaultMode`).
     public static func resolve(_ raw: String) -> AppearanceMode {
-        AppearanceMode(rawValue: raw) ?? .system
+        AppearanceMode(rawValue: raw) ?? defaultMode
     }
 }
 
