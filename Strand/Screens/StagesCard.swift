@@ -557,10 +557,13 @@ private struct StageShareRing: View {
             let f = min(max(fraction, 0), 1)
             let a = Angle.degrees(-90 + 360 * f).radians
             ZStack {
+                // Inset both strokes so their centreline shares the knob's radius.
                 Circle().stroke(Color.white.opacity(0.08), lineWidth: lineWidth)
+                    .padding(lineWidth / 2)
                 Circle().trim(from: 0, to: f)
                     .stroke(NoopGlow.sleep.accent, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                    .padding(lineWidth / 2)
                 if f > 0 {
                     Circle().fill(Color.white).frame(width: 9, height: 9)
                         .offset(x: r * CGFloat(cos(a)), y: r * CGFloat(sin(a)))
