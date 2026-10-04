@@ -42,9 +42,7 @@ struct OpenAIClient: AIProviderClient {
         var wire: [[String: Any]] = [["role": "system", "content": systemPrompt]]
         for m in messages { wire.append(["role": m.role.rawValue, "content": m.content]) }
 
-        var body: [String: Any] = ["model": model, "messages": wire, "stream": true]
-        body["temperature"] = 0.6
-        body["max_tokens"] = 4096
+        let body = requestBody(model: model, wire: wire, stream: true)
 
         var req = URLRequest(url: provider.endpoint)
         req.httpMethod = "POST"
@@ -86,6 +84,29 @@ struct OpenAIClient: AIProviderClient {
         return OpenRouterModel.parse(try await performRequest(req, session: session))
     }
 
+    /// Shared by streaming, normal sends and parameter retries. OpenRouter must never route a
+    /// request to an endpoint that retains prompts or responses; no eligible endpoint means an error.
+    func requestBody(
+        model: String,
+        wire: [[String: Any]],
+        modernParams: Bool = false,
+        stream: Bool = false
+    ) -> [String: Any] {
+        var body: [String: Any] = ["model": model, "messages": wire]
+        // #1074: 900 truncated detailed coaching replies mid-sentence; 4096 lets a full multi-section
+        // reply complete (a cap, not a target — the system prompt keeps it short). Matches Gemini + Android.
+        if modernParams {
+            body["max_completion_tokens"] = 4096
+        } else {
+            body["temperature"] = 0.6
+            body["max_tokens"] = 4096
+        }
+
+        if stream { body["stream"] = true }
+        if provider == .openRouter { body["provider"] = ["zdr": true] }
+        return body
+    }
+
     // MARK: Private
 
     /// `modernParams`: use `max_completion_tokens`, drop `temperature` — required by reasoning models.
@@ -96,15 +117,7 @@ struct OpenAIClient: AIProviderClient {
         modernParams: Bool,
         session: URLSession
     ) async throws -> String {
-        var body: [String: Any] = ["model": model, "messages": wire]
-        // #1074: 900 truncated detailed coaching replies mid-sentence; 4096 lets a full multi-section
-        // reply complete (a cap, not a target — the system prompt keeps it short). Matches Gemini + Android.
-        if modernParams {
-            body["max_completion_tokens"] = 4096
-        } else {
-            body["temperature"] = 0.6
-            body["max_tokens"] = 4096
-        }
+        let body = requestBody(model: model, wire: wire, modernParams: modernParams)
 
         var req = URLRequest(url: provider.endpoint)
         req.httpMethod = "POST"

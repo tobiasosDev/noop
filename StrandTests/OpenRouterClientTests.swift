@@ -38,22 +38,8 @@ final class OpenRouterClientTests: XCTestCase {
         let request = try XCTUnwrap(OpenRouterURLProtocol.requests.first)
         XCTAssertEqual(request.url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
-        let data: Data
-        if let body = request.httpBody { data = body }
-        else {
-            let stream = try XCTUnwrap(request.httpBodyStream)
-            stream.open()
-            defer { stream.close() }
-            var bytes = Data()
-            var buffer = [UInt8](repeating: 0, count: 1024)
-            while stream.hasBytesAvailable {
-                let count = stream.read(&buffer, maxLength: buffer.count)
-                guard count > 0 else { break }
-                bytes.append(buffer, count: count)
-            }
-            data = bytes
-        }
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try requestJSON(request)
+        XCTAssertEqual((json["provider"] as? [String: Bool])?["zdr"], true)
         XCTAssertEqual(json["model"] as? String, "z-ai/glm-5.3-flash")
         XCTAssertEqual(json["max_tokens"] as? Int, 4096)
         XCTAssertEqual((json["messages"] as? [[String: String]])?.last?["content"], "How should I train?")
@@ -73,6 +59,55 @@ final class OpenRouterClientTests: XCTestCase {
                        "https://openrouter.ai/api/v1/chat/completions")
         XCTAssertEqual(OpenRouterURLProtocol.requests.first?.value(forHTTPHeaderField: "Authorization"),
                        "Bearer test-key")
+        let request = try XCTUnwrap(OpenRouterURLProtocol.requests.first)
+        XCTAssertEqual((try requestJSON(request)["provider"] as? [String: Bool])?["zdr"], true)
+    }
+
+    func testZDRPolicySurvivesAllParameterAndStreamingVariants() {
+        for modern in [false, true] {
+            for stream in [false, true] {
+                let body = OpenAIClient(provider: .openRouter).requestBody(
+                    model: "vendor/model", wire: [], modernParams: modern, stream: stream)
+                XCTAssertEqual((body["provider"] as? [String: Bool])?["zdr"], true)
+                XCTAssertEqual(body[modern ? "max_completion_tokens" : "max_tokens"] as? Int, 4096)
+            }
+        }
+        XCTAssertNil(OpenAIClient().requestBody(model: "gpt-4", wire: [])["provider"])
+    }
+
+    func testNoZDREndpointFailsWithoutRelaxingPolicy() async throws {
+        let session = OpenRouterURLProtocol.session(
+            body: #"{"error":{"message":"No endpoints found matching your data policy"}}"#, status: 404)
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await AIProvider.openRouter.client.send(key: "test-key", model: "vendor/model",
+                systemPrompt: "Coach", messages: [(.user, "Hello")], session: session)
+            XCTFail("Expected routing to fail")
+        } catch AICoachError.server(let code, _) {
+            XCTAssertEqual(code, 404)
+        }
+        XCTAssertEqual(OpenRouterURLProtocol.requests.count, 1)
+        let request = try XCTUnwrap(OpenRouterURLProtocol.requests.first)
+        XCTAssertEqual((try requestJSON(request)["provider"] as? [String: Bool])?["zdr"], true)
+    }
+
+    private func requestJSON(_ request: URLRequest) throws -> [String: Any] {
+        let data: Data
+        if let body = request.httpBody { data = body }
+        else {
+            let stream = try XCTUnwrap(request.httpBodyStream)
+            stream.open()
+            defer { stream.close() }
+            var bytes = Data()
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                bytes.append(buffer, count: count)
+            }
+            data = bytes
+        }
+        return try JSONSerialization.jsonObject(with: data) as! [String: Any]
     }
 
     func testCatalogueUsesOpenRouterAndPreservesPrices() async throws {
