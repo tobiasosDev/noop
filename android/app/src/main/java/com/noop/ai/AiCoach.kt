@@ -151,7 +151,7 @@ class AiCoach(
         val groundedWithSummary = injectDroppedSummary(grounded, groundedFull)
 
         when (provider) {
-            AiProvider.OPENAI ->
+            AiProvider.OPENAI, AiProvider.OPENROUTER ->
                 callOpenAiCompatible(provider, provider.endpoint, model, key, groundedWithSummary, systemPrompt)
             AiProvider.ANTHROPIC ->
                 callAnthropic(provider, model, key!!, groundedWithSummary, systemPrompt)
@@ -226,7 +226,7 @@ class AiCoach(
         val groundedWithSummary = injectDroppedSummary(grounded, groundedFull)
 
         when (provider) {
-            AiProvider.OPENAI ->
+            AiProvider.OPENAI, AiProvider.OPENROUTER ->
                 callOpenAiCompatibleStream(provider, provider.endpoint, model, key, groundedWithSummary, systemPrompt, onDelta)
             AiProvider.ANTHROPIC ->
                 callAnthropicStream(provider, model, key!!, groundedWithSummary, systemPrompt, onDelta)
@@ -270,7 +270,14 @@ class AiCoach(
         provider: AiProvider,
         customBaseUrl: String = "",
         customAuthHeader: CustomAiAuthHeader = CustomAiAuthHeader.BEARER,
-    ): List<String> = withContext(Dispatchers.IO) {
+    ): List<String> = fetchModelOptions(ctx, provider, customBaseUrl, customAuthHeader).map { it.id }
+
+    suspend fun fetchModelOptions(
+        ctx: Context,
+        provider: AiProvider,
+        customBaseUrl: String = "",
+        customAuthHeader: CustomAiAuthHeader = CustomAiAuthHeader.BEARER,
+    ): List<OpenRouterModel> = withContext(Dispatchers.IO) {
         // Guarded read: only a key saved for THIS provider (or a legacy cloud key) is used, never one
         // provider's key against another's models endpoint.
         val key = AiKeyStore.read(ctx, provider)
@@ -290,7 +297,7 @@ class AiCoach(
         val builder = Request.Builder().url(url).get()
         when (provider) {
             // key is non-null here: the early return above only spares the Custom provider.
-            AiProvider.OPENAI -> builder.addHeader("Authorization", "Bearer ${key!!}")
+            AiProvider.OPENAI, AiProvider.OPENROUTER -> builder.addHeader("Authorization", "Bearer ${key!!}")
             AiProvider.ANTHROPIC -> {
                 builder.addHeader("x-api-key", key!!)
                 builder.addHeader("anthropic-version", "2023-06-01")
@@ -301,13 +308,14 @@ class AiCoach(
 
         runCatching {
             val (code, text) = execute(builder.build())
-            if (code !in 200..299) return@runCatching emptyList<String>()
+            if (code !in 200..299) return@runCatching emptyList<OpenRouterModel>()
 
             // Gemini is shaped differently ({"models":[{"name":"models/…"}]}), so it has its own pure
             // parse; every other provider is OpenAI-shaped ({"data":[{"id":"…"}]}).
-            if (provider == AiProvider.GEMINI) return@runCatching parseGeminiModels(text)
+            if (provider == AiProvider.GEMINI) return@runCatching parseGeminiModels(text).map { OpenRouterModel(it) }
 
-            parseOpenAiCompatibleModels(provider, text)
+            if (provider == AiProvider.OPENROUTER) OpenRouterModel.parse(text)
+            else parseOpenAiCompatibleModels(provider, text).map { OpenRouterModel(it) }
         }.getOrDefault(emptyList())
     }
 
@@ -1266,6 +1274,7 @@ class AiCoach(
          * `data[].id` envelope or a gateway catalog with `catalog[].models`; keep all Custom ids.
          */
         internal fun parseOpenAiCompatibleModels(provider: AiProvider, text: String): List<String> {
+            if (provider == AiProvider.OPENROUTER) return OpenRouterModel.parse(text).map { it.id }
             val json = runCatching { JSONObject(text) }.getOrNull() ?: return emptyList()
             val data = json.optJSONArray("data")
             if (data != null) {
@@ -1275,6 +1284,7 @@ class AiCoach(
                     if (id.isEmpty()) continue
                     val keep = when (provider) {
                         AiProvider.OPENAI -> id.startsWith("gpt") || id.startsWith("o")
+                        AiProvider.OPENROUTER -> true
                         AiProvider.ANTHROPIC, AiProvider.CUSTOM -> true
                         AiProvider.GEMINI -> true
                     }

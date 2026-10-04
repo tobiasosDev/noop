@@ -91,6 +91,15 @@ enum class AiProvider(
         modelsEndpoint = "https://generativelanguage.googleapis.com/v1beta/models",
     ),
 
+    /** Opt-in OpenRouter access through the OpenAI-compatible API, with budget-focused models. */
+    OPENROUTER(
+        displayName = "OpenRouter",
+        defaultModel = OpenRouterModel.recommendedIDs.first(),
+        models = OpenRouterModel.recommendedIDs,
+        endpoint = "https://openrouter.ai/api/v1/chat/completions",
+        modelsEndpoint = "https://openrouter.ai/api/v1/models",
+    ),
+
     /**
      * A generic OpenAI-compatible server the user points at — typically a LOCAL LLM such as
      * Ollama, LM Studio or llama.cpp (`http://localhost:11434/v1`), or any self-hosted gateway.

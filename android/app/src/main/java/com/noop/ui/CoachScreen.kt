@@ -122,6 +122,7 @@ private fun CoachSetup(vm: CoachViewModel) {
     val provider by vm.provider.collectAsStateWithLifecycle()
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
+    val modelDetails by vm.modelDetails.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
     val customBaseUrl by vm.customBaseUrl.collectAsStateWithLifecycle()
     val customAuthHeader by vm.customAuthHeader.collectAsStateWithLifecycle()
@@ -207,11 +208,15 @@ private fun CoachSetup(vm: CoachViewModel) {
                         onClick = { vm.refreshModels(context) },
                     )
                 }
-                ModelDropdown(
-                    models = availableModels,
-                    selected = model,
-                    onSelect = { vm.selectModel(context, it) },
-                )
+                if (provider == AiProvider.OPENROUTER) {
+                    OpenRouterModelDropdown(availableModels, modelDetails, model) { vm.selectModel(context, it) }
+                } else {
+                    ModelDropdown(
+                        models = availableModels,
+                        selected = model,
+                        onSelect = { vm.selectModel(context, it) },
+                    )
+                }
             }
 
             // Masked key field, optional for a local Custom server.

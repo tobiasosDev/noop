@@ -89,13 +89,14 @@ network paths (the others are the Oura history import, §1.1b, and self-hosted p
 on your terms:
 
 - **Off until you enable it.** You enter your own API key for the provider you choose
-  (Anthropic, OpenAI, or a local / self-hosted OpenAI-compatible LLM such as Ollama or
+  (OpenRouter, Anthropic, OpenAI, or a local / self-hosted OpenAI-compatible LLM such as Ollama or
   LM Studio). No key, no network calls, ever.
 - **What is sent.** When you ask a question, NOOP builds a compact **text** summary of
   your recent metrics (Charge, Effort, Rest, HRV, resting HR over ~14 days, plus
   30-day averages and recent workouts) and sends it, with your question, directly to
-  your chosen endpoint (e.g. `api.anthropic.com` / `api.openai.com` for the hosted
-  providers). If you point the Coach at a local / self-hosted LLM, that endpoint is on
+  your chosen endpoint (e.g. `openrouter.ai`, `api.anthropic.com` or `api.openai.com`
+  for the hosted providers). OpenRouter forwards the request to the selected model’s provider.
+  If the Coach points at a local / self-hosted LLM, that endpoint is on
   your own machine and the request never leaves it.
 - **What is NOT sent.** No raw biometric streams, no Bluetooth data, no account or
   device identifiers — only the summary text and your question.

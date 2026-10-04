@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">Модели OpenRouter</string>
+    <string name="openrouter_search">Поиск моделей или ввод ID модели</string>
+    <string name="openrouter_budget_picks">Бюджетные варианты</string>
+    <string name="openrouter_all_models">Все модели</string>
+    <string name="openrouter_custom_model">Использовать свою модель</string>
+    <string name="openrouter_refresh_prices">Обновите модели, чтобы загрузить актуальные цены.</string>
+    <string name="openrouter_price_note">Цены из текущего каталога OpenRouter. Маршрутизация, кэширование и комиссии могут изменить итоговую стоимость.</string>
+    <string name="openrouter_price">Ввод %1$s · Вывод %2$s / 1 млн токенов (USD)</string>
+
     <!-- Russian (ru). App name stays untranslated (brand).
          Two provenances, deliberately kept in one file: strings joined from the EXISTING Apple
          Russian translations on their shared English source, and strings translated for Android

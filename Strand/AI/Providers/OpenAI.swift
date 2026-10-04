@@ -2,6 +2,7 @@ import Foundation
 import StrandAnalytics
 
 struct OpenAIClient: AIProviderClient {
+    var provider: AIProvider = .openAI
 
     func send(
         key: String,
@@ -45,7 +46,7 @@ struct OpenAIClient: AIProviderClient {
         body["temperature"] = 0.6
         body["max_tokens"] = 4096
 
-        var req = URLRequest(url: AIProvider.openAI.endpoint)
+        var req = URLRequest(url: provider.endpoint)
         req.httpMethod = "POST"
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -59,7 +60,7 @@ struct OpenAIClient: AIProviderClient {
     }
 
     func fetchModels(key: String, session: URLSession) async throws -> [String] {
-        var req = URLRequest(url: AIProvider.openAI.modelsEndpoint)
+        var req = URLRequest(url: provider.modelsEndpoint)
         req.httpMethod = "GET"
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
 
@@ -68,11 +69,21 @@ struct OpenAIClient: AIProviderClient {
 
     /// Pure: unwrap the `/models` body into chat-capable ids (gpt*/o*). No network — unit-tested.
     func parseModels(_ json: [String: Any]) -> [String] {
+        if provider == .openRouter { return OpenRouterModel.parse(json).map(\.id) }
         guard let list = json["data"] as? [[String: Any]] else { return [] }
         return list.compactMap { row in
             guard let id = row["id"] as? String, !id.isEmpty else { return nil }
             return (id.hasPrefix("gpt") || id.hasPrefix("o")) ? id : nil
         }
+    }
+
+    func fetchModelOptions(key: String, session: URLSession) async throws -> [OpenRouterModel] {
+        guard provider == .openRouter else {
+            return try await fetchModels(key: key, session: session).map { OpenRouterModel(id: $0) }
+        }
+        var req = URLRequest(url: provider.modelsEndpoint)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        return OpenRouterModel.parse(try await performRequest(req, session: session))
     }
 
     // MARK: Private
@@ -95,7 +106,7 @@ struct OpenAIClient: AIProviderClient {
             body["max_tokens"] = 4096
         }
 
-        var req = URLRequest(url: AIProvider.openAI.endpoint)
+        var req = URLRequest(url: provider.endpoint)
         req.httpMethod = "POST"
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

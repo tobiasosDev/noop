@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">OpenRouter 模型</string>
+    <string name="openrouter_search">搜索模型或输入模型 ID</string>
+    <string name="openrouter_budget_picks">经济之选</string>
+    <string name="openrouter_all_models">所有模型</string>
+    <string name="openrouter_custom_model">使用自定义模型</string>
+    <string name="openrouter_refresh_prices">刷新模型以加载当前价格。</string>
+    <string name="openrouter_price_note">价格来自当前 OpenRouter 模型目录。路由、缓存和费用可能改变最终成本。</string>
+    <string name="openrouter_price">输入 %1$s · 输出 %2$s / 百万 Token（美元）</string>
+
     <string name="app_name">NOOP</string>
     <string name="widget_description">今日的恢复、充能与负荷情况，以及实时心率和手环电量，一目了然。</string>
     <string name="widget_compact_name">NOOP 迷你组件</string>

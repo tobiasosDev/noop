@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">OpenRouter-Modelle</string>
+    <string name="openrouter_search">Modelle suchen oder Modell-ID eingeben</string>
+    <string name="openrouter_budget_picks">Günstige Empfehlungen</string>
+    <string name="openrouter_all_models">Alle Modelle</string>
+    <string name="openrouter_custom_model">Eigenes Modell verwenden</string>
+    <string name="openrouter_refresh_prices">Modelle aktualisieren, um aktuelle Preise zu laden.</string>
+    <string name="openrouter_price_note">Preise aus dem aktuellen OpenRouter-Katalog. Routing, Caching und Gebühren können die endgültigen Kosten verändern.</string>
+    <string name="openrouter_price">Eingabe %1$s · Ausgabe %2$s / 1 Mio. Tokens (USD)</string>
+
     <!-- German (de). App name stays untranslated (brand). Nav terms mirror the iOS German pass where
          one exists, so the two platforms read the same. -->
     <string name="widget_description">Ruhe, Ladung und Anstrengung von heute, mit Live-Herzfrequenz und Band-Akku auf einen Blick.</string>

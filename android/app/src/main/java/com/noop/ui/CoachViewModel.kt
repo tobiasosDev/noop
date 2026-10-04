@@ -9,6 +9,7 @@ import com.noop.ai.AiCoach
 import com.noop.ai.AiKeyRejectedException
 import com.noop.ai.AiKeyStore
 import com.noop.ai.AiProvider
+import com.noop.ai.OpenRouterModel
 import com.noop.ai.ChatMsg
 import com.noop.ai.CustomAiAuthHeader
 import com.noop.R
@@ -87,6 +88,8 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
      * Re-seeded whenever the provider changes; extended by [refreshModels].
      */
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
+    private val _modelDetails = MutableStateFlow<Map<String, OpenRouterModel>>(emptyMap())
+    val modelDetails: StateFlow<Map<String, OpenRouterModel>> = _modelDetails.asStateFlow()
 
     private val _refreshingModels = MutableStateFlow(false)
     /** True while a live model-list fetch is in flight; the UI disables the Refresh action. */
@@ -233,6 +236,7 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         AiKeyStore.saveModel(ctx, p, resolved)
         // Reset the picker to the new provider's catalogue (plus the resolved id if custom).
         _availableModels.value = seedModels(p, resolved)
+        _modelDetails.value = emptyMap()
     }
 
     /**
@@ -274,10 +278,15 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         _refreshingModels.value = true
         viewModelScope.launch {
             try {
-                val live = aiCoach.fetchModels(appCtx, p, url, _customAuthHeader.value)
+                val options = aiCoach.fetchModelOptions(appCtx, p, url, _customAuthHeader.value)
+                val live = options.map { it.id }
                 if (p == _provider.value) {
                     val merged = (_availableModels.value + live).distinct()
-                    _availableModels.value = merged
+                    if (live.isNotEmpty()) {
+                        _availableModels.value = if (p == AiProvider.OPENROUTER)
+                            OpenRouterModel.orderedIDs(options, _model.value) else merged
+                        _modelDetails.value = options.associateBy { it.id }
+                    }
                     // For Custom there's no curated/default model, adopt the first the server lists.
                     if (p == AiProvider.CUSTOM && _model.value.isBlank() && merged.isNotEmpty()) {
                         selectModel(appCtx, merged.first())
@@ -309,7 +318,8 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Pull the live catalogue at most once every [MODEL_REFRESH_INTERVAL_MS], so the picker offers what
+     * Load missing OpenRouter metadata, otherwise pull at most once every [MODEL_REFRESH_INTERVAL_MS],
+     * so the picker offers what
      * the provider sells today without this app shipping a build for every model release (#2255 had to
      * hand-edit two lists to add one generation).
      *
@@ -335,7 +345,8 @@ class CoachViewModel(app: Application) : AndroidViewModel(app) {
         val p = _provider.value
         if (p == AiProvider.CUSTOM || !hasKey(appCtx)) return
         val last = NoopPrefs.coachModelsRefreshedAt(appCtx, p.name)
-        if (!isCatalogueStale(last, System.currentTimeMillis())) return
+        if (!(p == AiProvider.OPENROUTER && _modelDetails.value.isEmpty())
+            && !isCatalogueStale(last, System.currentTimeMillis())) return
         refreshModels(appCtx, silent = true)
     }
 
