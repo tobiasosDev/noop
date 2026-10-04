@@ -73,9 +73,9 @@ def is_probably_ui_text(s: str) -> bool:
         return False  # pure symbols/numbers/format specifiers
     if PURE_FORMAT_SPEC.fullmatch(s):
         return False
-    # snake_case / dotted / slashed identifiers (testTags, routes, keys) —
-    # real UI copy almost always has a space or is a capitalized single word.
-    if re.fullmatch(r"[a-z][a-z0-9_./]*", s) and " " not in s:
+    # snake_case / dotted / slashed / kebab-case identifiers (testTags, routes, keys, Phosphor icon
+    # names such as "bell-slash") — real UI copy almost always has a space or is a capitalized single word.
+    if re.fullmatch(r"[a-z][a-z0-9_./-]*", s) and " " not in s:
         return False
     if s.startswith("http://") or s.startswith("https://"):
         return False
@@ -1302,7 +1302,9 @@ FORMAT_SPECIFIER_PATTERN = re.compile(r"%(?:\d+\$)?[@#0\-+ ]*[\d.]*(?:ll|l|h)?[@
 # Only strings that are ENTIRELY brand are exempted (see `_is_pure_brand_phrase`), so "Apple Health
 # sync" stays gated on its translatable word. CJK locales that DO translate these are unaffected —
 # they differ from the source, so they were never counted as echoes in the first place.
-BRAND_PHRASES = ("iCloud Drive",)
+# "Liquid Today" is the name of the Today screen's glass Charge card; the catalog keeps it as a name in
+# de/pl/ru/zh ("Liquid Today an", "Liquid Today (Prototyp)") and only pt-PT renders it.
+BRAND_PHRASES = ("iCloud Drive", "Liquid Today")
 
 
 def _is_pure_brand_phrase(text: str) -> bool:
