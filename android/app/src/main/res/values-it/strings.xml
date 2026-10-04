@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">Modelli OpenRouter</string>
+    <string name="openrouter_search">Cerca modelli o inserisci un ID modello</string>
+    <string name="openrouter_budget_picks">Scelte economiche</string>
+    <string name="openrouter_all_models">Tutti i modelli</string>
+    <string name="openrouter_custom_model">Usa modello personalizzato</string>
+    <string name="openrouter_refresh_prices">Aggiorna i modelli per caricare i prezzi attuali.</string>
+    <string name="openrouter_price_note">Prezzi del catalogo attuale di OpenRouter. Instradamento, cache e commissioni possono modificare il costo finale.</string>
+    <string name="openrouter_price">Input %1$s · Output %2$s / 1 M di token (USD)</string>
+
     <string name="app_name">NOOP</string>
     <string name="widget_description">Riposo, Carica e Sforzo di oggi, con frequenza cardiaca in diretta e batteria della fascia a colpo d\'occhio.</string>
     <string name="widget_hr_name">NOOP Frequenza cardiaca</string>

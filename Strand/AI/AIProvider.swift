@@ -7,6 +7,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
     case openAI
     case anthropic
     case gemini
+    case openRouter
     case custom
 
     var id: String { rawValue }
@@ -16,6 +17,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .openAI:    return "OpenAI"
         case .anthropic: return "Anthropic"
         case .gemini:    return "Google Gemini"
+        case .openRouter: return "OpenRouter"
         case .custom:    return "Custom (OpenAI-compatible)"
         }
     }
@@ -25,6 +27,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .openAI:    return "gpt-5-mini"
         case .anthropic: return "claude-sonnet-4-6"
         case .gemini:    return "gemini-flash-latest"   // stable alias → current Flash, no version churn (#400)
+        case .openRouter: return OpenRouterModel.recommendedIDs[0]
         case .custom:    return ""   // the user picks the model their server serves
         }
     }
@@ -74,6 +77,8 @@ enum AIProvider: String, CaseIterable, Identifiable {
                 "gemini-flash-latest",
                 "gemini-flash-lite-latest"
             ]
+        case .openRouter:
+            return OpenRouterModel.recommendedIDs
         case .custom:
             return []   // populated from the server's /models (refreshModels) or typed in
         }
@@ -84,6 +89,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .openAI:    return URL(string: "https://api.openai.com/v1/chat/completions")!
         case .anthropic: return URL(string: "https://api.anthropic.com/v1/messages")!
         case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
+        case .openRouter: return URL(string: "https://openrouter.ai/api/v1/chat/completions")!
         case .custom:    return AIProvider.customURL(path: "/chat/completions")
         }
     }
@@ -93,6 +99,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .openAI:    return URL(string: "https://api.openai.com/v1/models")!
         case .anthropic: return URL(string: "https://api.anthropic.com/v1/models")!
         case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
+        case .openRouter: return URL(string: "https://openrouter.ai/api/v1/models")!
         case .custom:    return AIProvider.customURL(path: "/models")
         }
     }
@@ -102,6 +109,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .openAI:    return OpenAIClient()
         case .anthropic: return AnthropicClient()
         case .gemini:    return GeminiClient()
+        case .openRouter: return OpenAIClient(provider: .openRouter)
         case .custom:    return CustomClient()
         }
     }
@@ -249,6 +257,9 @@ protocol AIProviderClient {
     /// Fetch the provider's live model list and return plain model ids.
     func fetchModels(key: String, session: URLSession) async throws -> [String]
 
+    /// Fetch model metadata when available; other providers return ids without pricing.
+    func fetchModelOptions(key: String, session: URLSession) async throws -> [OpenRouterModel]
+
     /// Stream a chat turn, calling `onDelta` for each text chunk as it arrives. The concatenated
     /// deltas must equal the text that `send` would return for the same inputs (byte-parity with
     /// the non-streamed path). The default implementation falls back to `send` + a single delta,
@@ -277,6 +288,10 @@ protocol AIProviderClient {
 }
 
 extension AIProviderClient {
+    func fetchModelOptions(key: String, session: URLSession) async throws -> [OpenRouterModel] {
+        try await fetchModels(key: key, session: session).map { OpenRouterModel(id: $0) }
+    }
+
     /// K11: Default — ignore the image, delegate to `stream`. Providers without multimodal support
     /// (OpenAI, Anthropic, Custom) use this; only Gemini overrides it.
     func streamWithImage(

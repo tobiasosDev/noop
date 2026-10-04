@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">Modele OpenRouter</string>
+    <string name="openrouter_search">Szukaj modeli lub wpisz identyfikator modelu</string>
+    <string name="openrouter_budget_picks">Ekonomiczne propozycje</string>
+    <string name="openrouter_all_models">Wszystkie modele</string>
+    <string name="openrouter_custom_model">Użyj własnego modelu</string>
+    <string name="openrouter_refresh_prices">Odśwież modele, aby pobrać aktualne ceny.</string>
+    <string name="openrouter_price_note">Ceny z aktualnego katalogu OpenRouter. Routing, pamięć podręczna i opłaty mogą zmienić ostateczny koszt.</string>
+    <string name="openrouter_price">Wejście %1$s · Wyjście %2$s / 1 mln tokenów (USD)</string>
+
     <string name="app_name">NOOP</string>
     <string name="widget_description">Dzisiejsze Odpoczynek, Energia i Wysiłek, z podglądem tętna na żywo i baterią paska.</string>
     <string name="widget_compact_name">NOOP Kompaktowy</string>

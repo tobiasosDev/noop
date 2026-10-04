@@ -1,6 +1,7 @@
 package com.noop.ui
 
 import com.noop.R
+import com.noop.ai.AiProvider
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -111,6 +112,7 @@ private fun CoachModelCard(vm: CoachViewModel) {
     val provider by vm.provider.collectAsStateWithLifecycle()
     val model by vm.model.collectAsStateWithLifecycle()
     val availableModels by vm.availableModels.collectAsStateWithLifecycle()
+    val modelDetails by vm.modelDetails.collectAsStateWithLifecycle()
     val refreshingModels by vm.refreshingModels.collectAsStateWithLifecycle()
 
     NoopCard(padding = 14.dp, tint = Palette.chargeColor) {
@@ -127,11 +129,15 @@ private fun CoachModelCard(vm: CoachViewModel) {
                     onClick = { vm.refreshModels(context) },
                 )
             }
-            ModelDropdown(
-                models = availableModels,
-                selected = model,
-                onSelect = { vm.selectModel(context, it) },
-            )
+            if (provider == AiProvider.OPENROUTER) {
+                OpenRouterModelDropdown(availableModels, modelDetails, model) { vm.selectModel(context, it) }
+            } else {
+                ModelDropdown(
+                    models = availableModels,
+                    selected = model,
+                    onSelect = { vm.selectModel(context, it) },
+                )
+            }
         }
     }
 }

@@ -157,43 +157,47 @@ struct CoachSettingsView: View {
     /// The PROVIDER deliberately stays on the setup card. A stored key records which provider it
     /// belongs to and is never sent anywhere else, so switching provider here would leave a key that
     /// cannot be used and a screen that cannot fix it. Kotlin twin: `CoachModelCard`.
-    private var modelList: some View {
-        NoopList {
-            Menu {
-                Picker("Model", selection: $coach.model) {
-                    ForEach(coach.availableModels, id: \.self) { m in
-                        Text(m).tag(m)
+    @ViewBuilder private var modelList: some View {
+        if coach.provider == .openRouter {
+            OpenRouterModelSelection()
+        } else {
+            NoopList {
+                Menu {
+                    Picker("Model", selection: $coach.model) {
+                        ForEach(coach.availableModels, id: \.self) { m in
+                            Text(m).tag(m)
+                        }
                     }
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    G3RowLabel(title: Text("Model"), caption: Text(verbatim: coach.provider.v2ShortName), icon: "cpu")
-                    Text(verbatim: coach.model.isEmpty ? "—" : coach.model)
-                        .font(StrandFont.light(14, relativeTo: .subheadline))
-                        .foregroundStyle(StrandPalette.textSecondary)
-                        .lineLimit(1)
-                    PhIcon("caret-up-down").opacity(0.55)
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 15)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(StrandPalette.textPrimary)
-            .accessibilityLabel("Model")
-
-            Button {
-                Task { await coach.refreshModels() }
-            } label: {
-                G3RowLabel(title: Text("Refresh models"), icon: "arrows-clockwise")
+                } label: {
+                    HStack(spacing: 10) {
+                        G3RowLabel(title: Text("Model"), caption: Text(verbatim: coach.provider.v2ShortName), icon: "cpu")
+                        Text(verbatim: coach.model.isEmpty ? "—" : coach.model)
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .lineLimit(1)
+                        PhIcon("caret-up-down").opacity(0.55)
+                    }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 15)
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityLabel("Model")
+
+                Button {
+                    Task { await coach.refreshModels() }
+                } label: {
+                    G3RowLabel(title: Text("Refresh models"), icon: "arrows-clockwise")
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 15)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!coach.hasKey)
+                .opacity(coach.hasKey ? 1 : 0.45)
+                .accessibilityLabel("Refresh models from provider")
             }
-            .buttonStyle(.plain)
-            .disabled(!coach.hasKey)
-            .opacity(coach.hasKey ? 1 : 0.45)
-            .accessibilityLabel("Refresh models from provider")
         }
     }
 

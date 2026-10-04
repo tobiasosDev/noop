@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">Modelos OpenRouter</string>
+    <string name="openrouter_search">Pesquisar modelos ou introduzir um ID de modelo</string>
+    <string name="openrouter_budget_picks">Opções económicas</string>
+    <string name="openrouter_all_models">Todos os modelos</string>
+    <string name="openrouter_custom_model">Usar modelo personalizado</string>
+    <string name="openrouter_refresh_prices">Atualize os modelos para carregar os preços atuais.</string>
+    <string name="openrouter_price_note">Preços do catálogo atual do OpenRouter. O encaminhamento, a cache e as taxas podem alterar o custo final.</string>
+    <string name="openrouter_price">Entrada %1$s · Saída %2$s / 1 M de tokens (USD)</string>
+
 
     <!-- Portuguese (Portugal) localization. -->
     <string name="app_name">NOOP</string>

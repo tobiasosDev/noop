@@ -197,6 +197,7 @@ final class AICoachEngine: ObservableObject {
             UserDefaults.standard.set(provider.rawValue, forKey: Self.providerKey)
             // Reset the model list to the new provider's built-in options.
             availableModels = provider.modelOptions
+            modelDetails = [:]
             // Keep the model valid for the newly-selected provider.
             if !provider.modelOptions.contains(model) {
                 model = provider.defaultModel
@@ -215,6 +216,9 @@ final class AICoachEngine: ObservableObject {
     /// The model ids offered in the picker. Seeded from `provider.modelOptions`, reset when the
     /// provider changes, and optionally extended by `refreshModels()` with the provider's live list.
     @Published var availableModels: [String] = []
+    /// Live display names and pricing for the current provider, cleared on provider changes.
+    @Published var modelDetails: [String: OpenRouterModel] = [:]
+
     /// Explicit permission for the coach to read & transmit the user's biometric data. OFF by
     /// default, until this is true, NO metrics are included in any request (only the question).
     @Published var dataConsent: Bool {
@@ -543,7 +547,8 @@ final class AICoachEngine: ObservableObject {
         now - last >= modelRefreshInterval
     }
 
-    /// Pull the live catalogue at most once a week, so the picker offers what the provider sells today
+    /// Load missing OpenRouter metadata, otherwise pull the live catalogue at most once a week,
+    /// so the picker offers what the provider sells today
     /// without this app shipping a build for every model release.
     ///
     /// Quiet about FAILURE: it passes `silent`, so `refreshModels` leaves the error surface untouched
@@ -560,7 +565,8 @@ final class AICoachEngine: ObservableObject {
     func refreshModelsIfStale() async {
         guard provider != .custom, hasKey else { return }
         let last = UserDefaults.standard.double(forKey: Self.modelsRefreshedKey(provider))
-        guard Self.isCatalogueStale(last: last, now: Date().timeIntervalSince1970) else { return }
+        guard (provider == .openRouter && modelDetails.isEmpty)
+            || Self.isCatalogueStale(last: last, now: Date().timeIntervalSince1970) else { return }
         await refreshModels(silent: true)
     }
 
@@ -581,21 +587,22 @@ final class AICoachEngine: ObservableObject {
         let capturedProvider = provider
 
         do {
-            let ids: [String]
+            let options: [OpenRouterModel]
             #if DEBUG
             if let override = fetchModelsOverride {
-                ids = try await override(capturedProvider, key)
+                options = try await override(capturedProvider, key).map { OpenRouterModel(id: $0) }
             } else {
-                ids = try await capturedProvider.client.fetchModels(key: key, session: session)
+                options = try await capturedProvider.client.fetchModelOptions(key: key, session: session)
             }
             #else
-            ids = try await capturedProvider.client.fetchModels(key: key, session: session)
+            options = try await capturedProvider.client.fetchModelOptions(key: key, session: session)
             #endif
 
             // The user switched providers while we were awaiting, so these ids belong to the old one.
             // Drop them rather than write a list for a provider that's no longer selected.
             guard provider == capturedProvider else { return }
 
+            let ids = options.map(\.id)
             guard !ids.isEmpty else {
                 if !silent { errorText = AICoachError.decode.errorDescription }
                 return
@@ -607,7 +614,9 @@ final class AICoachEngine: ObservableObject {
             let discovered = Set(ids).subtracting(builtin).sorted()
             var merged = builtin + discovered
             if !merged.contains(model) { merged.insert(model, at: 0) }
-            availableModels = merged
+            availableModels = capturedProvider == .openRouter
+                ? OpenRouterModel.orderedIDs(options, selected: model) : merged
+            modelDetails = Dictionary(options.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             // Stamp only on a SUCCESSFUL pull, so a provider that is down does not buy itself a week
             // of silence from `refreshModelsIfStale()`.
             UserDefaults.standard.set(Date().timeIntervalSince1970,

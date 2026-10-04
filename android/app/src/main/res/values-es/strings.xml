@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openrouter_models">Modelos de OpenRouter</string>
+    <string name="openrouter_search">Buscar modelos o introducir un ID de modelo</string>
+    <string name="openrouter_budget_picks">Opciones económicas</string>
+    <string name="openrouter_all_models">Todos los modelos</string>
+    <string name="openrouter_custom_model">Usar modelo personalizado</string>
+    <string name="openrouter_refresh_prices">Actualiza los modelos para cargar los precios actuales.</string>
+    <string name="openrouter_price_note">Precios del catálogo actual de OpenRouter. El enrutamiento, la caché y las comisiones pueden cambiar el coste final.</string>
+    <string name="openrouter_price">Entrada %1$s · Salida %2$s / 1 M de tokens (USD)</string>
+
 
     <string name="sleep_status_calculating_title">Calculando el sueño de anoche…</string>
     <string name="sleep_status_calculating_body">El historial de tu pulsera ya está disponible. NOOP está detectando y analizando la noche.</string>
