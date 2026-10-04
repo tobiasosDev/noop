@@ -54,15 +54,14 @@ struct LiftExerciseSuggestionLabel: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "arrow.up.left")
-                .font(.system(size: 10, weight: .semibold))
+            PhIcon("arrow-up-left", size: 14)
                 .foregroundStyle(StrandPalette.textTertiary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.name)
-                    .font(StrandFont.body)
+                    .font(StrandFont.book(15, relativeTo: .body))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(LiftMuscleSummary.line(primary: row.primaryMuscle, secondaries: row.secondaryMuscles))
-                    .font(StrandFont.caption)
+                    .font(StrandFont.light(12, relativeTo: .caption))
                     .foregroundStyle(StrandPalette.textTertiary)
             }
             Spacer(minLength: 0)
@@ -81,7 +80,7 @@ struct LiftMusclePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Muscles", overline: "Counted once per exercise")
+            NoopSectionTitle("Muscles", captionKey: "Counted once per exercise", topPadding: 0)
             NoopCard {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -103,8 +102,7 @@ struct LiftMusclePicker: View {
                                                      ? StrandPalette.textTertiary
                                                      : StrandPalette.textPrimary)
                                 Spacer(minLength: 0)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10, weight: .semibold))
+                                PhIcon("caret-up-down", size: 14)
                                     .foregroundStyle(StrandPalette.textTertiary)
                             }
                             .contentShape(Rectangle())
@@ -114,8 +112,9 @@ struct LiftMusclePicker: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Also works (counted as half a set)").strandOverline()
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)],
-                                  alignment: .leading, spacing: 8) {
+                        // Content-sized chips that wrap, like the kit's `.chip`: a fixed three-column grid cut
+                        // the longer German names ("Seitliche Schulter", "Schräge Bauchmuskeln") short.
+                        LiftChipFlow(spacing: 8, lineSpacing: 8) {
                             ForEach(LiftMuscle.allCases, id: \.self) { muscle in
                                 if muscle != primary {
                                     secondaryChip(muscle)
@@ -139,16 +138,16 @@ struct LiftMusclePicker: View {
             if on { secondaries.remove(muscle) } else { secondaries.insert(muscle) }
         } label: {
             Text(muscle.displayName)
-                .font(StrandFont.caption)
-                .foregroundStyle(on ? StrandPalette.effortColor : StrandPalette.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(on ? StrandPalette.effortColor.opacity(0.14) : StrandPalette.surfaceRaised)
-                )
-                .contentShape(Rectangle())
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundStyle(on ? StrandPalette.goldDeepText : StrandPalette.textSecondary)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(Capsule(style: .continuous).fill(on ? StrandPalette.gold : NoopVisualStyle.inset))
+                .overlay(Capsule(style: .continuous)
+                    .strokeBorder(on ? Color.clear : NoopVisualStyle.border, lineWidth: 1))
+                .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? [.isSelected] : [])
@@ -159,5 +158,52 @@ struct LiftMusclePicker: View {
     private func select(primary muscle: LiftMuscle) {
         primary = muscle
         secondaries.remove(muscle)
+    }
+}
+
+/// A leading-aligned wrapping row of chips: each keeps its natural width and a line breaks before the
+/// chip that would overflow it.
+struct LiftChipFlow: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    private func lines(_ subviews: Subviews, width: CGFloat) -> [[(Int, CGSize)]] {
+        var out: [[(Int, CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for (i, s) in subviews.enumerated() {
+            let size = s.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > width {
+                out.append([])
+                x = 0
+            }
+            x += (x > 0 ? spacing : 0) + size.width
+            out[out.count - 1].append((i, size))
+        }
+        return out
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let ls = lines(subviews, width: width)
+        let height = ls.reduce(CGFloat(0)) { $0 + ($1.map(\.1.height).max() ?? 0) }
+            + lineSpacing * CGFloat(max(ls.count - 1, 0))
+        let widest = ls.map { line in
+            line.reduce(CGFloat(0)) { $0 + $1.1.width } + spacing * CGFloat(max(line.count - 1, 0))
+        }.max() ?? 0
+        return CGSize(width: proposal.width ?? widest, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for line in lines(subviews, width: bounds.width) {
+            let lineHeight = line.map(\.1.height).max() ?? 0
+            var x = bounds.minX
+            for (i, size) in line {
+                subviews[i].place(at: CGPoint(x: x, y: y + (lineHeight - size.height) / 2),
+                                  proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += lineHeight + lineSpacing
+        }
     }
 }

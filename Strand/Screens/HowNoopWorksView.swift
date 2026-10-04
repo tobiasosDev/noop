@@ -11,9 +11,9 @@ import StrandDesign
 // what "recording" means, and where the provenance badges come from. It is the one
 // place that ties the four guidance components together so nobody has to guess.
 //
-// Presented as a sheet, mirroring ScoringGuideView / WhatsNewView exactly: a fixed
-// header with a close button over a scenic hero, a scrollable column of frosted
-// cards, and a "Got it" footer. Reachable from Settings → About and a "?" affordance.
+// Presented as a sheet (Settings → About and a "?" affordance): a v2 page that opens on the
+// strap-to-screen flow and the four sync steps, then the privacy hero, then the primer cards,
+// the scoring-methods card, and a "Got it" button.
 //
 // All copy here is the single APPROVED source of truth (the spec's COMPONENT 5 text,
 // verbatim), shared word-for-word across macOS / iOS / Android. No fabricated values,
@@ -22,8 +22,8 @@ import StrandDesign
 struct HowNoopWorksView: View {
     let onClose: () -> Void
 
-    /// The four primer sections, in the order the spec lists them. The icon + tint give
-    /// each card its own glance-able identity, echoing the colour worlds used elsewhere.
+    /// The four primer sections, in the order the spec lists them. The icon gives each card its
+    /// own glance-able identity.
     private enum Section: CaseIterable, Identifiable {
         case sleepSorting
         case scores
@@ -54,24 +54,13 @@ struct HowNoopWorksView: View {
             }
         }
 
-        /// SF Symbol for the section header — sleep / scores / recording / provenance.
+        /// Phosphor glyph for the section's icon tile — sleep / scores / recording / provenance.
         var icon: String {
             switch self {
-            case .sleepSorting: return "moon.zzz.fill"
-            case .scores:       return "gauge.with.dots.needle.67percent"
-            case .recording:    return "dot.radiowaves.left.and.right"
-            case .provenance:   return "checkmark.seal.fill"
-            }
-        }
-
-        /// The colour world that tints the card, matched to the domain each section is about
-        /// (sleep = Rest, scores = Charge, recording = Effort, provenance = neutral accent).
-        var tint: Color {
-            switch self {
-            case .sleepSorting: return DomainTheme.rest.color
-            case .scores:       return DomainTheme.charge.color
-            case .recording:    return DomainTheme.effort.color
-            case .provenance:   return StrandPalette.accent
+            case .sleepSorting: return "moon-stars"
+            case .scores:       return "gauge"
+            case .recording:    return "broadcast"
+            case .provenance:   return "seal-check"
             }
         }
 
@@ -87,30 +76,51 @@ struct HowNoopWorksView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .background {
-                    ScenicHeroBackground(domain: .rest, starCount: 28, fadesToBase: true)
+        ScrollView {
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                NoopDetailHeader("How NOOP works", onBack: onClose)
+                    .padding(.bottom, 6)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("From your wrist to your screen. Nowhere else.")
+                        .font(StrandFont.title1)
+                        .tracking(-0.5)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Four steps, all on hardware you own.")
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textSecondary)
                 }
-            Divider().overlay(StrandPalette.hairline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    introCard
-                    ForEach(Section.allCases) { section in
-                        primerCard(section)
-                    }
-                    scoringMethodsCard
-                    footerNote
+                .padding(.bottom, 10)
+                flowCard
+                NoopSectionTitle("The four steps", captionKey: "Every sync")
+                ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, step in
+                    stepCard(number: index + 1, title: step.title, body: step.body)
                 }
-                .padding(20)
+                privacyHero
+                    .padding(.top, 16)
+                NoopSectionTitle("The basics")
+                introCard
+                ForEach(Section.allCases) { section in
+                    primerCard(section)
+                }
+                scoringMethodsCard
+                footerNote
+                NoopButton("Got it", kind: .primary, fullWidth: true, action: onClose)
+                    .keyboardShortcut(.defaultAction)
+                    .padding(.top, 8)
             }
-            #if os(iOS)
-            // #697/#horizontal-swipe parity, see ScreenScaffold.
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-            #endif
-            Divider().overlay(StrandPalette.hairline)
-            footerBar
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 32)
         }
+        #if os(iOS)
+        // #697/#horizontal-swipe parity, see ScreenScaffold.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
         // Same sizing split as ScoringGuideView / WhatsNewView: a fixed window on macOS,
         // fill the presented sheet on iOS so nothing runs off a narrow phone screen (#185).
         #if os(macOS)
@@ -122,82 +132,178 @@ struct HowNoopWorksView: View {
         .background(StrandPalette.surfaceBase)
     }
 
-    // MARK: - Header / footer
+    // MARK: - Flow + steps
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("THE BASICS").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                Text("How NOOP works").font(StrandFont.rounded(26, weight: .bold))
+    /// The four steps from strap to screen. Plain statements of what the app does; nothing here
+    /// claims a signal the strap grid (NOOP limitations) does not.
+    private static let steps: [(title: LocalizedStringKey, body: LocalizedStringKey)] = [
+        ("Your strap records",
+         "Your strap samples heart rate and motion around the clock and holds what it measured until NOOP collects it."),
+        ("NOOP reads it over Bluetooth",
+         "When your phone or computer is in range, NOOP pulls new data straight off the strap and checks every frame on arrival."),
+        ("Scores are computed on this device",
+         "Charge, Rest, Effort and HRV are worked out here, with formulas published in the open source."),
+        ("Your data stays here",
+         "One local database. Back it up to a folder you choose, export it whenever you like."),
+    ]
+
+    /// Strap, Bluetooth, this device; and the cloud that is not part of it.
+    private var flowCard: some View {
+        NoopCard {
+            HStack(alignment: .top, spacing: 0) {
+                flowNode("watch", label: Text("Your strap"))
+                VStack(spacing: 8) {
+                    Text("Bluetooth")
+                        .font(StrandFont.light(10, relativeTo: .caption2))
+                        .tracking(0.6)
+                        .textCase(.uppercase)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                    BluetoothLink()
+                        .frame(height: 14)
+                }
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity)
+                flowNode(Self.deviceIcon, label: Text("This \(Platform.deviceNoun)"))
+                Rectangle().fill(NoopVisualStyle.borderHighlight)
+                    .frame(width: 1, height: 58)
+                    .padding(.horizontal, 16)
+                flowNode("cloud-slash", label: Text("No cloud"), off: true)
+            }
+            .padding(.top, 2)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Your strap connects to this \(Platform.deviceNoun) over Bluetooth. No cloud."))
+    }
+
+    private static var deviceIcon: String {
+        #if os(macOS)
+        return "laptop"
+        #else
+        return "device-mobile"
+        #endif
+    }
+
+    private func flowNode(_ icon: String, label: Text, off: Bool = false) -> some View {
+        VStack(spacing: 10) {
+            PhIcon(icon, size: 24)
+                .foregroundStyle(off ? StrandPalette.textTertiary : StrandPalette.textPrimary)
+                .frame(width: 58, height: 58)
+                .background {
+                    if !off {
+                        Circle().fill(RadialGradient(colors: [NoopVisualStyle.raised, NoopVisualStyle.inset],
+                                                     center: UnitPoint(x: 0.35, y: 0.3),
+                                                     startRadius: 0, endRadius: 44))
+                    }
+                }
+                .overlay {
+                    if off {
+                        Circle().strokeBorder(Color.white.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    } else {
+                        Circle().strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1)
+                    }
+                }
+            label
+                .font(StrandFont.light(11, relativeTo: .caption2))
+                .foregroundStyle(off ? StrandPalette.textTertiary : StrandPalette.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .frame(width: 62)
+    }
+
+    private func stepCard(number: Int, title: LocalizedStringKey, body: LocalizedStringKey) -> some View {
+        NoopCard {
+            HStack(alignment: .top, spacing: 12) {
+                Text(verbatim: String(format: "%02d", number))
+                    .font(StrandFont.dot(44))
+                    .tracking(StrandFont.dotTracking(44))
                     .foregroundStyle(StrandPalette.textPrimary)
-                Text("Sleep · scores · recording · where your numbers come from")
-                    .font(StrandFont.caption)
+                    .frame(width: 62, alignment: .leading)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(StrandFont.book(16, relativeTo: .headline))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(body)
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The ink hero: the three things NOOP does not have.
+    private var privacyHero: some View {
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopIconBadge("Private by design", icon: "lock-simple")
+                HStack(alignment: .top, spacing: 0) {
+                    zeroFigure("Accounts")
+                    zeroFigure("Servers")
+                    zeroFigure("Telemetry")
+                }
+                .padding(.top, 28)
+                Text("No account. No server. No telemetry.")
+                    .font(StrandFont.light(24, relativeTo: .title2))
+                    .tracking(-0.5)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 28)
+                Text("Switch off Wi-Fi and mobile data: NOOP keeps syncing and scoring as before.")
+                    .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
-            Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
+            .padding(.bottom, 4)
         }
-        .padding(20)
     }
 
-    private var footerBar: some View {
-        HStack {
-            Spacer()
-            Button(action: onClose) {
-                Text("Got it").frame(minWidth: 120).padding(.vertical, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(StrandPalette.accent)
-            .keyboardShortcut(.defaultAction)
+    private func zeroFigure(_ label: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NoopDotNumber("0", size: 84)
+            Text(label)
+                .font(StrandFont.light(10.5, relativeTo: .caption2))
+                .foregroundStyle(NoopMetric.heroLabel)
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Cards
+    // MARK: - Primer cards
 
     private var introCard: some View {
         NoopCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("THE ONE RULE").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.textSecondary)
+            VStack(alignment: .leading, spacing: 12) {
+                NoopCardHeader("The one rule", icon: "seal-check")
                 Text("NOOP never shows you a number it had to make up. If a score isn't ready, it tells you why and what to do next. Everything here runs on your device, from your strap.")
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    /// One primer section: a frosted, tinted card carrying the tinted icon + overline +
-    /// title, then the plain-English body. The icon is decorative (hidden from
-    /// VoiceOver); the card reads its title and body together.
+    /// One primer section: glyph + overline + title, then the plain-English body. The glyph is
+    /// decorative (hidden from VoiceOver); the card reads its title and body together.
     private func primerCard(_ section: Section) -> some View {
-        NoopCard(tint: section.tint) {
+        NoopCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: section.icon)
-                        .font(.system(size: 18))
-                        .foregroundStyle(section.tint)
-                        .frame(width: 24)
-                        .accessibilityHidden(true)
+                HStack(spacing: 12) {
+                    NoopIconTile(section.icon)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(section.overline)
-                            .font(StrandFont.overline)
-                            .tracking(StrandFont.overlineTracking)
-                            .textCase(.uppercase)
-                            .foregroundStyle(section.tint)
+                        NoopOverline(verbatim: section.overline)
                         Text(section.title)
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(16, relativeTo: .headline))
                             .foregroundStyle(StrandPalette.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -206,6 +312,7 @@ struct HowNoopWorksView: View {
                 Text(section.body)
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -218,7 +325,7 @@ struct HowNoopWorksView: View {
 
     /// The four scores, each named with the PUBLISHED method family it follows. Honest about the
     /// approach without faking precision: it cites the method, not a proprietary-identical claim. Order
-    /// mirrors the app's score order (Charge, Effort, Rest, Fitness Age); the tint matches each domain.
+    /// mirrors the app's score order (Charge, Effort, Rest, Fitness Age).
     private enum ScoreMethod: CaseIterable, Identifiable {
         case charge, effort, rest, fitnessAge
         var id: Self { self }
@@ -256,34 +363,19 @@ struct HowNoopWorksView: View {
             }
         }
 
-        var tint: Color {
-            switch self {
-            case .charge:     return DomainTheme.charge.color
-            case .effort:     return DomainTheme.effort.color
-            case .rest:       return DomainTheme.rest.color
-            case .fitnessAge: return StrandPalette.accent
-            }
-        }
     }
 
     /// A7 , the "How your scores are computed" card: one row per score naming its published method
     /// family, honest about the approach without claiming a proprietary-identical result.
     private var scoringMethodsCard: some View {
-        NoopCard(tint: DomainTheme.charge.color) {
+        NoopCard {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "function")
-                        .font(.system(size: 18))
-                        .foregroundStyle(DomainTheme.charge.color)
-                        .frame(width: 24)
-                        .accessibilityHidden(true)
+                HStack(spacing: 12) {
+                    NoopIconTile("function")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("METHOD")
-                            .font(StrandFont.overline)
-                            .tracking(StrandFont.overlineTracking)
-                            .foregroundStyle(DomainTheme.charge.color)
+                        NoopOverline("METHOD")
                         Text("How your scores are computed")
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(16, relativeTo: .headline))
                             .foregroundStyle(StrandPalette.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -292,10 +384,13 @@ struct HowNoopWorksView: View {
                 Text("Each score follows a published method, computed on your device. We name the method family so you can read up on it, and we never claim to reproduce another company's number exactly.")
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(ScoreMethod.allCases) { method in
+                        Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
                         methodRow(method)
+                            .padding(.vertical, 12)
                     }
                 }
             }
@@ -308,17 +403,18 @@ struct HowNoopWorksView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(m.name)
-                    .font(StrandFont.subhead)
+                    .font(StrandFont.book(15, relativeTo: .body))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(m.family)
                     .font(StrandFont.overline)
                     .tracking(0.4)
-                    .foregroundStyle(m.tint)
+                    .foregroundStyle(StrandPalette.textTertiary)
                 Spacer(minLength: 0)
             }
             Text(m.method)
-                .font(StrandFont.footnote)
+                .font(StrandFont.light(12.5, relativeTo: .footnote))
                 .foregroundStyle(StrandPalette.textSecondary)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
@@ -332,6 +428,30 @@ struct HowNoopWorksView: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
+    }
+}
+
+/// The dotted Bluetooth link between the strap and the device nodes: a 2-on-4 dotted rule between
+/// two small hollow rings.
+private struct BluetoothLink: View {
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, mid = geo.size.height / 2, r: CGFloat = 4
+            ZStack {
+                Path { p in
+                    p.move(to: CGPoint(x: r * 2 + 1, y: mid))
+                    p.addLine(to: CGPoint(x: w - r * 2 - 1, y: mid))
+                }
+                .stroke(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                Circle().stroke(StrandPalette.textPrimary, lineWidth: 1)
+                    .frame(width: r * 2, height: r * 2)
+                    .position(x: r + 1, y: mid)
+                Circle().stroke(StrandPalette.textPrimary, lineWidth: 1)
+                    .frame(width: r * 2, height: r * 2)
+                    .position(x: w - r - 1, y: mid)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

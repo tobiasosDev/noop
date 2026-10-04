@@ -29,6 +29,11 @@ struct HRVSnapshotView: View {
     /// R-R. Defaults to `.unknown` for callers that do not pass a strap model, matching the Android twin.
     var source: SpotHrvReading.Source = .unknown
 
+    #if DEBUG
+    /// Screenshot harness only: begin a capture as soon as the screen appears.
+    var demoAutoStart = false
+    #endif
+
     // MARK: - Capture phase
 
     private enum Phase: Equatable {
@@ -64,20 +69,40 @@ struct HRVSnapshotView: View {
     /// Whether the just-finished snapshot has been saved (drives the Save button → "Saved").
     @State private var saved = false
 
+    /// The running RMSSD sampled once a second during the capture (seconds since start, ms), drawn as
+    /// the hero trace. View state only; the saved figure comes from the cleaned analysis.
+    @State private var rmssdTrace: [(second: Int, rmssd: Double)] = []
+
+    /// Saved readings (newest first) for the "Past readings" list, read from the metric series the Save
+    /// button writes.
+    @State private var pastReadings: [MetricPoint] = []
+
     private let secondTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     private var bonded: Bool { live.bonded }
 
     var body: some View {
-        ScreenScaffold(title: "HRV Reading",
-                       subtitle: "A still, seated snapshot of your heart-rate variability") {
-            statusRow
-            captureCard
-            controlRow
-            if phase == .done, let result { resultCard(result) }
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("HRV reading")
+                .padding(.bottom, 6)
+            titleBlock
+            steps.padding(.top, 8)
+            captureHero.padding(.top, 6)
+            NoopInsightRow(text: Text(instruction), icon: "hand")
+                .padding(.horizontal, 4)
+                .padding(.top, 8)
+            controlRow.padding(.top, 8)
+            if phase == .done, let result { resultSection(result) }
+            if !pastReadings.isEmpty { pastReadingsSection }
             methodologyCard
             if !bonded { notBondedHint }
         }
+        .noopHidesSystemNavBar()
+        #if os(iOS)
+        // Presented from Live as a sheet: the v2 sheet surface; the header's back circle closes it. A
+        // presentation modifier is inert when the screen is pushed instead.
+        .noopSheetPresentation(largeFirst: true)
+        #endif
         // rrSeq-keyed: equal consecutive packets both count (see RRPacketObserver.swift).
         .onRRPackets(live) { rr in
             ingest(rr)
@@ -87,112 +112,180 @@ struct HRVSnapshotView: View {
             guard phase == .capturing else { return }
             tick()
         }
+        .task {
+            #if DEBUG
+            if demoAutoStart, phase == .idle {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                start()
+            }
+            #endif
+            await loadPastReadings()
+        }
         .onDisappear {
             ScreenIdle.keepAwake(false)
         }
     }
 
-    // MARK: - Status row
+    // MARK: - Title and steps
 
-    private var statusRow: some View {
-        HStack(spacing: 10) {
-            switch phase {
-            case .idle:
-                StatePill("Ready", tone: .neutral)
-            case .capturing:
-                StatePill("Capturing", tone: .accent, pulsing: true)
-            case .done:
-                StatePill("Reading complete", tone: .positive, showsDot: true)
-            }
-
-            if bonded {
-                StatePill("Strap live", tone: .positive, showsDot: true)
-            } else {
-                StatePill("Not connected", tone: .warning, showsDot: true)
-            }
-
-            Spacer()
-
-            if let close = onClose {
-                Button {
-                    close()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close HRV reading")
-            }
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("HRV reading")
+                .font(StrandFont.title1)
+                .tracking(-0.56)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Text("A 60-second seated capture.")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
         }
     }
 
-    // MARK: - Capture card
+    /// Ready — Capturing — Reading complete, with the current phase as the ink chip. When the labels do
+    /// not fit one row (German), finished steps collapse to their check instead of pushing the row, and
+    /// with it the whole column, wider than the screen.
+    private var steps: some View {
+        ViewThatFits(in: .horizontal) {
+            stepRow(compact: false)
+            stepRow(compact: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
 
-    private var captureCard: some View {
-        StrandCard(padding: 24, tint: StrandPalette.restColor) {
-            VStack(spacing: 18) {
-                ZStack {
-                    ScenicHeroBackground(domain: .rest, starCount: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-                    captureDial
-                        .padding(.vertical, 6)
-                }
-                .frame(height: 260)
-                .frame(maxWidth: .infinity)
-
-                Text(instruction)
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(phase == .capturing ? StrandPalette.restBright : StrandPalette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private func stepRow(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            LTStepChip("Ready", state: phase == .idle ? .current : .done, compact: compact)
+            stepLine
+            LTStepChip("Capturing", state: phase == .capturing ? .current : phase == .done ? .done : .upcoming,
+                       compact: compact)
+            stepLine
+            LTStepChip("Reading complete", state: phase == .done ? .current : .upcoming, compact: compact)
         }
     }
 
-    /// The centre dial: a progress ring around the live RMSSD / countdown. While capturing it shows the
-    /// running RMSSD; idle/done it shows the headline figure or a prompt.
-    private var captureDial: some View {
-        GeometryReader { geo in
-            let d = min(geo.size.width, geo.size.height)
-            ZStack {
-                Circle()
-                    .strokeBorder(StrandPalette.restColor.opacity(0.20), lineWidth: 10)
-                    .frame(width: d, height: d)
+    private var stepLine: some View {
+        Rectangle().fill(NoopVisualStyle.borderHighlight).frame(minWidth: 8, maxWidth: .infinity).frame(height: 1)
+    }
 
-                Circle()
-                    .trim(from: 0, to: captureFraction)
-                    .stroke(
-                        AngularGradient(colors: [StrandPalette.restDeep, StrandPalette.restBright],
-                                        center: .center),
-                        style: StrokeStyle(lineWidth: 10, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: d, height: d)
-                    .animation(.easeInOut(duration: 0.4), value: captureFraction)
+    // MARK: - Capture hero
 
-                VStack(spacing: 2) {
-                    Text(dialValue)
-                        .font(StrandFont.number(48))
-                        .foregroundStyle(StrandPalette.metricPurple)
-                        .contentTransition(.numericText())
-                        .animation(.snappy, value: dialValue)
-                    Text(dialUnit)
-                        .font(StrandFont.footnote)
-                        .tracking(0.8)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                    if phase == .capturing {
-                        Text("\(secondsRemaining)s left · \(captureBuffer.count) beats")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .padding(.top, 4)
+    private var captureHero: some View {
+        NoopHeroCard(glow: .strain, padding: 22) {
+            VStack(spacing: 0) {
+                HStack {
+                    NoopIconBadge("Seated capture", icon: "heartbeat")
+                    Spacer(minLength: 8)
+                    Text(heroPill)
+                        .font(StrandFont.book(12, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.07)))
+                        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                }
+                captureDial
+                    .frame(width: 260, height: 260)
+                    .padding(.top, 22)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Live RMSSD")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(Color.white.opacity(0.6))
+                    Spacer()
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(verbatim: runningRMSSD.map { String(format: "%.0f", $0) } ?? "—")
+                            .font(StrandFont.value(17))
+                        Text("ms").font(StrandFont.book(10)).foregroundStyle(Color.white.opacity(0.62))
                     }
+                    .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .padding(.top, 22)
+                LTHeroTrace(points: tracePoints, showsCursor: phase == .capturing && !tracePoints.isEmpty)
+                    .frame(height: 64)
+                    .padding(.top, 8)
+                HStack {
+                    Text(verbatim: "0:00")
+                    Spacer()
+                    Text(verbatim: "1:00")
+                }
+                .overlay { Text(verbatim: "0:30") }
+                .font(StrandFont.footnote)
+                .foregroundStyle(Color.white.opacity(0.6))
+                .padding(.top, 6)
+                .accessibilityHidden(true)
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    /// Beats so far while capturing; the beats the analysis used once done; the link state before.
+    private var heroPill: String {
+        switch phase {
+        case .idle:      return bonded ? String(localized: "Strap live") : String(localized: "Not connected")
+        case .capturing: return String(localized: "\(captureBuffer.count) beats")
+        case .done:      return String(localized: "\(result?.nClean ?? 0) beats")
+        }
+    }
+
+    /// The running-RMSSD trace in unit space: x is the second of the minute, y spans the trace's own
+    /// range with headroom so a steady value sits mid-chart.
+    private var tracePoints: [CGPoint] {
+        guard !rmssdTrace.isEmpty else { return [] }
+        let values = rmssdTrace.map(\.rmssd)
+        let lo = values.min() ?? 0, hi = values.max() ?? 1
+        let spread = max(hi - lo, 8)
+        let bottom = lo - spread * 0.6, top = hi + spread * 0.4
+        return rmssdTrace.map {
+            CGPoint(x: Double($0.second) / Double(Self.captureSeconds), y: ($0.rmssd - bottom) / (top - bottom))
+        }
+    }
+
+    /// The centre dial: sixty ticks around the minute (lit as it elapses), the progress ring with its
+    /// knob, and the elapsed clock — or, once done, the headline RMSSD.
+    private var captureDial: some View {
+        ZStack {
+            Canvas { ctx, size in
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let lit = Int((captureFraction * 60).rounded(.down))
+                for i in 0..<60 {
+                    let a = Angle.degrees(-90 + Double(i) * 6).radians
+                    let rIn: CGFloat = 114, rOut: CGFloat = 124
+                    var p = Path()
+                    p.move(to: CGPoint(x: c.x + rIn * CGFloat(cos(a)), y: c.y + rIn * CGFloat(sin(a))))
+                    p.addLine(to: CGPoint(x: c.x + rOut * CGFloat(cos(a)), y: c.y + rOut * CGFloat(sin(a))))
+                    ctx.stroke(p, with: .color(.white.opacity(i < lit ? 0.9 : 0.18)),
+                               style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(dialAccessibilityLabel)
+            Circle().stroke(Color.white.opacity(0.10), lineWidth: 7).frame(width: 200, height: 200)
+            Circle()
+                .trim(from: 0, to: captureFraction)
+                .stroke(StrandPalette.metricCyan, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 200, height: 200)
+                .animation(.easeInOut(duration: 0.4), value: captureFraction)
+            if captureFraction > 0 {
+                let a = Angle.degrees(-90 + 360 * Double(captureFraction)).radians
+                Circle().fill(Color.white).frame(width: 14, height: 14)
+                    .offset(x: 100 * CGFloat(cos(a)), y: 100 * CGFloat(sin(a)))
+                    .animation(.easeInOut(duration: 0.4), value: captureFraction)
+            }
+            VStack(spacing: 12) {
+                Text(verbatim: dialValue)
+                    .font(StrandFont.dot(72))
+                    .tracking(StrandFont.dotTracking(72))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: dialValue)
+                Text(dialCaption)
+                    .font(StrandFont.caption)
+                    .foregroundStyle(Color.white.opacity(0.62))
+            }
+            .frame(width: 180)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(dialAccessibilityLabel)
     }
 
     /// 0…1 capture progress, driving the ring trim.
@@ -207,16 +300,21 @@ struct HRVSnapshotView: View {
     private var dialValue: String {
         switch phase {
         case .idle:
-            return "—"
+            return "0:00"
         case .capturing:
-            return runningRMSSD.map { String(format: "%.0f", $0) } ?? "…"
+            let elapsed = Self.captureSeconds - secondsRemaining
+            return String(format: "%d:%02d", elapsed / 60, elapsed % 60)
         case .done:
             return result?.rmssd.map { String(format: "%.0f", $0) } ?? "—"
         }
     }
 
-    private var dialUnit: String {
-        phase == .idle ? "RMSSD" : "MS RMSSD"
+    private var dialCaption: String {
+        switch phase {
+        case .idle:      return String(localized: "of 1:00")
+        case .capturing: return String(localized: "of 1:00 · \(secondsRemaining) s left")
+        case .done:      return String(localized: "ms RMSSD")
+        }
     }
 
     private var instruction: String {
@@ -246,98 +344,179 @@ struct HRVSnapshotView: View {
 
     // MARK: - Controls
 
-    private var controlRow: some View {
-        HStack(spacing: 12) {
-            Button {
-                phase == .capturing ? cancel() : start()
-            } label: {
-                Label(primaryLabel, systemImage: primaryIcon)
-                    .font(StrandFont.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(phase == .capturing ? StrandPalette.statusCritical : StrandPalette.accent)
-            .disabled(!bonded && phase != .capturing)
-            .help(bonded
-                  ? "Take a 60-second seated HRV reading from the live R-R stream."
-                  : "Connect your strap first. The reading needs the live R-R stream.")
-
-            if phase == .done, let r = result, r.rmssd != nil {
-                Button {
-                    save(r)
-                } label: {
-                    Label(saved ? "Saved" : "Save", systemImage: saved ? "checkmark.circle.fill" : "square.and.arrow.down")
-                        .font(StrandFont.body)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 8)
-                }
-                .buttonStyle(.bordered)
-                .tint(StrandPalette.accent)
-                .disabled(saved)
-            }
-        }
-    }
-
-    private var primaryLabel: String {
+    @ViewBuilder private var controlRow: some View {
         switch phase {
-        case .idle:      return String(localized: "Take an HRV reading")
-        case .capturing: return String(localized: "Cancel")
-        case .done:      return String(localized: "Take another reading")
+        case .capturing:
+            HStack(spacing: 10) {
+                LTActionButton("Cancel") { cancel() }
+                LTActionButton("Restart", icon: "arrow-counter-clockwise") { start() }
+            }
+        case .idle, .done:
+            LTActionButton(phase == .idle ? "Take an HRV reading" : "Take another reading",
+                           icon: "heart-half", kind: .primary) { start() }
+                .disabled(!bonded)
+                .help(bonded
+                      ? "Take a 60-second seated HRV reading from the live R-R stream."
+                      : "Connect your strap first. The reading needs the live R-R stream.")
         }
-    }
-
-    private var primaryIcon: String {
-        phase == .capturing ? "stop.fill" : "waveform.path.ecg"
     }
 
     // MARK: - Result
 
-    private func resultCard(_ result: HRVAnalyzer.HRVResult) -> some View {
-        StrandCard(padding: 18, tint: StrandPalette.restColor) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("YOUR READING").strandOverline()
-
-                if result.rmssd == nil {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(StrandPalette.statusWarning)
-                            .accessibilityHidden(true)
-                        Text("Not enough clean beats. Sit still and try again. \(result.nClean) of \(result.nInput) beats survived filtering (need \(HRVAnalyzer.minBeats)).")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder private func resultSection(_ result: HRVAnalyzer.HRVResult) -> some View {
+        NoopSectionTitle("Result", captionKey: "Seated · 60 s")
+        VStack(alignment: .leading, spacing: 0) {
+            NoopOverline("Your reading")
+            if let rmssd = result.rmssd {
+                HStack(alignment: .lastTextBaseline, spacing: 10) {
+                    Text(verbatim: String(format: "%.0f", rmssd))
+                        .font(StrandFont.dot(56))
+                        .tracking(StrandFont.dotTracking(56))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text("ms RMSSD").font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                    Spacer(minLength: 8)
+                    if let morning = morningHRV {
+                        NoopTag(verbatim: comparisonWord(rmssd, morning), size: 13)
                     }
-                } else {
-                    HStack(spacing: NoopMetrics.gap) {
-                        metricTile("RMSSD", Self.format(result.rmssd, "%.0f"), "ms", StrandPalette.metricPurple)
-                        metricTile("SDNN", Self.format(result.sdnn, "%.0f"), "ms", StrandPalette.restBright)
-                        metricTile(String(localized: "Mean HR"), Self.format(Self.meanHR(meanNN: result.meanNN), "%.0f"), "bpm", StrandPalette.metricRose)
-                        metricTile(String(localized: "Beats"), "\(result.nClean)", String(localized: "used"), StrandPalette.metricCyan)
+                }
+                .padding(.top, 12)
+                comparisonBars(rmssd).padding(.top, 18)
+                if let morning = morningHRV {
+                    Text(comparisonSentence(rmssd, morning))
+                        .font(StrandFont.light(13, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 16)
+                }
+                NoopMetricRow {
+                    NoopMetric(value: Self.format(result.sdnn, "%.0f"), unit: "ms", label: "SDNN")
+                    NoopMetric(value: Self.format(Self.meanHR(meanNN: result.meanNN), "%.0f"), unit: "bpm",
+                               label: "Mean HR")
+                    NoopMetric(value: "\(result.nClean)", unit: String(localized: "used"), label: "Beats")
+                }
+                .padding(.top, 16)
+                HStack(spacing: 10) {
+                    LTActionButton(saved ? "Saved" : "Save reading", icon: saved ? "check" : nil, kind: .primary,
+                                   height: 46, fontSize: 14) { save(result) }
+                        .disabled(saved)
+                    LTActionButton("Discard", height: 46, fontSize: 14) { discard() }
+                        .disabled(saved)
+                }
+                .padding(.top, 16)
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    PhIcon("warning", size: 18).foregroundStyle(StrandPalette.textPrimary)
+                    Text("Not enough clean beats. Sit still and try again. \(result.nClean) of \(result.nInput) beats survived filtering (need \(HRVAnalyzer.minBeats)).")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 12)
+            }
+        }
+        .ltCard()
+    }
+
+    /// This morning's overnight RMSSD (the day's banked HRV), when one exists.
+    private var morningHRV: Double? { model.repo.today?.avgHrv }
+
+    /// The mean overnight RMSSD over the last 30 banked days.
+    private var thirtyDayHRV: Double? {
+        let values = model.repo.days.suffix(30).compactMap(\.avgHrv)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    private func comparisonWord(_ value: Double, _ morning: Double) -> String {
+        let diff = value - morning
+        if abs(diff) < 3 { return String(localized: "Level") }
+        return diff > 0 ? String(localized: "Above") : String(localized: "Below")
+    }
+
+    private func comparisonSentence(_ value: Double, _ morning: Double) -> String {
+        let diff = Int((value - morning).rounded())
+        let head: String
+        if abs(diff) < 3 {
+            head = String(localized: "In line with this morning's overnight value.")
+        } else if diff > 0 {
+            head = String(localized: "\(diff) ms above this morning's overnight value.")
+        } else {
+            head = String(localized: "\(-diff) ms below this morning's overnight value.")
+        }
+        return head + " " + String(localized: "A seated reading is taken awake, so compare readings with each other rather than with the night.")
+    }
+
+    /// This reading beside this morning's overnight value and the 30-day base, on one shared scale.
+    private func comparisonBars(_ rmssd: Double) -> some View {
+        let rows: [(LocalizedStringKey, Double?, Bool)] = [
+            ("This reading", rmssd, true), ("Morning", morningHRV, false), ("30-day base", thirtyDayHRV, false),
+        ]
+        let scale = max(100, (rows.compactMap(\.1).max() ?? 0) * 1.15)
+        return VStack(spacing: 12) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                if let value = row.1 {
+                    HStack(spacing: 12) {
+                        Text(row.0)
+                            .font(StrandFont.light(13, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .frame(width: 84, alignment: .leading)
+                        // This reading keeps the kit's effort gradient; the references are neutral.
+                        if row.2 {
+                            NoopTrack(fraction: value / scale, height: 10)
+                        } else {
+                            NoopTrack(fraction: value / scale, height: 10,
+                                      fill: [NoopVisualStyle.quaternaryText, NoopVisualStyle.quaternaryText])
+                        }
+                        Text(verbatim: "\(Int(value.rounded())) ms")
+                            .font(StrandFont.book(13, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .frame(width: 48, alignment: .trailing)
                     }
                 }
             }
         }
     }
 
-    private func metricTile(_ label: String, _ value: String, _ unit: String, _ accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(label.uppercased()).strandOverline()
-            Spacer(minLength: 6)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value)
-                    .font(StrandFont.number(24))
-                    .foregroundStyle(accent)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(unit)
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textTertiary)
+    // MARK: - Past readings
+
+    @ViewBuilder private var pastReadingsSection: some View {
+        NoopSectionTitle("Past readings") { Text(String(localized: "\(pastReadings.count) saved")) }
+        NoopList {
+            ForEach(Array(pastReadings.prefix(5).enumerated()), id: \.offset) { _, point in
+                NoopRow(title: Text(verbatim: Self.readingDayLabel(point.day)),
+                        caption: Text("Seated · 60 s"), icon: "heart-half") {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(verbatim: "\(Int(point.value.rounded()))")
+                            .font(StrandFont.value(16))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("ms")
+                    }
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(NoopPanelSurface(tint: accent, cornerRadius: 10))
+    }
+
+    /// Parses the stored YYYY-MM-DD day; built once rather than per row.
+    private static let dayParser: DateFormatter = {
+        let parser = DateFormatter()
+        parser.calendar = Calendar(identifier: .gregorian)
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        return parser
+    }()
+
+    /// "Thu 1 Oct" for a stored YYYY-MM-DD day.
+    private static func readingDayLabel(_ day: String) -> String {
+        guard let date = dayParser.date(from: day) else { return day }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    private func loadPastReadings() async {
+        guard let store = await model.repo.storeHandle() else { return }
+        let points = (try? await store.metricSeries(deviceId: HRVSnapshot.sourceId, key: HRVSnapshot.metricKey,
+                                                     from: "0000-00-00", to: "9999-99-99")) ?? []
+        pastReadings = points.reversed()
     }
 
     // MARK: - Methodology
@@ -347,41 +526,35 @@ struct HRVSnapshotView: View {
     /// `SpotHrvReading.caveatFor` adds the honest limits — including the noisier optical-PPG note on a
     /// WHOOP 5/MG. Single-sourced with Android via the shared helper, no em-dashes.
     private var methodologyCard: some View {
-        StrandCard(tint: StrandPalette.restColor) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("How this is measured").strandOverline()
-                Text("A 60-second snapshot of your beat-to-beat (R-R) intervals from the strap, cleaned (range and ectopic-beat filtering) before computing RMSSD the same way your overnight HRV is computed.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(SpotHrvReading.caveatFor(source))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            NoopCardHeader("How this is measured", icon: "info")
+            Text("A 60-second snapshot of your beat-to-beat (R-R) intervals from the strap, cleaned (range and ectopic-beat filtering) before computing RMSSD the same way your overnight HRV is computed.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            Text(SpotHrvReading.caveatFor(source))
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .ltCard()
+        .padding(.top, 18)
     }
 
     // MARK: - Not-bonded hint
 
     private var notBondedHint: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "applewatch.radiowaves.left.and.right")
-                .foregroundStyle(StrandPalette.statusWarning)
-                .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 12) {
+            PhIcon("bluetooth-slash", size: 18)
+                .foregroundStyle(StrandPalette.textPrimary)
             Text("An HRV reading needs the live R-R stream. Open the Live screen and connect your strap, then come back.")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(14)
-        .background(StrandPalette.statusWarning.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                .strokeBorder(StrandPalette.statusWarning.opacity(0.25), lineWidth: 1)
-        )
+        .ltCard()
     }
 
     // MARK: - Capture control
@@ -393,6 +566,7 @@ struct HRVSnapshotView: View {
         captureBuffer.removeAll()
         secondsRemaining = Self.captureSeconds
         runningRMSSD = nil
+        rmssdTrace = []
         result = nil
         saved = false
         ScreenIdle.keepAwake(true)      // hold the screen awake through the hands-still capture (no-op on macOS)
@@ -403,7 +577,15 @@ struct HRVSnapshotView: View {
         captureStart = nil
         secondsRemaining = Self.captureSeconds
         runningRMSSD = nil
+        rmssdTrace = []
         ScreenIdle.keepAwake(false)
+    }
+
+    /// Drop a finished, unsaved reading and return to Ready.
+    private func discard() {
+        cancel()
+        result = nil
+        saved = false
     }
 
     /// Milliseconds of monotonic time since the capture started (nil outside a capture).
@@ -418,6 +600,9 @@ struct HRVSnapshotView: View {
     private func tick() {
         guard let ms = captureElapsedMs() else { return }
         secondsRemaining = Self.remainingSeconds(elapsedMs: ms)
+        if let rmssd = runningRMSSD {
+            rmssdTrace.append((second: min(Self.captureSeconds, ms / 1000), rmssd: rmssd))
+        }
         if secondsRemaining == 0 {
             finish()
         }
@@ -485,6 +670,7 @@ struct HRVSnapshotView: View {
             do {
                 try await store.upsertMetricSeries([point], deviceId: HRVSnapshot.sourceId)
                 await model.repo.refresh()
+                await loadPastReadings()
             } catch {
                 saved = false
             }

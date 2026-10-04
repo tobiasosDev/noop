@@ -48,28 +48,52 @@ struct AutomationsView: View {
     @AppStorage(HapticPrefs.workout) private var workoutHaptic = true
 
     var body: some View {
-        ScreenScaffold(title: "Automations",
-                       subtitle: "Make the strap do things: tap to act, walk away to lock, train by feel.",
-                       // PERF: the cards are direct children of the scaffold column, so the LazyVStack
-                       // path (byte-identical layout) genuinely builds the off-screen cards on demand
-                       // instead of constructing all eight/nine + their toggle subtrees up-front.
-                       lazy: true) {
+        // PERF: the cards are direct children of the scaffold column, so the LazyVStack path (byte-identical
+        // layout) genuinely builds the off-screen cards on demand instead of constructing all of them + their
+        // toggle subtrees up-front.
+        ScreenScaffold(title: nil, lazy: true) {
+            NoopScreenHeader("Automations")
+                .padding(.bottom, 6)
+            AutomationsHero(rulesOn: activeRules.filter { $0 }.count, rulesTotal: activeRules.count,
+                            cuesOn: [breathingHaptic, intervalsHaptic, liveSessionHaptic, workoutHaptic].filter { $0 }.count,
+                            doubleTap: behavior.doubleTapAction == .none ? nil : behavior.doubleTapAction.label,
+                            coaching: behavior.zoneCoaching || behavior.stressCheckIn)
+            NoopSectionTitle("On your wrist", caption: String(localized: "Buzz, tap and wear"))
             #if os(iOS)
             wristAlertsCard
             #endif
-            doubleTapCard
             hapticsCard
+            doubleTapCard
             wearCard
             coachingCard
             // #766: the strap's silent wake-alarm card used to sit here, which let users conflate it with
             // the wind-down reminder. It's moved to the dedicated Alarms screen (SmartAlarmView) so every
             // wake/wind-down control lives in one place. Automations is just inputs-to-actions now.
+            NoopSectionTitle("Nudges", caption: String(localized: "Reminders and alerts"))
             inactivityCard
             illnessCard
             healthInsightsCard
             batteryCard
             strainTargetCard
+            NoopInsightRow(text: Text("Every rule runs on \(Platform.deviceNounPhrase) and the strap. Nothing is sent anywhere."))
+                .padding(.horizontal, 4)
+                .padding(.top, 10)
         }
+        // The screen draws its own v2 header.
+        .noopHidesSystemNavBar()
+    }
+
+    /// Whether each automation is switched on, for the hero's count.
+    private var activeRules: [Bool] {
+        var rules: [Bool] = []
+        #if os(iOS)
+        rules.append(wristAlertsMaster)
+        #endif
+        rules += [breathingHaptic || intervalsHaptic || liveSessionHaptic || workoutHaptic,
+                  behavior.doubleTapAction != .none, wearActive,
+                  behavior.zoneCoaching || behavior.stressCheckIn, inactivity.enabled, behavior.illnessWatch,
+                  cycleAwareness || rhythmEnabled, behavior.batteryAlerts, behavior.strainTargetNudge]
+        return rules
     }
 
     // MARK: - Wrist alerts master (iOS only — PR #572)
@@ -82,12 +106,8 @@ struct AutomationsView: View {
     private var wristAlertsCard: some View {
         Section2(icon: "bell.badge.fill", title: String(localized: "Wrist alerts"),
                  blurb: String(localized: "Let NOOP tap your wrist for the things you turn on below, so you can leave your phone and still feel what matters."),
-                 active: wristAlertsMaster) {
-            VStack(spacing: 0) {
-                ToggleRow(label: String(localized: "Enable wrist alerts"),
-                          help: String(localized: "The master switch for every wrist buzz (inactivity, stress, alerts). Off keeps the strap quiet no matter what else is on."),
-                          isOn: $wristAlertsMaster)
-            }
+                 active: wristAlertsMaster, master: $wristAlertsMaster) {
+            NoteRow(text: String(localized: "The master switch for every wrist buzz (inactivity, stress, alerts). Off keeps the strap quiet no matter what else is on."))
         }
     }
     #endif
@@ -100,7 +120,8 @@ struct AutomationsView: View {
     private var hapticsCard: some View {
         Section2(icon: "waveform.path", title: String(localized: "Haptics"),
                  blurb: String(localized: "Choose which in-session cues buzz your wrist during a breathing session, timer, or workout."),
-                 active: breathingHaptic || intervalsHaptic || liveSessionHaptic || workoutHaptic) {
+                 active: breathingHaptic || intervalsHaptic || liveSessionHaptic || workoutHaptic,
+                 trailing: String(localized: "\([breathingHaptic, intervalsHaptic, liveSessionHaptic, workoutHaptic].filter { $0 }.count) of 4")) {
             VStack(spacing: 0) {
                 ToggleRow(label: String(localized: "Breathing pacer"),
                           help: String(localized: "Buzz each inhale and exhale during a breathing or resonance session."),
@@ -127,33 +148,41 @@ struct AutomationsView: View {
         Section2(icon: "hand.tap.fill", title: String(localized: "Double-tap"),
                  blurb: String(localized: "Double-tap the strap to trigger an action on \(Platform.deviceNounPhrase). (The strap exposes a single double-tap gesture.)"),
                  active: behavior.doubleTapAction != .none) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("When I double-tap").font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                    Text("When I double-tap").font(StrandFont.book(15, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
                     Picker("", selection: $behavior.doubleTapAction) {
                         ForEach(doubleTapOptions) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().fixedSize()
+                    .tint(StrandPalette.textSecondary)
                 }
+                .modifier(SubRowInsets())
                 if behavior.doubleTapAction == .runShortcut {
                     shortcutField(String(localized: "Shortcut name"), text: $behavior.doubleTapShortcut)
+                        .modifier(SubRowInsets())
                 }
+                rowDivider
                 HStack {
                     Button {
                         model.runMacAction(behavior.doubleTapAction, shortcut: behavior.doubleTapShortcut)
-                    } label: { Label("Test action", systemImage: "play.fill") }
-                    .buttonStyle(.bordered).tint(StrandPalette.accent)
+                    } label: { NoopChip("Test action", icon: "play") }
+                    .buttonStyle(.plain)
                     .disabled(behavior.doubleTapAction == .none)
+                    .opacity(behavior.doubleTapAction == .none ? 0.45 : 1)
                     Spacer()
                     // Live-observing leaf: re-renders on its own when the strap's bond state flips, so a
                     // ~1 Hz strap tick doesn't re-render the whole automations column (scroll-stutter
                     // isolation). Renders byte-for-byte the previous inline pill.
                     BondStatePill()
                 }
+                .modifier(SubRowInsets())
                 if !model.moments.isEmpty {
                     rowDivider
                     momentsView
+                        .modifier(SubRowInsets())
                 }
             }
         }
@@ -162,13 +191,14 @@ struct AutomationsView: View {
     private var momentsView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Recent moments").strandOverline()
+                Text("Recent moments").font(StrandFont.book(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary)
                 Spacer()
                 Button("Clear") {
                     model.moments.removeAll()
                     UserDefaults.standard.removeObject(forKey: "moments")
                 }
-                .buttonStyle(.plain).font(StrandFont.caption).foregroundStyle(StrandPalette.accent)
+                .buttonStyle(.plain).font(StrandFont.light(14)).foregroundStyle(StrandPalette.textSecondary)
             }
             ForEach(Array(model.moments.suffix(5).reversed().enumerated()), id: \.offset) { _, d in
                 Text(Self.momentFormatter.string(from: d))
@@ -249,18 +279,13 @@ struct AutomationsView: View {
     private var inactivityCard: some View {
         Section2(icon: "timer", title: String(localized: "Inactivity reminder"),
                  blurb: String(localized: "A gentle wrist buzz when you've been sitting too long, a nudge to get up and move. Inferred from the strap's motion on each history sync, so it lags real time by a sync or two."),
-                 active: inactivity.enabled) {
+                 active: inactivity.enabled, master: $inactivity.enabled) {
             VStack(spacing: 0) {
-                ToggleRow(label: String(localized: "Enable inactivity reminder"),
-                          help: String(localized: "Buzzes after you've been sitting past your threshold."),
-                          isOn: $inactivity.enabled)
+                NoteRow(text: String(localized: "Buzzes after you've been sitting past your threshold."))
                 if inactivity.enabled {
                     if !notifMasterOn {
-                        Text("Notifications are off, so this can't buzz yet. Turn on the master switch in Notifications to let it through.")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.statusWarning)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 6)
+                        NoteRow(text: String(localized: "Notifications are off, so this can't buzz yet. Turn on the master switch in Notifications to let it through."),
+                                warning: true)
                     }
                     rowDivider
                     stepperRow(label: String(localized: "Sitting for"), help: String(localized: "Minutes seated before the first nudge."),
@@ -278,17 +303,17 @@ struct AutomationsView: View {
                     if inactivity.activeHoursEnabled {
                         rowDivider
                         HStack(spacing: 12) {
-                            Text("From").font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                            Text("From").font(StrandFont.book(15)).foregroundStyle(StrandPalette.textPrimary)
                             DatePicker("", selection: activeStartBinding, displayedComponents: .hourAndMinute)
                                 .labelsHidden().datePickerStyle(.compact)
                                 .accessibilityLabel("Active hours start")
-                            Text("to").font(StrandFont.body).foregroundStyle(StrandPalette.textSecondary)
+                            Text("to").font(StrandFont.light(15)).foregroundStyle(StrandPalette.textSecondary)
                             DatePicker("", selection: activeEndBinding, displayedComponents: .hourAndMinute)
                                 .labelsHidden().datePickerStyle(.compact)
                                 .accessibilityLabel("Active hours end")
                             Spacer(minLength: 0)
                         }
-                        .frame(minHeight: 42).padding(.vertical, 4)
+                        .modifier(SubRowInsets())
                     }
                 }
             }
@@ -312,19 +337,19 @@ struct AutomationsView: View {
     /// A label/help row with a native −[value]+ stepper, clamped to `range` and moved by `step`.
     private func stepperRow(label: String, help: String, value: Binding<Int>,
                             suffix: String, range: ClosedRange<Int>, step: Int) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label).font(StrandFont.book(15, relativeTo: .body)).foregroundStyle(StrandPalette.textPrimary)
+                Text(help).font(StrandFont.light(12.5, relativeTo: .caption)).foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Text("\(value.wrappedValue) \(suffix)")
-                .font(StrandFont.bodyNumber).foregroundStyle(StrandPalette.textPrimary)
+                .font(StrandFont.light(15, relativeTo: .body)).foregroundStyle(StrandPalette.textSecondary)
             Stepper("", value: value, in: range, step: step).labelsHidden()
                 .accessibilityLabel(label)
         }
-        .frame(minHeight: 42).padding(.vertical, 4)
+        .modifier(SubRowInsets())
     }
 
     // MARK: - Illness early-warning
@@ -332,14 +357,12 @@ struct AutomationsView: View {
     private var illnessCard: some View {
         Section2(icon: "waveform.path.ecg", title: String(localized: "Illness early-warning"),
                  blurb: String(localized: "Watches your resting HR, HRV, skin temperature and respiration against your own 28-day baseline. On-device and approximate: informational only, not a diagnosis."),
-                 active: behavior.illnessWatch) {
-            ToggleRow(label: String(localized: "Watch for early-illness signs"),
-                      help: String(localized: "Needs at least 14 days of history. When two or more signals drift together you get a banner on the dashboard and a notification, at most once a day."),
-                      isOn: $behavior.illnessWatch)
-                .onChangeCompat(of: behavior.illnessWatch) { _ in
-                    model.reevaluateIllness()
-                    if behavior.illnessWatch { IllnessNotifier.requestAuthorization() }
-                }
+                 active: behavior.illnessWatch, master: $behavior.illnessWatch) {
+            NoteRow(text: String(localized: "Needs at least 14 days of history. When two or more signals drift together you get a banner on the dashboard and a notification, at most once a day."))
+        }
+        .onChangeCompat(of: behavior.illnessWatch) { _ in
+            model.reevaluateIllness()
+            if behavior.illnessWatch { IllnessNotifier.requestAuthorization() }
         }
     }
 
@@ -387,14 +410,14 @@ struct AutomationsView: View {
                 if rhythmEnabled {
                     rowDivider
                     HStack {
-                        Text("Open Rhythm").font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                        Text("Open Rhythm").font(StrandFont.book(15)).foregroundStyle(StrandPalette.textPrimary)
                         Spacer()
                         Button {
                             router.openRhythm()
-                        } label: { Label("Open", systemImage: "waveform.path") }
-                        .buttonStyle(.bordered).tint(StrandPalette.accent)
+                        } label: { NoopChip("Open", icon: "pulse") }
+                        .buttonStyle(.plain)
                     }
-                    .frame(minHeight: 42).padding(.vertical, 4)
+                    .modifier(SubRowInsets())
                 }
             }
         }
@@ -405,18 +428,19 @@ struct AutomationsView: View {
     private var batteryCard: some View {
         Section2(icon: "battery.25", title: String(localized: "Battery alerts"),
                  blurb: String(localized: "Get a notification when the strap battery runs low (15%) so you can top it up before tonight, and when it finishes charging."),
-                 active: behavior.batteryAlerts) {
-            ToggleRow(label: String(localized: "Notify on low and full battery"),
-                      help: String(localized: "A reminder to recharge before bed when the strap drops to 15%, and a heads-up when it reaches 100%, each at most once per charge cycle."),
-                      isOn: $behavior.batteryAlerts)
-                .onChangeCompat(of: behavior.batteryAlerts) { on in
-                    if on { BatteryNotifier.requestAuthorization() }
+                 active: behavior.batteryAlerts, master: $behavior.batteryAlerts) {
+            VStack(spacing: 0) {
+                NoteRow(text: String(localized: "A reminder to recharge before bed when the strap drops to 15%, and a heads-up when it reaches 100%, each at most once per charge cycle."))
+                if behavior.batteryAlerts {
+                    rowDivider
+                    ToggleRow(label: String(localized: "Predictive runtime warning"),
+                              help: String(localized: "An early \"recharge tonight\" heads-up when the strap has about a day of estimated runtime left, at most once per discharge cycle. Turn off to keep only the 15% warning."),
+                              isOn: $behavior.batteryPredictiveAlerts)
                 }
-            if behavior.batteryAlerts {
-                ToggleRow(label: String(localized: "Predictive runtime warning"),
-                          help: String(localized: "An early \"recharge tonight\" heads-up when the strap has about a day of estimated runtime left, at most once per discharge cycle. Turn off to keep only the 15% warning."),
-                          isOn: $behavior.batteryPredictiveAlerts)
             }
+        }
+        .onChangeCompat(of: behavior.batteryAlerts) { on in
+            if on { BatteryNotifier.requestAuthorization() }
         }
     }
 
@@ -425,19 +449,17 @@ struct AutomationsView: View {
     private var strainTargetCard: some View {
         Section2(icon: "flame", title: String(localized: "Strain target"),
                  blurb: String(localized: "A once-a-day nudge when your Effort reaches the low end of today's optimal strain range, worked out from your recovery."),
-                 active: behavior.strainTargetNudge) {
-            ToggleRow(label: String(localized: "Notify when optimal strain is reached"),
-                      help: String(localized: "Posts after your strap syncs and NOOP scores the day — not the exact second you cross it. At most once per day."),
-                      isOn: $behavior.strainTargetNudge)
-                .onChangeCompat(of: behavior.strainTargetNudge) { on in
-                    if on {
-                        StrainTargetNotifier.requestAuthorization()
-                        // The repo.$days sink only fires on data changes, so if today's target is
-                        // already reached, evaluate now rather than waiting for the next refresh
-                        // (the reevaluateIllness idiom).
-                        model.evaluateStrainTarget()
-                    }
-                }
+                 active: behavior.strainTargetNudge, master: $behavior.strainTargetNudge) {
+            NoteRow(text: String(localized: "Posts after your strap syncs and NOOP scores the day — not the exact second you cross it. At most once per day."))
+        }
+        .onChangeCompat(of: behavior.strainTargetNudge) { on in
+            if on {
+                StrainTargetNotifier.requestAuthorization()
+                // The repo.$days sink only fires on data changes, so if today's target is
+                // already reached, evaluate now rather than waiting for the next refresh
+                // (the reevaluateIllness idiom).
+                model.evaluateStrainTarget()
+            }
         }
     }
 
@@ -486,26 +508,31 @@ struct AutomationsView: View {
 
     private func shortcutField(_ placeholder: String, text: Binding<String>) -> some View {
         TextField(placeholder, text: text)
-            .textFieldStyle(.roundedBorder)
-            .font(StrandFont.body)
+            .textFieldStyle(.plain)
+            .font(StrandFont.light(14, relativeTo: .subheadline))
+            .foregroundStyle(StrandPalette.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+            .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
             .frame(maxWidth: 320)
     }
 
     private func shortcutFieldRow(_ label: String, help: String, text: Binding<String>) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label).font(StrandFont.book(15, relativeTo: .body)).foregroundStyle(StrandPalette.textPrimary)
+                Text(help).font(StrandFont.light(12.5, relativeTo: .caption)).foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
             shortcutField(String(localized: "Shortcut name"), text: text)
         }
-        .frame(minHeight: 42).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(SubRowInsets())
     }
 
     private var rowDivider: some View {
-        Rectangle().fill(StrandPalette.hairline).frame(height: 1).padding(.vertical, 4)
+        Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
     }
 }
 
@@ -527,52 +554,153 @@ private struct BondStatePill: View {
 
 private struct Section2<Content: View>: View {
     let icon: String; let title: String; var blurb: String? = nil
-    /// When this automation is enabled the card carries a brighter brand-green wash; otherwise a
-    /// faint one — so an active automation reads at a glance. Presentation-only.
+    /// Whether the automation is switched on. Kept for the call sites; v2 shows the state on the switch
+    /// itself rather than as a tinted card.
     var active: Bool = false
+    /// The automation's master switch, drawn on the header row when it has one.
+    var master: Binding<Bool>? = nil
+    /// A short state on the header's right ("3 of 4").
+    var trailing: String? = nil
     @ViewBuilder var content: () -> Content
     var body: some View {
-        StrandCard(padding: 20, tint: StrandPalette.accent) {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text("Automation").strandOverline()
-                        if active {
-                            Text("ON").font(StrandFont.overline)
-                                .tracking(StrandFont.overlineTracking)
-                                .foregroundStyle(StrandPalette.accent)
-                        }
-                    }
-                    HStack(spacing: 10) {
-                        Image(systemName: icon)
-                            .foregroundStyle(active ? StrandPalette.accent : StrandPalette.textSecondary)
-                            .accessibilityHidden(true)
-                        Text(title).font(StrandFont.title2).foregroundStyle(StrandPalette.textPrimary)
-                    }
-                }
+        VStack(spacing: 0) {
+            header
+            Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+            content()
+        }
+        .background(RoundedRectangle(cornerRadius: NoopVisualStyle.listRadius, style: .continuous)
+            .fill(NoopVisualStyle.surface))
+        .overlay(RoundedRectangle(cornerRadius: NoopVisualStyle.listRadius, style: .continuous)
+            .strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: NoopVisualStyle.listRadius, style: .continuous))
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            G6IconTile(icon: Self.phosphor(icon), size: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(StrandFont.book(15, relativeTo: .body)).foregroundStyle(StrandPalette.textPrimary)
                 if let blurb {
-                    Text(blurb).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                    Text(blurb).font(StrandFont.light(12.5, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let trailing {
+                Text(trailing).font(StrandFont.light(13, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            if let master {
+                // The v2 switch draws its own label, so the label is empty here and the title is spoken.
+                Toggle(isOn: master) { EmptyView() }
+                    .toggleStyle(.noop)
+                    .fixedSize()
+                    .accessibilityLabel(Text(title))
             }
         }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+    }
+
+    /// The v2 Phosphor glyph for each automation (the call sites still name the old SF Symbol).
+    static func phosphor(_ sf: String) -> String {
+        switch sf {
+        case "bell.badge.fill": return "bell-ringing"
+        case "waveform.path": return "vibrate"
+        case "hand.tap.fill": return "hand-tap"
+        case "figure.walk.motion": return "user-focus"
+        case "bolt.heart.fill": return "person-simple-run"
+        case "timer": return "armchair"
+        case "waveform.path.ecg": return "thermometer"
+        case "thermometer.medium": return "lightbulb"
+        case "battery.25": return "battery-warning"
+        case "flame": return "target"
+        default: return "sparkle"
+        }
+    }
+}
+
+/// Insets of the rows inside an automation card: aligned with the header title, past its icon tile.
+private struct SubRowInsets: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, 66)
+            .padding(.trailing, 18)
+            .padding(.vertical, 13)
+    }
+}
+
+/// An explanatory line inside an automation card.
+private struct NoteRow: View {
+    let text: String
+    var warning: Bool = false
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if warning {
+                PhIcon("warning", size: 14).foregroundStyle(StrandPalette.textPrimary)
+            }
+            Text(text)
+                .font(StrandFont.light(12.5, relativeTo: .caption))
+                .foregroundStyle(warning ? StrandPalette.textSecondary : StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(SubRowInsets())
     }
 }
 
 private struct ToggleRow: View {
     let label: String; let help: String; @Binding var isOn: Bool
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-                Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label).font(StrandFont.book(15, relativeTo: .body)).foregroundStyle(StrandPalette.textPrimary)
+                Text(help).font(StrandFont.light(12.5, relativeTo: .caption)).foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
-                .accessibilityLabel(label)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 42).padding(.vertical, 4)
+        .toggleStyle(.noop)
+        .modifier(SubRowInsets())
+    }
+}
+
+// MARK: - Hero
+
+/// How many automations are on, with the in-session cues, the double-tap action and coaching.
+private struct AutomationsHero: View {
+    let rulesOn: Int
+    let rulesTotal: Int
+    let cuesOn: Int
+    let doubleTap: String?
+    let coaching: Bool
+
+    var body: some View {
+        NoopHeroCard(glow: .ink, padding: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopIconBadge("Strap buzzes", icon: "vibrate")
+                HStack(alignment: .bottom, spacing: 12) {
+                    NoopDotNumber("\(rulesOn)", size: 80)
+                        .fixedSize()
+                    Text("automations on\nof \(rulesTotal)")
+                        .font(StrandFont.light(12, relativeTo: .caption))
+                        .foregroundStyle(Color.white.opacity(0.62))
+                        .lineSpacing(2)
+                        .padding(.bottom, 8)
+                }
+                .padding(.top, 26)
+                HStack(alignment: .top, spacing: 0) {
+                    G6HeroMetric(value: "\(cuesOn)", unit: String(localized: "of 4"), label: Text("In-session cues"))
+                    G6HeroMetric(value: doubleTap ?? String(localized: "Off"), label: Text("Double-tap"))
+                    G6HeroMetric(value: coaching ? String(localized: "On") : String(localized: "Off"),
+                                 label: Text("Coaching"))
+                }
+                .padding(.top, 26)
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 22)
+            .padding(.bottom, 22)
+        }
     }
 }

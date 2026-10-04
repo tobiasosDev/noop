@@ -121,21 +121,21 @@ enum HostedCard: String, CaseIterable, Identifiable {
         }
     }
 
-    /// SF Symbol for the editor row (reuses the shared customization-icon treatment).
+    /// Phosphor glyph for the editor row.
     var customizationIcon: String {
         switch self {
-        case .sleepMarks: return "moon.zzz"
-        case .asleepDuration: return "chart.bar.xaxis"
-        case .stagesVsTypical: return "chart.bar.doc.horizontal"
-        case .nightDetail: return "square.grid.2x2"
-        case .sleepDebt: return "scalemass"
-        case .stages: return "chart.bar.fill"
-        case .hoursVsNeeded: return "gauge.medium"
+        case .sleepMarks: return "moon-stars"
+        case .asleepDuration: return "chart-bar"
+        case .stagesVsTypical: return "chart-bar-horizontal"
+        case .nightDetail: return "squares-four"
+        case .sleepDebt: return "scales"
+        case .stages: return "chart-bar"
+        case .hoursVsNeeded: return "gauge"
         case .consistency: return "repeat"
-        case .stressToday: return "chart.xyaxis.line"
-        case .trendHRV: return "waveform.path.ecg"
+        case .stressToday: return "chart-line"
+        case .trendHRV: return "heartbeat"
         case .trendRestingHR: return "heart"
-        case .trendEffort: return "bolt.fill"
+        case .trendEffort: return "fire"
         }
     }
 

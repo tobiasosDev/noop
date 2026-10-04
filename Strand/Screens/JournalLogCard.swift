@@ -79,14 +79,11 @@ struct JournalLogCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            HStack(alignment: .center) {
-                SectionHeader("Journal", overline: "Log")
-                Spacer()
-                if editing {
-                    pillButton("Done", selected: true) { editing = false }
-                } else {
-                    pillButton("Edit", selected: false) { editing = true }
-                }
+            NoopSectionTitle("Journal") {
+                Button(editing ? "Done" : "Edit") { editing.toggle() }
+                    .buttonStyle(.plain)
+                    .font(StrandFont.book(12, relativeTo: .caption))
+                    .foregroundStyle(editing ? StrandPalette.textPrimary : StrandPalette.textTertiary)
             }
             // Day picker (#656): a bounded, scrollable range — Tomorrow back through the last 7 days — so
             // any recent day can be backfilled (was Yesterday/Today/Tomorrow only). Chronological
@@ -110,8 +107,26 @@ struct JournalLogCard: View {
                     .onChangeCompat(of: dayOffset) { _ in proxy.scrollTo(dayOffset, anchor: .center) }
                 }
             }
-            NoopCard(tint: StrandPalette.restColor) {
-                VStack(alignment: .leading, spacing: 10) {
+            NoopCard(padding: 18) {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoopCardHeader(journalDayLabel(dayOffset), icon: "notebook") {
+                        if dayOffset == -1 {
+                            Text("Counts toward tomorrow")
+                        } else {
+                            Text("Leads into this morning")
+                        }
+                    }
+                    .padding(.bottom, 4)
+
+                    ForEach(JournalGroup.displayOrder, id: \.self) { group in
+                        groupBlock(group)
+                    }
+
+                    Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        .padding(.top, 4)
+                    addRow
+                        .padding(.top, 14)
+
                     Text(editing
                          ? "Rename, regroup, or remove an item to tidy your list. Renaming keeps the original question behind the scenes, so a WHOOP import still lines up. Custom items are deleted; built-in ones are hidden and can be restored below."
                          : dayOffset == -1
@@ -120,13 +135,7 @@ struct JournalLogCard: View {
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    ForEach(JournalGroup.displayOrder, id: \.self) { group in
-                        groupBlock(group)
-                    }
-
-                    Divider().overlay(StrandPalette.hairline)
-                    addRow
+                        .padding(.top, 12)
                 }
             }
         }
@@ -140,27 +149,30 @@ struct JournalLogCard: View {
         // Empty groups hidden outside edit mode; in edit mode all six show so items can be moved in.
         if !groupItems.isEmpty || editing {
             let collapsed = collapsedGroups.contains(group.rawValue)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
                 Button { toggleCollapsed(group) } label: {
                     HStack(spacing: 6) {
-                        Text(group.title.uppercased())
-                            .font(StrandFont.overline)
-                            .tracking(StrandFont.overlineTracking)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                        Text("\(groupItems.count)")
-                            .font(StrandFont.caption)
+                        NoopOverline(verbatim: group.title)
+                        Text(verbatim: "\(groupItems.count)")
+                            .font(StrandFont.footnote)
                             .foregroundStyle(StrandPalette.textTertiary)
                         Spacer()
-                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
+                        PhIcon(collapsed ? "caret-right" : "caret-down", size: 12)
                             .foregroundStyle(StrandPalette.textTertiary)
                     }
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(group.title), \(groupItems.count) items, \(collapsed ? "collapsed" : "expanded")")
 
                 if !collapsed {
-                    ForEach(groupItems) { item in itemRow(item) }
+                    ForEach(groupItems) { item in
+                        Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        itemRow(item)
+                            .padding(.vertical, 10)
+                    }
                 }
             }
         }
@@ -169,46 +181,98 @@ struct JournalLogCard: View {
     // MARK: - Item row
 
     @ViewBuilder private func itemRow(_ item: JournalCatalogItem) -> some View {
-        HStack {
+        HStack(spacing: 12) {
+            PhIcon(Self.icon(for: item), size: 18)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .opacity(item.hidden ? 0.35 : 0.7)
             Text(verbatim: item.display)   // display = rename ?? canonical; data, not a UI literal
-                .font(StrandFont.body)
+                .font(StrandFont.book(14.5, relativeTo: .subheadline))
                 .foregroundStyle(item.hidden ? StrandPalette.textTertiary : StrandPalette.textPrimary)
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
             if editing {
                 editControls(item)
             } else if item.kind.isNumeric {
                 numericField(item)
             } else {
-                answerPill("Yes", q: item.canonical, value: true)
-                answerPill("No", q: item.canonical, value: false)
+                yesNoControl(q: item.canonical)
             }
         }
+    }
+
+    /// A Phosphor glyph for a journal item, matched on keywords in its (canonical) question; the
+    /// group's glyph when nothing matches. Display only — the question text is never changed.
+    static func icon(for item: JournalCatalogItem) -> String {
+        let q = (item.canonical + " " + item.display).lowercased()
+        let table: [(keys: [String], icon: String)] = [
+            (["alcohol", "drink", "wine", "beer"], "wine"),
+            (["caffeine", "coffee", "tea"], "coffee"),
+            (["meal", "eat", "food", "snack", "dinner", "sugar"], "fork-knife"),
+            (["read"], "book-open"),
+            (["screen", "phone", "device"], "device-mobile"),
+            (["meditat", "mindful", "breath"], "flower-lotus"),
+            (["magnes", "vitamin", "supplement", "melatonin", "zinc", "omega", "creatine"], "pill"),
+            (["sauna", "hot"], "thermometer-hot"),
+            (["cold", "ice"], "snowflake"),
+            (["sex", "intimacy"], "heart"),
+            (["nap"], "bed"),
+            (["travel", "flight", "fly"], "airplane"),
+            (["sick", "ill", "fever"], "first-aid-kit"),
+            (["stress", "anxious", "anxiety"], "lightning"),
+            (["water", "hydrat"], "drop"),
+            (["sun", "daylight", "outside"], "sun"),
+            (["stretch", "yoga"], "person-simple-tai-chi"),
+            (["workout", "exercise", "train"], "barbell"),
+        ]
+        for row in table where row.keys.contains(where: { q.contains($0) }) { return row.icon }
+        switch item.group {
+        case .supplements: return "pill"
+        case .nutrition:   return "fork-knife"
+        case .lifestyle:   return "sun-horizon"
+        case .health:      return "first-aid-kit"
+        case .behaviour:   return "person-simple"
+        case .other:       return "notebook"
+        }
+    }
+
+    /// The Yes / No capsule (`.yn`). Tri-state: tapping the selected side again clears the answer.
+    private func yesNoControl(q: String) -> some View {
+        HStack(spacing: 0) {
+            answerPill("Yes", q: q, value: true)
+            answerPill("No", q: q, value: false)
+        }
+        .padding(3)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.surface))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
     }
 
     // MARK: - Numeric field
 
     private func numericField(_ item: JournalCatalogItem) -> some View {
         let current = numericAnswers[item.canonical]
-        return HStack(spacing: 6) {
+        return HStack(spacing: 4) {
             stepperButton("minus", q: item.canonical, current: current)
-            NumericLogField(
-                value: current,
-                placeholder: "—",
-                onCommit: { v in commitNumeric(item.canonical, value: v) })
-            .frame(width: 64)
-            if let unit = item.kind.unitLabel, !unit.isEmpty {
-                Text(verbatim: unit)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                NumericLogField(
+                    value: current,
+                    placeholder: "—",
+                    onCommit: { v in commitNumeric(item.canonical, value: v) })
+                .frame(width: 44)
+                if let unit = item.kind.unitLabel, !unit.isEmpty {
+                    Text(verbatim: unit)
+                        .font(StrandFont.book(10, relativeTo: .caption2))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
             }
+            .frame(minWidth: 56)
             stepperButton("plus", q: item.canonical, current: current)
             if current != nil {
                 Button {
                     Task { await repo.clearJournalAnswer(day: dayKey, question: item.canonical); onChanged() }
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(StrandFont.footnote)
+                    PhIcon("x-circle", size: 16)
                         .foregroundStyle(StrandPalette.textTertiary)
+                        .frame(width: 22, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear \(item.display)")
@@ -222,9 +286,12 @@ struct JournalLogCard: View {
             let next = max(0, symbol == "plus" ? base + 1 : base - 1)
             commitNumeric(q, value: next)
         } label: {
-            Image(systemName: "\(symbol).circle")
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
+            PhIcon(symbol, size: 14)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(NoopVisualStyle.raised))
+                .overlay(Circle().strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(symbol == "plus" ? "Increase" : "Decrease")
@@ -257,9 +324,10 @@ struct JournalLogCard: View {
                         Button("Change to Number") { catalog.setKind(item.canonical, to: .numeric(unitLabel: nil)) }
                     }
                 } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(StrandFont.body)
+                    PhIcon("sliders-horizontal", size: 18)
                         .foregroundStyle(StrandPalette.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -273,9 +341,10 @@ struct JournalLogCard: View {
     /// Edit-mode control: delete a custom question / hide a built-in one. Tinted red to read as removal.
     private func removeButton(_ item: JournalCatalogItem) -> some View {
         Button { catalog.remove(item.canonical) } label: {
-            Image(systemName: "minus.circle.fill")
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.statusCritical)
+            PhIcon("minus-circle", weight: .fill, size: 20)
+                .foregroundStyle(NoopGlow.low.tint)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(item.custom ? "Delete this custom item" : "Hide this item")
@@ -291,67 +360,101 @@ struct JournalLogCard: View {
 
     private func renameSheet(_ item: JournalCatalogItem) -> some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            Text("Rename item").font(StrandFont.headline)
-            TextField("Display name", text: $renameDraft)
-                .textFieldStyle(.roundedBorder)
-            Text("History stays under the original question so WHOOP imports still line up.")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Cancel") { renaming = nil }
-                    .buttonStyle(.bordered)
-                Spacer()
-                Button("Save") {
-                    catalog.rename(item.canonical, to: renameDraft)
-                    renaming = nil
-                }
-                .buttonStyle(.borderedProminent)
+            NoopSheetHeader("Rename item", doneTitle: "Save",
+                            doneEnabled: !renameDraft.trimmingCharacters(in: .whitespaces).isEmpty,
+                            onCancel: { renaming = nil },
+                            onDone: {
+                                catalog.rename(item.canonical, to: renameDraft)
+                                renaming = nil
+                            })
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Display name", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .font(StrandFont.book(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .g3FieldChrome()
+                Text("History stays under the original question so WHOOP imports still line up.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
             }
+            .padding(.horizontal, 20)
+            Spacer(minLength: 0)
         }
-        .padding(NoopMetrics.space4)
         .frame(minWidth: 320)
+        .background(NoopSheetBackground())
+        #if os(iOS)
+        .presentationDetents([.height(260)])
+        .presentationDragIndicator(.visible)
+        #endif
     }
 
     // MARK: - Add row
 
     private var addRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
                 TextField("Add a custom item…", text: $customDraft)
-                    .textFieldStyle(.roundedBorder)
-                pillButton(customIsNumeric ? "Number" : "Yes/No", selected: customIsNumeric) {
-                    customIsNumeric.toggle()
-                }
-                Button("Add") {
+                    .textFieldStyle(.plain)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .g3FieldChrome(minHeight: 44, radius: 14)
+                Button {
                     let t = customDraft.trimmingCharacters(in: .whitespaces)
                     guard !t.isEmpty else { return }
                     catalog.addCustom(t,
                                       kind: customIsNumeric ? .numeric(unitLabel: nil) : .bool,
                                       group: customGroup)
                     customDraft = ""
+                } label: {
+                    PhIcon("plus", size: 16)
+                        .foregroundStyle(NoopVisualStyle.canvas)
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(StrandPalette.textPrimary))
+                        .opacity(customDraft.trimmingCharacters(in: .whitespaces).isEmpty ? 0.45 : 1)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .disabled(customDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityLabel("Add")
             }
-            Picker("Group", selection: $customGroup) {
-                ForEach(JournalGroup.displayOrder, id: \.self) { g in
-                    Text(g.title).tag(g)
+            HStack(spacing: 8) {
+                Button { customIsNumeric = false } label: { NoopChip("Yes/No", isOn: !customIsNumeric) }
+                    .buttonStyle(.plain)
+                Button { customIsNumeric = true } label: { NoopChip("Number", isOn: customIsNumeric) }
+                    .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Menu {
+                    Picker("Group", selection: $customGroup) {
+                        ForEach(JournalGroup.displayOrder, id: \.self) { g in
+                            Text(g.title).tag(g)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(verbatim: customGroup.title)
+                        PhIcon("caret-up-down", size: 12)
+                    }
+                    .font(StrandFont.book(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textSecondary)
                 }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .accessibilityLabel("New item group")
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .accessibilityLabel("New item group")
         }
     }
 
     // MARK: - Controls
 
     private func dayPill(_ label: LocalizedStringKey, offset: Int) -> some View {
-        pillButton(label, selected: dayOffset == offset) {
+        Button {
             dayOffset = offset
             onChanged()   // reload the selected day's answers
+        } label: {
+            NoopChip(label, isOn: dayOffset == offset)
         }
+        .buttonStyle(.plain)
     }
 
     /// The bounded day-picker range (#656): Tomorrow (-1) plus today and the 6 prior days, chronological
@@ -372,9 +475,9 @@ struct JournalLogCard: View {
 
     private func answerPill(_ label: LocalizedStringKey, q: String, value: Bool) -> some View {
         let selected = answers[q] == value
-        return pillButton(label, selected: selected) {
+        return Button {
             Task {
-                // Tri-state: re-tapping the filled chip clears the answer (natural-key delete,
+                // Tri-state: re-tapping the filled side clears the answer (natural-key delete,
                 // scoped to "noop-journal", imported rows can never be removed this way).
                 if selected {
                     await repo.clearJournalAnswer(day: dayKey, question: q)
@@ -383,28 +486,30 @@ struct JournalLogCard: View {
                 }
                 onChanged()
             }
+        } label: {
+            Text(label)
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .foregroundStyle(selected ? NoopVisualStyle.canvas : StrandPalette.textTertiary)
+                .frame(width: 46)
+                .padding(.vertical, 6)
+                .background(Capsule(style: .continuous).fill(selected ? StrandPalette.textPrimary : Color.clear))
+                .contentShape(Capsule(style: .continuous))
         }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func pillButton(_ label: LocalizedStringKey, selected: Bool,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label)
-                .font(StrandFont.footnote)
-                .foregroundStyle(selected ? StrandPalette.surfaceBase : StrandPalette.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(selected ? StrandPalette.restColor : StrandPalette.surfaceInset,
-                            in: Capsule())
-                .overlay(Capsule().stroke(selected ? StrandPalette.restColor : StrandPalette.hairline,
-                                          lineWidth: 1))
+            NoopChip(label, isOn: selected)
         }
         .buttonStyle(.plain)
     }
 }
 
 /// A compact numeric log field: shows the current value or a ghost placeholder, commits a Double on
-/// return / focus-out. Kept small so the numeric row reads like the yes/no pills.
+/// return / focus-out. Kept small so the numeric row reads like the yes/no capsule.
 private struct NumericLogField: View {
     let value: Double?
     let placeholder: String
@@ -414,9 +519,10 @@ private struct NumericLogField: View {
 
     var body: some View {
         TextField(placeholder, text: $text)
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
-            .font(StrandFont.number(15))
+            .font(StrandFont.value(16))
+            .foregroundStyle(StrandPalette.textPrimary)
             .onAppear { text = value.map(Self.format) ?? "" }
             .onChangeCompat(of: value) { v in text = v.map(Self.format) ?? "" }
             .onSubmit { commit() }

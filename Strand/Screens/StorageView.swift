@@ -16,125 +16,214 @@ struct StorageView: View {
     @State private var loading = true
     @State private var cleaning = false
     @State private var lastCleanedSummary: String?
+    /// The volume's total capacity, for the hero's "share of this device" caption; nil when unreadable.
+    @State private var volumeBytes: Int64?
 
     var body: some View {
-        ScreenScaffold(title: "Storage",
-                       subtitle: "Where NOOP's on-device space is going, and a one-tap clean-up.") {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
-                if loading && report == nil {
-                    StatePill("Measuring…", tone: .accent, pulsing: true)
-                        .staggeredAppear(index: 0)
-                } else if let report {
-                    breakdownCard(report).staggeredAppear(index: 0)
-                    cleanUpCard(report).staggeredAppear(index: 1)
-                } else {
-                    DataPendingNote(title: "Storage unavailable",
-                                    message: "Couldn't read the local store right now. Try again in a moment.",
-                                    symbol: "internaldrive")
-                        .staggeredAppear(index: 0)
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Storage")
+                .padding(.bottom, 6)
+            if loading && report == nil {
+                NoopCard {
+                    HStack(spacing: 12) {
+                        ProgressView().controlSize(.small).tint(StrandPalette.textSecondary)
+                        Text("Measuring…")
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                        Spacer(minLength: 0)
+                    }
                 }
-                explainerCard.staggeredAppear(index: 2)
+            } else if let report {
+                hero(report)
+                NoopSectionTitle("What takes space", caption: Self.format(total(report)))
+                breakdownList(report)
+                cleanUp(report)
+            } else {
+                NoopCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        NoopCardHeader("Storage unavailable", icon: "hard-drives")
+                        Text("Couldn't read the local store right now. Try again in a moment.")
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
+            explainerCard
+            Text("Nothing is uploaded. This is all on \(Platform.deviceNounPhrase).")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
         }
+        .noopHidesSystemNavBar()
         .task { await load() }
     }
 
-    // MARK: - Cards
+    // MARK: - Hero
 
-    private func breakdownCard(_ r: AppModel.StorageReport) -> some View {
-        StrandCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                Text("On-device footprint")
-                    .font(StrandFont.headline)
+    /// One category of the footprint: its share of the bar, its swatch, and how it reads.
+    private struct Part: Identifiable {
+        let id: String
+        let label: LocalizedStringKey
+        let caption: LocalizedStringKey
+        let bytes: Int64
+        let swatch: Color
+    }
+
+    private func parts(_ r: AppModel.StorageReport) -> [Part] {
+        [
+            Part(id: "db", label: "Health database",
+                 caption: "Every reading NOOP keeps, in one file",
+                 bytes: r.db ?? 0, swatch: StrandPalette.metricCyan),
+            Part(id: "inbox", label: "Leftover import copies",
+                 caption: r.inbox > 0 ? "Reclaimable" : "Nothing left behind",
+                 bytes: r.inbox, swatch: StrandPalette.textPrimary.opacity(0.8)),
+            Part(id: "temp", label: "Import temp files",
+                 caption: r.importTemp > 0 ? "Reclaimable" : "Nothing left behind",
+                 bytes: r.importTemp, swatch: StrandPalette.textPrimary.opacity(0.45)),
+        ]
+    }
+
+    private func total(_ r: AppModel.StorageReport) -> Int64 { (r.db ?? 0) + r.inbox + r.importTemp }
+
+    /// The ink hero: the whole footprint as one number, and a stacked bar of what it is made of.
+    private func hero(_ r: AppModel.StorageReport) -> some View {
+        let sum = total(r)
+        let figure = Self.split(Self.format(sum))
+        return NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge(verbatim: String(localized: "On \(Platform.deviceNounPhrase)"), icon: "hard-drives")
+                    Spacer(minLength: 8)
+                    if model.repo.days.count > 0 {
+                        NoopPill(verbatim: String(localized: "\(model.repo.days.count) days"), compact: true)
+                    }
+                }
+                NoopDotNumber(figure.number, unit: figure.unit, size: 92, unitSize: 30)
+                    .padding(.top, 30)
+                Text("Everything NOOP keeps on \(Platform.deviceNounPhrase).")
+                    .font(StrandFont.light(19, relativeTo: .title3))
+                    .tracking(-0.2)
                     .foregroundStyle(StrandPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 16)
+                stackedBar(parts(r), total: sum)
+                    .frame(height: 16)
+                    .padding(.top, 22)
+                HStack {
+                    if sum > 0 {
+                        Text("Database \(Self.percent(r.db ?? 0, of: sum))")
+                    }
+                    Spacer(minLength: 8)
+                    if let volumeBytes, volumeBytes > 0 {
+                        Text("\(Self.percent(sum, of: volumeBytes, decimals: 1)) of \(Self.format(volumeBytes))")
+                    }
+                }
+                .font(StrandFont.light(10.5, relativeTo: .caption2))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .padding(.top, 10)
+            }
+            .padding(.bottom, 2)
+        }
+    }
 
-                row(icon: "cylinder.split.1x2",
-                    label: "Health database",
-                    bytes: r.db,
-                    tint: StrandPalette.accent)
-                Divider().overlay(StrandPalette.hairline)
-                row(icon: "tray.full",
-                    label: "Leftover import copies",
-                    bytes: r.inbox,
-                    tint: r.inbox > 0 ? StrandPalette.statusWarning : StrandPalette.textTertiary,
-                    note: r.inbox > 0 ? "Reclaimable" : nil)
-                Divider().overlay(StrandPalette.hairline)
-                row(icon: "clock.arrow.circlepath",
-                    label: "Import temp files",
-                    bytes: r.importTemp,
-                    tint: r.importTemp > 0 ? StrandPalette.statusWarning : StrandPalette.textTertiary,
-                    note: r.importTemp > 0 ? "Reclaimable" : nil)
+    /// Rounded segments, one per category, each at least a sliver wide so a tiny one still shows.
+    private func stackedBar(_ parts: [Part], total: Int64) -> some View {
+        GeometryReader { geo in
+            let shown = parts.filter { $0.bytes > 0 }
+            let gaps = CGFloat(max(shown.count - 1, 0)) * 3
+            let width = max(geo.size.width - gaps, 0)
+            HStack(spacing: 3) {
+                ForEach(shown) { part in
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(part.swatch)
+                        .frame(width: max(18, width * CGFloat(Double(part.bytes) / Double(max(total, 1)))))
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Breakdown + clean-up
+
+    private func breakdownList(_ r: AppModel.StorageReport) -> some View {
+        let sum = total(r)
+        return NoopList {
+            ForEach(parts(r)) { part in
+                HStack(spacing: 14) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(part.swatch)
+                        .frame(width: 12, height: 12)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(part.label)
+                            .font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text(part.caption)
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(part.id == "db" && r.db == nil ? "—" : Self.format(part.bytes))
+                            .font(StrandFont.value(15))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        if sum > 0 {
+                            Text(Self.percent(part.bytes, of: sum))
+                                .font(StrandFont.light(11, relativeTo: .caption2))
+                                .foregroundStyle(StrandPalette.textTertiary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 15)
+                .accessibilityElement(children: .combine)
             }
         }
     }
 
-    private func cleanUpCard(_ r: AppModel.StorageReport) -> some View {
+    private func cleanUp(_ r: AppModel.StorageReport) -> some View {
         let reclaimable = r.inbox + r.importTemp
-        return StrandCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                Text("Clean up")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Text(reclaimable > 0
-                     ? "There's about \(Self.format(reclaimable)) of leftover import scratch space to reclaim. This never removes your imported data."
-                     : "Nothing to reclaim right now. NOOP already cleans up import scratch space automatically.")
-                    .font(StrandFont.subhead)
+        return VStack(alignment: .leading, spacing: 10) {
+            NoopButton(cleaning ? "Cleaning up…" : "Clean up now", kind: .primary, fullWidth: true) {
+                Task { await cleanUp() }
+            }
+            .disabled(cleaning || reclaimable == 0)
+            .accessibilityLabel("Clean up leftover import files")
+            Text(reclaimable > 0
+                 ? "There's about \(Self.format(reclaimable)) of leftover import scratch space to reclaim. This never removes your imported data."
+                 : "Nothing to reclaim right now. NOOP already cleans up import scratch space automatically.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 6)
+            if let lastCleanedSummary {
+                Text(lastCleanedSummary)
+                    .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let lastCleanedSummary {
-                    Text(lastCleanedSummary)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.statusPositive)
-                }
-
-                Button {
-                    Task { await cleanUp() }
-                } label: {
-                    HStack(spacing: NoopMetrics.space2) {
-                        if cleaning { ProgressView().controlSize(.small) }
-                        Text(cleaning ? "Cleaning up…" : "Clean up now")
-                    }
-                }
-                .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
-                .disabled(cleaning || reclaimable == 0)
-                .accessibilityLabel("Clean up leftover import files")
+                    .frame(maxWidth: .infinity)
             }
         }
+        .padding(.top, 12)
     }
 
     private var explainerCard: some View {
-        DataPendingNote(
-            title: "Why does this grow?",
-            message: "When you import an Apple Health or WHOOP export, iOS hands NOOP a private copy of the file. NOOP reads it, saves your data into the health database, then deletes the copy. Older builds didn't delete every copy. This screen reclaims any that were left behind.",
-            symbol: "questionmark.circle")
-    }
-
-    // MARK: - Row
-
-    private func row(icon: String, label: LocalizedStringKey, bytes: Int64?,
-                     tint: Color, note: LocalizedStringKey? = nil) -> some View {
-        HStack(spacing: NoopMetrics.space3) {
-            Image(systemName: icon)
-                .font(StrandFont.headline)
-                .foregroundStyle(tint)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                if let note {
-                    Text(note)
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
+        NoopCard {
+            VStack(alignment: .leading, spacing: 12) {
+                NoopCardHeader("Why does this grow?", icon: "question")
+                Text("When you import an Apple Health or WHOOP export, iOS hands NOOP a private copy of the file. NOOP reads it, saves your data into the health database, then deletes the copy. Older builds didn't delete every copy. This screen reclaims any that were left behind.")
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
-            Text(bytes.map(Self.format) ?? "—")
-                .font(StrandFont.bodyNumber)
-                .foregroundStyle(StrandPalette.textSecondary)
         }
+        .padding(.top, 12)
     }
 
     // MARK: - Data
@@ -143,6 +232,8 @@ struct StorageView: View {
         loading = true
         let r = await model.storageReport()
         report = r
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        volumeBytes = (try? home.resourceValues(forKeys: [.volumeTotalCapacityKey]))?.volumeTotalCapacity.map(Int64.init)
         loading = false
     }
 
@@ -160,9 +251,24 @@ struct StorageView: View {
 
     /// Human byte size, decimal (matches iOS Settings' "Documents & Data" presentation).
     static func format(_ bytes: Int64) -> String {
+        byteFormatter.string(fromByteCount: bytes)
+    }
+    private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
         f.countStyle = .file
         f.allowedUnits = [.useKB, .useMB, .useGB]
-        return f.string(fromByteCount: bytes)
+        f.allowsNonnumericFormatting = false   // "0 KB", not "Zero KB", beside real figures
+        return f
+    }()
+
+    /// "412 MB" → ("412", "MB") so the unit can set small beside the hero figure.
+    private static func split(_ s: String) -> (number: String, unit: String?) {
+        guard let space = s.lastIndex(where: { $0 == " " || $0 == "\u{00A0}" }) else { return (s, nil) }
+        return (String(s[..<space]), String(s[s.index(after: space)...]))
+    }
+
+    private static func percent(_ part: Int64, of whole: Int64, decimals: Int = 0) -> String {
+        guard whole > 0 else { return "—" }
+        return (Double(part) / Double(whole)).formatted(.percent.precision(.fractionLength(decimals)))
     }
 }

@@ -124,13 +124,13 @@ struct CompareView: View {
     @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
     private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
 
-    // Distinct, high-legibility series colors (avoid the recovery/strain ramps so
-    // overlay lines read as categorical, not as a value gradient).
+    // Distinct, high-legibility series colors, categorical rather than a value gradient: ink first, then
+    // the charge green, the chart periwinkle and the amber of the v2 kit.
     private static let seriesPalette: [Color] = [
-        StrandPalette.accent,        // mint-green
-        StrandPalette.metricCyan,    // cyan
-        StrandPalette.metricPurple,  // purple
-        StrandPalette.metricAmber,   // amber
+        StrandPalette.textPrimary,
+        NoopGlow.recovery.accent,
+        StrandPalette.metricCyan,
+        NoopGlow.moderate.accent,
     ]
 
     /// Default starter selection (falls back gracefully if a key is missing).
@@ -171,33 +171,42 @@ struct CompareView: View {
     private var loadTaskID: String { "\(selectionKey)|\(repo.refreshSeq)" }
 
     var body: some View {
-        ScreenScaffold(title: "Compare", subtitle: "Overlay signals, draw conclusions.",
-                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
-                       // alignment/spacing/header). The content is one inner eager VStack; no staggered
-                       // reveals, and the only GeometryReaders are chart-local (.chartOverlay plot rects),
-                       // so nothing depends on eager layout of the scroll column.
-                       lazy: true,
-                       // Liquid finish: the day-of-sky backdrop carries the liquid atmosphere across the
-                       // analysis tabs, exactly like Today and the batch-1 screens.
-                       topBackground: liquidScaffoldSky()) {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                metricSection
+        // PERF (scroll): lazy column. No staggered reveals, and the only GeometryReaders are chart-local
+        // (.chartOverlay plot rects), so nothing depends on eager layout of the scroll column.
+        ScreenScaffold(title: nil, lazy: true) {
+            NoopScreenHeader(verbatim: "")
+                .padding(.bottom, 8)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Compare")
+                    .font(StrandFont.title1)
+                    .tracking(-0.56)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Overlay signals, draw conclusions.")
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            .padding(.bottom, 8)
 
-                if selected.count < minSelection {
-                    ComingSoon(what: "Compare needs at least two metrics with history. Import your WHOOP export in Data Sources first.")
-                } else {
-                    let series = activeSeries
-                    if series.allSatisfy({ $0.rows.isEmpty }) {
-                        ComingSoon(what: loadedOnce
-                            ? "No data for these metrics in \(range.phrase). Widen the range or pick metrics you've logged."
-                            : "Reading your history…")
-                    } else {
-                        overlaySection(series)
-                        correlationSection(series)
-                    }
-                }
+            let series = activeSeries
+            let hasData = selected.count >= minSelection && !series.allSatisfy({ $0.rows.isEmpty })
+            if hasData, let top = pairResults(series).first {
+                strongestLink(top)
+            }
+            metricSection
+
+            if selected.count < minSelection {
+                messageCard(Text("Compare needs at least two metrics with history. Import your WHOOP export in Data Sources first."))
+            } else if !hasData {
+                messageCard(loadedOnce
+                    ? Text("No data for these metrics in \(range.phrase). Widen the range or pick metrics you've logged.")
+                    : Text("Reading your history…"))
+            } else {
+                overlaySection(series)
+                correlationSection(series)
             }
         }
+        .noopHidesSystemNavBar()
         .task(id: loadTaskID) {
             await loadSelected()
             refreshPairCache(activeSeries)
@@ -207,6 +216,53 @@ struct CompareView: View {
         .onChangeCompat(of: correlationKey(activeSeries)) { _ in
             refreshPairCache(activeSeries)
         }
+    }
+
+    private func messageCard(_ text: Text) -> some View {
+        NoopCard(padding: 18) {
+            text.font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The ink hero: the strongest pairwise link among the selected signals.
+    private func strongestLink(_ p: PairResult) -> some View {
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge("Strongest link", icon: "intersect")
+                    Spacer(minLength: 8)
+                    Text(verbatim: range.phrase)
+                        .font(StrandFont.light(12, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textPrimary.opacity(0.6))
+                }
+                HStack(alignment: .center, spacing: 14) {
+                    NoopDotNumber(signedR(p.r), size: 56)
+                        .layoutPriority(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(verbatim: "\(p.a.metric.title) ↔\u{FE0E} \(p.b.metric.title)")
+                            .font(StrandFont.light(17, relativeTo: .headline))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                        Text("\(p.n) overlapping days")
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textPrimary.opacity(0.55))
+                    }
+                }
+                .padding(.top, 24)
+                Text(verbatim: conclusion(p))
+                    .font(StrandFont.light(14.5, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textPrimary.opacity(0.8))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 18)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(insightSentence(p))
     }
 
     // MARK: - Selection key (re-loads when the set of metrics changes)
@@ -275,12 +331,13 @@ struct CompareView: View {
         let total = series.reduce(0) { $0 + $1.rows.count }
         if anyWidened {
             return total == 1
-                ? String(localized: "1 reading across \(series.count) · \(range.phrase) · sparse widened")
-                : String(localized: "\(total) readings across \(series.count) · \(range.phrase) · sparse widened")
+                ? String(localized: "1 reading across \(series.count) signals · \(range.phrase) · sparse widened")
+                : String(localized: "\(total) readings across \(series.count) signals · \(range.phrase) · sparse widened")
         }
+        // "across 3" alone read as three of nothing; the count names what it counts.
         return total == 1
-            ? String(localized: "1 reading across \(series.count) · \(range.phrase)")
-            : String(localized: "\(total) readings across \(series.count) · \(range.phrase)")
+            ? String(localized: "1 reading across \(series.count) signals · \(range.phrase)")
+            : String(localized: "\(total) readings across \(series.count) signals · \(range.phrase)")
     }
 
     // MARK: - Loading
@@ -341,52 +398,54 @@ struct CompareView: View {
         loadedOnce = true
     }
 
-    // MARK: - Metric picker section (chips + range control)
+    // MARK: - Signal picker (chips)
 
     private var metricSection: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Metrics", overline: "Overlay 2-4 signals")
-            NoopCard {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    // Responsive: range pills + the Add menu side-by-side when there's room, else
-                    // stacked so the pills don't overflow/clip on a narrow window (ported from the iOS port).
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .center) {
-                            SegmentedPillControl(CompareRange.allCases, selection: rangeBinding) { $0.label }
-                                .accessibilityLabel("Time range")
-                            Spacer()
-                            addMenu
-                        }
-                        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                            SegmentedPillControl(CompareRange.allCases, selection: rangeBinding) { $0.label }
-                                .accessibilityLabel("Time range")
-                            addMenu
-                        }
-                    }
-
-                    if selected.count >= minSelection {
-                        Text(rangeCaption)
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(anyWidened ? StrandPalette.statusWarning : StrandPalette.textTertiary)
-                            .accessibilityLabel(rangeCaption)
-                    }
-
-                    if selected.isEmpty {
-                        Text("Nothing selected yet.")
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    } else {
-                        FlowChips(metrics: selected, colorFor: colorFor) { metric in
-                            remove(metric)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            NoopSectionTitle("Signals", captionKey: "Overlay 2-4 signals")
+            if selected.isEmpty {
+                Text("Nothing selected yet.")
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            G3FlowLayout(spacing: 8, lineSpacing: 8) {
+                ForEach(selected) { metric in
+                    selectedChip(metric)
+                }
+                if selected.count < maxSelection {
+                    addMenu
                 }
             }
         }
     }
 
-    /// Grouped "add metric" menu, sectioned by catalog category. Disables already-
-    /// picked metrics and the whole control once the cap is reached.
+    /// One selected signal: its line swatch, its name, and a remove cross.
+    private func selectedChip(_ metric: MetricDescriptor) -> some View {
+        HStack(spacing: 8) {
+            Capsule().fill(colorFor(metric)).frame(width: 12, height: 2.5)
+            Text(metric.title)
+                .font(StrandFont.book(13, relativeTo: .footnote))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .lineLimit(1)
+            Button {
+                remove(metric)
+            } label: {
+                PhIcon("x", size: 12)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(metric.title)")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(height: 36)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+    }
+
+    /// Grouped "add metric" menu, sectioned by catalog category. Disables already-picked metrics.
     private var addMenu: some View {
         Menu {
             ForEach(MetricCatalog.categories, id: \.self) { category in
@@ -409,15 +468,18 @@ struct CompareView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "plus.circle.fill")
-                Text(selected.count >= maxSelection ? "Max 4" : "Add metric")
-                    .font(StrandFont.subhead)
+                PhIcon("plus", size: 13)
+                Text("Add metric")
+                    .font(StrandFont.book(13, relativeTo: .footnote))
             }
-            .foregroundStyle(selected.count >= maxSelection ? StrandPalette.textTertiary : StrandPalette.accent)
+            .foregroundStyle(StrandPalette.textSecondary)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+            .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .disabled(selected.count >= maxSelection)
         .accessibilityLabel("Add a metric to compare")
     }
 
@@ -440,62 +502,64 @@ struct CompareView: View {
         persistSelection()   // #358
     }
 
-    // MARK: - Overlay chart section (locked ChartCard)
+    // MARK: - Overlay chart section
 
     @ViewBuilder
     private func overlaySection(_ series: [CompareSeries]) -> some View {
         let nonEmpty = series.filter { !$0.rows.isEmpty }
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Overlay", overline: "\(range.phrase)")
-            ChartCard(
-                title: "Normalized overlay",
-                subtitle: anyWidened
-                    ? String(localized: "Min-max normalized · sparse series widened past \(range.phrase) · \(inspectHint)")
-                    : String(localized: "Each line min-max normalized within \(range.phrase) · \(inspectHint)"),
-                trailing: String(localized: "\(nonEmpty.count) series"),
-                // Anchor the overlay card to the brand-green chrome world; each line keeps its own
-                // categorical series colour so the lines stay distinguishable against the wash.
-                tint: StrandPalette.accent
-            ) {
+        NoopCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 14) {
+                NoopCardHeader("Normalized overlay", icon: "chart-line") {
+                    Text(verbatim: "min → max")
+                }
+                SegmentedPillControl(CompareRange.allCases, selection: rangeBinding, fillsAvailableWidth: true) { $0.label }
+                    .accessibilityLabel("Time range")
                 // The overlay is min–max NORMALIZED 0–1, so the Effort scale never touches the line shape;
                 // only the per-series hover read-outs convert (passed through to the tooltip). (#268)
-                OverlayChart(series: nonEmpty, effortScale: effortScale, height: NoopMetrics.chartHeight)
-            } footer: {
+                OverlayChart(series: nonEmpty, effortScale: effortScale, height: 180)
+                    .padding(.top, 4)
+                Text(anyWidened
+                     ? String(localized: "Min-max normalized · sparse series widened past \(range.phrase) · \(inspectHint)")
+                     : String(localized: "Each line min-max normalized within \(range.phrase) · \(inspectHint)"))
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
                 legend(nonEmpty)
+                Text(rangeCaption)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .accessibilityLabel(rangeCaption)
             }
         }
     }
 
     private func legend(_ series: [CompareSeries]) -> some View {
         VStack(spacing: 0) {
-            ForEach(Array(series.enumerated()), id: \.element.id) { idx, s in
-                HStack(spacing: 10) {
-                    // A small liquid vessel posed at this series' LATEST value within its own min–max
-                    // window (the same 0–1 position the overlay's "now" end-cap sits at) — the liquid
-                    // accent tying the legend to the real series. Static, decorative (the min/max text
-                    // + colour swatch carry the meaning for VoiceOver).
-                    LiquidVessel(value: s.rows.last.map { s.normalized($0.value) },
-                                 tint: s.color, animated: false)
-                        .frame(width: 22, height: 22)
-                        .accessibilityHidden(true)
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(s.color)
-                        .frame(width: 14, height: 3)
+            ForEach(series) { s in
+                HStack(spacing: 12) {
+                    Capsule().fill(s.color).frame(width: 18, height: 2.5)
                     Text(s.metric.title)
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.book(14, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     // Real min/max labels honour the Effort scale (#268); other metrics are unchanged.
                     Text("\(s.metric.format(s.realMin, effortScale: effortScale))-\(s.metric.format(s.realMax, effortScale: effortScale))")
-                        .font(StrandFont.captionNumber)
-                        .foregroundStyle(StrandPalette.textSecondary)
+                        .font(StrandFont.light(11, relativeTo: .caption2))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .lineLimit(1)
+                    if let last = s.rows.last {
+                        Text(verbatim: s.metric.format(last.value, effortScale: effortScale))
+                            .font(StrandFont.value(15))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .lineLimit(1)
+                            .frame(minWidth: 56, alignment: .trailing)
+                    }
                 }
-                .padding(.vertical, 7)
+                .padding(.vertical, 8)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(s.metric.title), range \(s.metric.format(s.realMin, effortScale: effortScale)) to \(s.metric.format(s.realMax, effortScale: effortScale))")
-                if idx < series.count - 1 {
-                    Divider().overlay(StrandPalette.hairline)
-                }
             }
         }
     }
@@ -561,79 +625,84 @@ struct CompareView: View {
     @ViewBuilder
     private func correlationSection(_ series: [CompareSeries]) -> some View {
         let pairs = pairResults(series)
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("How They Move Together",
-                          overline: "Pearson r · \(range.phrase)",
-                          trailing: pairs.isEmpty ? nil
-                                    : (pairs.count == 1 ? String(localized: "1 pair")
-                                                        : String(localized: "\(pairs.count) pairs")))
-
-            if pairs.isEmpty {
-                NoopCard {
-                    Text("Not enough overlapping days between these metrics in \(range.phrase). Widen the range.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
+        // "Pearson r" is one label: the title wraps before it does.
+        NoopSectionTitle("How they move together") { Text("Pearson r").fixedSize() }
+        if pairs.isEmpty {
+            messageCard(Text("Not enough overlapping days between these metrics in \(range.phrase). Widen the range."))
+        } else {
+            NoopList {
                 ForEach(pairs) { p in
-                    pairCard(p)
+                    pairRow(p)
                 }
             }
+            NoopInsightRow("Correlation, not cause. Two signals moving together does not mean one drives the other.")
+                .padding(.horizontal, 4)
+                .padding(.top, 10)
         }
     }
 
-    /// One pairwise correlation as its own NoopCard.
-    private func pairCard(_ p: PairResult) -> some View {
-        let tint = correlationColor(p.r)
-        // Frosted card washed by the relationship's own colour (green positive / rose negative), with a
-        // TrendChip surfacing the signed direction at a glance — the Today delta idiom, applied to r.
-        return NoopCard(tint: tint) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
-                    // A small liquid vessel filled to the correlation STRENGTH (|r|, a neutral 0–1
-                    // magnitude — not a health value), tinted by the relationship's own colour. Static
-                    // (posed) so a page of pair cards costs one cached frame each, matching Today's small
-                    // vessels. Decorative — the r read-out + sentence carry the meaning for VoiceOver.
-                    LiquidVessel(value: min(abs(p.r), 1), tint: tint, animated: false)
-                        .frame(width: 30, height: 30)
-                        .accessibilityHidden(true)
-                    // Two color swatches for the pair.
-                    HStack(spacing: 3) {
-                        Circle().fill(p.a.color).frame(width: 8, height: 8)
-                        Circle().fill(p.b.color).frame(width: 8, height: 8)
-                    }
-                    Text("\(p.a.metric.title) ↔ \(p.b.metric.title)")
-                        .font(StrandFont.headline)
+    /// One pairwise correlation (`.li`): the pair, its overlap and strength, a |r| bar and the signed r.
+    private func pairRow(_ p: PairResult) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Circle().fill(p.a.color).frame(width: 6, height: 6)
+                    Text(verbatim: "\(p.a.metric.title) ↔\u{FE0E} \(p.b.metric.title)")
+                        .font(StrandFont.book(14.5, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
-                    TrendChip(text: signedR(p.r), color: tint)
-                    Text("r = \(signedR(p.r))")
-                        .font(StrandFont.number(18))
-                        .foregroundStyle(tint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-
-                Text(insightSentence(p))
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                // The strength magnitude drawn as a liquid tube — the horizontal progress idiom Today
-                // uses for its key-metric fills, here reading |r| from none (0) to a perfect link (1).
-                LiquidTube(frac: min(abs(p.r), 1), tint: tint, height: 8, animated: false)
-                    .accessibilityHidden(true)
-
-                Text("\(p.n) overlapping days · \(strengthWord(p.r)) \(directionWord(p.r)) correlation")
-                    .font(StrandFont.footnote)
+                Text(verbatim: pairCaption(p))
+                    .font(StrandFont.light(11, relativeTo: .caption2))
                     .foregroundStyle(StrandPalette.textTertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            NoopTrack(fraction: min(abs(p.r), 1), height: 6,
+                      fill: [StrandPalette.textPrimary.opacity(0.55), StrandPalette.textPrimary.opacity(0.85)])
+                .frame(width: 60)
+            Text(verbatim: signedR(p.r))
+                .font(StrandFont.value(17))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .frame(minWidth: 52, alignment: .trailing)
         }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(p.a.metric.title) versus \(p.b.metric.title), r equals \(String(format: "%.2f", p.r)), \(p.n) days")
+        .accessibilityLabel(insightSentence(p))
     }
 
     // MARK: - Insight language
+
+    /// "120 overlapping days · weak, positive": strength and direction as plain words, not adjectives in
+    /// front of "correlation", which only inflects correctly in English ("schwach positiv Korrelation").
+    private func pairCaption(_ p: PairResult) -> String {
+        let dir = directionWord(p.r)
+        return dir.isEmpty
+            ? String(localized: "\(p.n) overlapping days · \(strengthWord(p.r))")
+            : String(localized: "\(p.n) overlapping days · \(strengthWord(p.r)), \(dir)")
+    }
+
+    /// A metric name inside a sentence: lower-cased where the language lower-cases common nouns, kept as
+    /// written in German, which capitalises every noun ("Wenn Energie steigt", not "energie").
+    private func inSentence(_ title: String) -> String {
+        AppLanguage.activeLocale.language.languageCode?.identifier == "de" ? title : title.lowercased()
+    }
+
+    /// The plain conclusion for the hero: which way the second signal tends to go when the first rises.
+    private func conclusion(_ p: PairResult) -> String {
+        guard abs(p.r) >= 0.3 else {
+            return String(localized: "No clear relationship. They move largely independently.")
+        }
+        let aT = inSentence(p.a.metric.title)
+        let bT = inSentence(p.b.metric.title)
+        // Whole-phrase variants per direction so translators never see a stitched verb fragment.
+        return p.r < 0
+            ? String(localized: "When \(aT) rises, \(bT) tends to fall.")
+            : String(localized: "When \(aT) rises, \(bT) tends to rise.")
+    }
 
     /// "Weight ↔ Recovery: r = −0.34 (moderate negative) over 1Y" + a plain-English
     /// conclusion when |r| is notable.
@@ -642,8 +711,8 @@ struct CompareView: View {
         guard abs(p.r) >= 0.3 else {
             return String(localized: "\(head) No clear relationship. They move largely independently.")
         }
-        let aT = p.a.metric.title.lowercased()
-        let bT = p.b.metric.title.lowercased()
+        let aT = inSentence(p.a.metric.title)
+        let bT = inSentence(p.b.metric.title)
         // Whole-phrase variants per direction so translators never see a stitched verb fragment.
         return p.r < 0
             ? String(localized: "\(head) When \(aT) rises, \(bT) tends to fall, a \(strengthWord(p.r)) \(directionWord(p.r)) link.")
@@ -667,55 +736,6 @@ struct CompareView: View {
     private func directionWord(_ r: Double) -> String {
         if abs(r) < 0.1 { return "" }
         return r >= 0 ? String(localized: "positive") : String(localized: "negative")
-    }
-
-    private func correlationColor(_ r: Double) -> Color {
-        let base = r >= 0 ? StrandPalette.statusPositive : StrandPalette.statusCritical
-        return base.opacity(0.55 + 0.45 * min(abs(r), 1.0))
-    }
-}
-
-// MARK: - Selected-metric chips (wrapping flow layout)
-
-/// Removable chips for the active selection, tinted to each series' color.
-private struct FlowChips: View {
-    let metrics: [MetricDescriptor]
-    let colorFor: (MetricDescriptor) -> Color
-    let onRemove: (MetricDescriptor) -> Void
-
-    private let columns = [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)]
-
-    var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-            ForEach(metrics) { metric in
-                let color = colorFor(metric)
-                HStack(spacing: 7) {
-                    Circle().fill(color).frame(width: 8, height: 8)
-                    Text(metric.title)
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Button {
-                        onRemove(metric)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Remove \(metric.title)")
-                }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous).fill(StrandPalette.surfaceOverlay)
-                )
-                .overlay(
-                    Capsule(style: .continuous).stroke(color.opacity(0.4), lineWidth: 1)
-                )
-            }
-        }
     }
 }
 
@@ -918,7 +938,7 @@ private struct OverlayChart: View {
                 y: .value("Normalized", p.norm)
             )
             .interpolationMethod(.catmullRom)
-            .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+            .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
             .foregroundStyle(by: .value("Metric", p.title))
 
             // Per-point dots are only legible on sparse series; on a dense window they
@@ -958,7 +978,7 @@ private struct OverlayChart: View {
         .chartYAxis {
             // Normalized axis — label endpoints as low/high rather than raw numbers.
             AxisMarks(position: .leading, values: [0.0, 0.5, 1.0]) { value in
-                AxisGridLine().foregroundStyle(StrandPalette.hairline.opacity(0.4))
+                AxisGridLine().foregroundStyle(NoopVisualStyle.border)
                 AxisValueLabel {
                     if let d = value.as(Double.self) {
                         Text(d == 0 ? "low" : d == 1 ? "high" : "mid")
@@ -973,7 +993,7 @@ private struct OverlayChart: View {
         // two marks land in one calendar day and print the same date on top of itself.
         .chartXAxis {
             AxisMarks(values: axisDays) { _ in
-                AxisGridLine().foregroundStyle(StrandPalette.hairline.opacity(0.4))
+                AxisGridLine().foregroundStyle(NoopVisualStyle.border)
                 AxisValueLabel(format: ChartAxisDays.labelFormat(for: axisDays))
                     .foregroundStyle(StrandPalette.textTertiary)
                     .font(StrandFont.footnote)

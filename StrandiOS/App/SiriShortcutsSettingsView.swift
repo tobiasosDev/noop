@@ -11,27 +11,27 @@ import StrandDesign
 /// this app automatically.
 struct SiriShortcutsSettingsView: View {
     var body: some View {
-        ScreenScaffold(title: "Siri & Shortcuts",
-                       subtitle: "Run NOOP actions hands-free.") {
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Siri & Shortcuts")
+                .padding(.bottom, 6)
+            Text("Run NOOP actions hands-free.")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .padding(.horizontal, 4)
             tips
             shortcutsCard
         }
+        // The screen draws its own v2 header.
+        .noopHidesSystemNavBar()
     }
 
     private var tips: some View {
-        StrandCard(padding: 20) {
+        NoopCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "mic.fill")
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Ready-made actions")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
+                NoopCardHeader("Ready-made actions", icon: "microphone")
                 Text("Sync your strap, buzz it or mark a moment from Siri, Spotlight, the Shortcuts app, or a Back-Tap / automation. No setup needed.")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textTertiary)
+                    .font(StrandFont.light(13, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 SiriTipView(intent: SyncStrapIntent(), isVisible: .constant(true))
                     .siriTipViewStyle(.dark)
@@ -44,19 +44,12 @@ struct SiriShortcutsSettingsView: View {
     }
 
     private var shortcutsCard: some View {
-        StrandCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Build your own")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
+        NoopCard {
+            VStack(alignment: .leading, spacing: 12) {
+                NoopCardHeader("Build your own", icon: "stack")
                 Text("Wire NOOP's actions into a Back-Tap, a focus automation, or a longer Shortcut. For example, double-tap the back of your iPhone to buzz the strap.")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textTertiary)
+                    .font(StrandFont.light(13, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ShortcutsLink()
             }

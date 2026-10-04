@@ -268,8 +268,8 @@ enum BodyVitalSigns {
             skinResult = VitalBands.band(
                 value: skin,
                 history: VitalBands.skinTempHistory(matching: skin, in: history(before: skinRow?.day, skinSeries)),
-                populationRange: skinIsAbsolute ? 33...36 : (-0.6)...0.6,
-                cfg: skinIsAbsolute ? Baselines.metricCfg["skin_temp"]! : VitalBands.skinTempDeviationCfg
+                populationRange: VitalBandSpec.skinTemp(absolute: skinIsAbsolute).population,
+                cfg: VitalBandSpec.skinTemp(absolute: skinIsAbsolute).cfg
             )
         } else {
             skinResult = VitalBands.Result(band: .noData, basis: .population, nights: 0)
@@ -306,8 +306,8 @@ enum BodyVitalSigns {
                 banding: VitalBands.band(
                     value: respRow?.value,
                     history: history(before: respRow?.day, respPoints),
-                    populationRange: 12...20,
-                    cfg: Baselines.respCfg
+                    populationRange: VitalBandSpec.resp.population,
+                    cfg: VitalBandSpec.resp.cfg
                 ),
                 metricColor: StrandPalette.metricCyan,
                 day: respRow?.day,
@@ -326,8 +326,8 @@ enum BodyVitalSigns {
                 banding: VitalBands.band(
                     value: spo2Row?.value,
                     history: [],
-                    populationRange: 95...100,
-                    cfg: nil
+                    populationRange: VitalBandSpec.spo2.population,
+                    cfg: VitalBandSpec.spo2.cfg
                 ),
                 metricColor: StrandPalette.metricCyan,
                 day: spo2Row?.day,
@@ -384,8 +384,8 @@ enum BodyVitalSigns {
                 banding: VitalBands.band(
                     value: rhrRow?.value,
                     history: history(before: rhrRow?.day, rhrPoints),
-                    populationRange: 40...60,
-                    cfg: Baselines.restingHRCfg
+                    populationRange: VitalBandSpec.restingHR.population,
+                    cfg: VitalBandSpec.restingHR.cfg
                 ),
                 metricColor: StrandPalette.metricRose,
                 day: rhrRow?.day,
@@ -402,8 +402,8 @@ enum BodyVitalSigns {
                 banding: VitalBands.band(
                     value: hrvRow?.value,
                     history: history(before: hrvRow?.day, hrvPoints),
-                    populationRange: 40...120,
-                    cfg: Baselines.hrvCfg
+                    populationRange: VitalBandSpec.hrv.population,
+                    cfg: VitalBandSpec.hrv.cfg
                 ),
                 metricColor: StrandPalette.metricPurple,
                 day: hrvRow?.day,
@@ -515,6 +515,41 @@ private extension DailyMetricSource {
             return [.whoopImport, .noopComputed, .localCache]
         default:
             return [.whoopImport, .noopComputed, .appleHealth, .localCache]
+        }
+    }
+}
+
+/// The population fallback range and personal-baseline config each banded vital is judged against —
+/// declared once so the Health vitals grid and a vital's detail page band the same reading the same way.
+enum VitalBandSpec {
+    struct Spec {
+        let population: ClosedRange<Double>
+        /// nil disables the personal path (SpO₂ stays population-only: an absolute floor is meaningful
+        /// regardless of personal history).
+        let cfg: MetricCfg?
+    }
+
+    static let resp = Spec(population: 12...20, cfg: Baselines.respCfg)
+    static let spo2 = Spec(population: 95...100, cfg: nil)
+    static let restingHR = Spec(population: 40...60, cfg: Baselines.restingHRCfg)
+    static let hrv = Spec(population: 40...120, cfg: Baselines.hrvCfg)
+
+    /// Skin temp is bimodal (#622): an absolute °C reading bands against the absolute config, a ±°C
+    /// deviation against the deviation config (±0.6 °C mirrors the illness watch's flag threshold).
+    static func skinTemp(absolute: Bool) -> Spec {
+        absolute ? Spec(population: 33...36, cfg: Baselines.metricCfg["skin_temp"]!)
+                 : Spec(population: (-0.6)...0.6, cfg: VitalBands.skinTempDeviationCfg)
+    }
+
+    /// The spec for a MetricCatalog key, nil for metrics the vitals grid does not band.
+    static func forMetric(key: String, value: Double?) -> Spec? {
+        switch key {
+        case "resp_rate": return resp
+        case "spo2": return spo2
+        case "rhr": return restingHR
+        case "hrv": return hrv
+        case "skin_temp": return skinTemp(absolute: value.map(VitalBands.isAbsoluteSkinTemp) ?? true)
+        default: return nil
         }
     }
 }

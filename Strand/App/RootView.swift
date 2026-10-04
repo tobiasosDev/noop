@@ -117,6 +117,42 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// The v2 Phosphor icon for the sidebar row — the same glyphs the iOS More list and tab bar use.
+    var phIcon: String {
+        switch self {
+        case .today: return "squares-four"
+        case .intelligence: return "brain"
+        case .insightsHub: return "graph"
+        case .coach: return "sparkle"
+        case .live: return "heartbeat"
+        case .breathe: return "wind"
+        case .intervals: return "timer"
+        case .explore: return "compass"
+        case .compare: return "git-diff"
+        case .insights: return "lightbulb-filament"
+        case .sleep: return "bed"
+        case .trends: return "chart-line-up"
+        case .workouts: return "person-simple-run"
+        case .health: return "first-aid-kit"
+        case .stress: return "wave-sine"
+        case .labBook: return "flask"
+        case .rhythm: return "pulse"
+        case .appleHealth: return "heart"
+        case .xiaomi: return "watch"
+        case .dataSources: return "database"
+        case .backupSync: return "cloud-arrow-up"
+        case .fusedRecord: return "stack"
+        case .devices: return "devices"
+        case .noopLimitations: return "list-checks"
+        case .notifications: return "bell"
+        case .automation: return "magic-wand"
+        case .smartAlarm: return "alarm"
+        case .powerSaving: return "battery-low"
+        case .settings: return "gear-six"
+        case .testCentre: return "stethoscope"
+        }
+    }
+
     var icon: String {
         switch self {
         case .today: return "circle.hexagongrid.fill"
@@ -231,41 +267,55 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                // Fixed brand header — a real row above the list, NOT a `.safeAreaInset`: a macOS
-                // `List(.sidebar)` doesn't inset its scroll content for a top safe-area inset, so the
+                // Fixed brand header — a real row above the scrolling rows, NOT a `.safeAreaInset`: a
+                // sidebar scroll view doesn't inset its content for a top safe-area inset, so the
                 // (transparent) lockup floated over the scrolling rows and overlapped "Intelligence".
                 brand
-                // S1 (#805): collapsible sections instead of 28 flat rows. Each multi-item group is a
-                // DisclosureGroup bound to `expandedGroups`; single-item groups (Today / Sleep) render
+                // S1 (#805): collapsible sections instead of 28 flat rows. Each multi-item group is an
+                // overline header bound to `expandedGroups`; single-item groups (Today / Sleep) render
                 // their one row directly so there's nothing to expand into. The `NavItem` enum is
                 // unchanged (M5 gate): only this layout that consumes it changed.
-                List(selection: $selection) {
-                    // One pass over NavGroup.all in data order (never split singles from multis into
-                    // separate loops: ordering must survive future group additions). While a search is
-                    // active each group shows only its matching rows; the bare-row vs DisclosureGroup
-                    // shape keys on the group's FULL size, so a section narrowed to one hit keeps its
-                    // header for context and Today/Sleep stay bare rows that simply drop out on a miss.
-                    ForEach(NavGroup.all) { group in
-                        let visible = visibleItems(in: group)
-                        if group.items.count == 1 {
-                            ForEach(visible) { sidebarRow($0) }
-                        } else if !visible.isEmpty {
-                            DisclosureGroup(isExpanded: groupExpansion(group.id)) {
+                // v2: a plain scroll column rather than `List(.sidebar)`, because the system list paints
+                // its own accent selection over any row background; here the selected row is the kit's
+                // inset capsule. Rows are buttons that set `selection`, so routing is unchanged.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        // One pass over NavGroup.all in data order (never split singles from multis into
+                        // separate loops: ordering must survive future group additions). While a search is
+                        // active each group shows only its matching rows; the bare-row vs header shape keys
+                        // on the group's FULL size, so a section narrowed to one hit keeps its header for
+                        // context and Today/Sleep stay bare rows that simply drop out on a miss.
+                        ForEach(NavGroup.all) { group in
+                            let visible = visibleItems(in: group)
+                            if group.items.count == 1 {
                                 ForEach(visible) { sidebarRow($0) }
-                            } label: {
-                                Text(group.title)
-                                    .font(StrandFont.rounded(11, weight: .semibold))
-                                    .foregroundStyle(StrandPalette.textTertiary)
-                                    .textCase(.uppercase)
+                            } else if !visible.isEmpty {
+                                let open = expandedGroups.contains(group.id)
+                                MacSidebarSectionHeader(title: group.title, isExpanded: open) {
+                                    toggleGroup(group.id)
+                                }
+                                if open {
+                                    ForEach(visible) { sidebarRow($0) }
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                 }
-                .listStyle(.sidebar)
-                // Hide the macOS system sidebar VIBRANCY material so the list rows sit on the same
-                // flat surfaceBase as the brand header above — without this the translucent list read
-                // as a lighter panel below an opaque black header strip (the "black upper" seam).
-                .scrollContentBackground(.hidden)
+                // The plain column gave up `List`'s free arrow-key navigation; give it back. Up/Down walk
+                // the rows in the order they are drawn, skipping collapsed sections and search misses.
+                .modifier(SidebarKeyboardFocus())
+                .onMoveCommand { direction in
+                    let order = keyboardOrder
+                    guard !order.isEmpty else { return }
+                    let current = selection.flatMap { order.firstIndex(of: $0) }
+                    switch direction {
+                    case .up: selection = order[max(0, (current ?? 0) - 1)]
+                    case .down: selection = order[min(order.count - 1, (current ?? -1) + 1)]
+                    default: break
+                    }
+                }
                 // Sidebar filter (#915, reimplemented): native .searchable on the sidebar column,
                 // which macOS renders as a system search field in the sidebar's toolbar area with
                 // focus, clear and Escape handling for free (macOS 12+, safely under our 13.0
@@ -275,12 +325,12 @@ struct RootView: View {
                 // equivalent to add.
                 .searchable(text: $searchQuery, placement: .sidebar, prompt: "Search")
 
-                Divider().overlay(StrandPalette.hairline)
+                Rectangle().fill(StrandPalette.hairline).frame(height: 1)
                 SidebarStatus().padding(.horizontal, 14).padding(.vertical, 12)
             }
-            // One continuous flat WHOOP-grey surface behind the brand header, the list rows, and the
-            // status pill, no black-vs-vibrancy seam (Design Reset, 2026-06-23).
-            .background(StrandPalette.surfaceBase)
+            // One continuous v2 ground behind the brand header, the rows and the status pill, no
+            // black-vs-vibrancy seam.
+            .background(NoopVisualStyle.canvas)
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
             // The crossfade `.id` lives on the INNER switched content, not on the detail-column root
@@ -396,38 +446,48 @@ struct RootView: View {
         return items.filter { $0.localizedTitle.localizedStandardContains(query) }
     }
 
-    /// One selectable destination row (same Label styling the flat list used), tagged for selection.
-    private func sidebarRow(_ item: NavItem) -> some View {
-        Label(item.titleKey, systemImage: item.icon)
-            .font(StrandFont.rounded(13, weight: .medium))
-            .tag(item)
+    /// The sidebar rows in on-screen order, the sequence the arrow keys walk: single-item groups always,
+    /// a section's rows only while it is expanded, and only rows the search leaves visible.
+    private var keyboardOrder: [NavItem] {
+        NavGroup.all.flatMap { group -> [NavItem] in
+            let visible = visibleItems(in: group)
+            if group.items.count == 1 { return visible }
+            return expandedGroups.contains(group.id) ? visible : []
+        }
     }
 
-    /// A binding into `expandedGroups` for one group's id, so each DisclosureGroup drives the shared set.
-    private func groupExpansion(_ id: String) -> Binding<Bool> {
-        Binding(
-            get: { expandedGroups.contains(id) },
-            set: { isOpen in
-                if isOpen { expandedGroups.insert(id) } else { expandedGroups.remove(id) }
-            }
-        )
+    /// One destination row: tapping selects it (the `selection` the detail column switches on).
+    private func sidebarRow(_ item: NavItem) -> some View {
+        MacSidebarRow(title: Text(item.titleKey), icon: item.phIcon,
+                      isSelected: (selection ?? .today) == item) {
+            selection = item
+        }
+    }
+
+    /// Fold or unfold one group in the shared `expandedGroups` set.
+    private func toggleGroup(_ id: String) {
+        withAnimation(StrandMotion.interactive) {
+            if expandedGroups.contains(id) { expandedGroups.remove(id) } else { expandedGroups.insert(id) }
+        }
     }
 
     private var brand: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             // In-app logo: the open recovery-ring mark so the wordmark reads as a true lockup
-            // (README logo system — mark + "NOOP"). Flat gold gradient, low glow per the v3 restraint.
-            BrandMark(size: 22)
-            Text("NOOP")
-                .font(StrandFont.rounded(20, weight: .bold))
+            // (README logo system — mark + "NOOP"), in ink like the rest of the v2 chrome.
+            BrandMark(size: 20)
+            // v2 wordmark: NOOP in the dot-matrix face, as on the design-system sheet.
+            Text(verbatim: "NOOP")
+                .font(StrandFont.dot(22))
+                .tracking(StrandFont.dotTracking(22) * 2)
                 .foregroundStyle(StrandPalette.textPrimary)
             Spacer()
         }
         // Top padding clears the traffic-light controls (the window hides its title bar, so they sit
         // over the sidebar's top edge); the lockup sits just below them.
-        .padding(.horizontal, 16).padding(.top, 30).padding(.bottom, 8)
+        .padding(.horizontal, 20).padding(.top, 30).padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(StrandPalette.surfaceBase)
+        .background(NoopVisualStyle.canvas)
     }
 
     @ViewBuilder private var detail: some View {
@@ -509,31 +569,26 @@ struct RootView: View {
 }
 
 /// The NOOP logo mark — an **open recovery ring** (~80% arc, round caps, starting at 12 o'clock)
-/// with a **solid centre core dot** ("on-device core"), per the README logo system. Rendered in the
-/// gold gradient and kept deliberately flat / low-glow for the v3 Titanium & Gold restraint. Drawn
-/// purely from design tokens so it tracks the palette. Sized to optically x-height-match the wordmark.
+/// with a **solid centre core dot** ("on-device core"), per the README logo system. v2 draws it in ink,
+/// flat, so the chrome keeps its one-glow rule: colour belongs to the hero, not the logo. Sized to
+/// optically x-height-match the wordmark.
 struct BrandMark: View {
     var size: CGFloat = 22
 
     var body: some View {
         ZStack {
             // Open ring: leave ~20% of the circumference as a gap (trim 0 → 0.8), then rotate so the
-            // gap sits at the top — the gold gradient sweeps clockwise from 12 o'clock.
+            // gap sits at the top and the arc sweeps clockwise from 12 o'clock.
             Circle()
                 .trim(from: 0, to: 0.8)
-                .stroke(
-                    AngularGradient(gradient: StrandPalette.goldGradient,
-                                    center: .center,
-                                    angle: .degrees(-90)),
-                    style: StrokeStyle(lineWidth: size * 0.16, lineCap: .round)
-                )
+                .stroke(StrandPalette.textPrimary,
+                        style: StrokeStyle(lineWidth: size * 0.16, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .frame(width: size * 0.84, height: size * 0.84)
 
             // Solid centre core dot — the "on-device core".
             Circle()
-                .fill(LinearGradient(gradient: StrandPalette.goldGradient,
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .fill(StrandPalette.textPrimary)
                 .frame(width: size * 0.26, height: size * 0.26)
         }
         .frame(width: size, height: size)
@@ -546,29 +601,18 @@ struct BrandMark: View {
 private struct SidebarStatus: View {
     @EnvironmentObject var live: LiveState
     var body: some View {
-        HStack(spacing: 9) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 9, height: 9)
-                .shadow(color: statusColor.opacity(0.6), radius: live.connected ? 4 : 0)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(statusText)
-                    .font(StrandFont.rounded(12, weight: .medium))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                // #2208: gated on BOTH the link and whose device it is. This read had NO gate at all, so
-                // it showed the strap's last charge with nothing connected: `batteryPct` is never cleared,
-                // which made the honest `nil` branch below unreachable on any install that had paired a
-                // strap once. "Strap not connected" was dead text.
-                Text(live.connected && live.activeIsWhoop
-                     ? live.batteryPct.map { String(localized: "Battery \(Int($0))%") } ?? String(localized: "Strap not connected")
-                     : String(localized: "Strap not connected"))
-                    .font(StrandFont.rounded(11))
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            Spacer()
-        }
-        .padding(10)
-        .background(NoopPanelSurface(cornerRadius: 10))
+        // #2208: the battery line is gated on BOTH the link and whose device it is. This read had NO gate
+        // at all, so it showed the strap's last charge with nothing connected: `batteryPct` is never
+        // cleared, which made the honest `nil` branch unreachable on any install that had paired a strap
+        // once. "Strap not connected" was dead text.
+        MacSidebarStatusPill(
+            status: statusText,
+            detail: live.connected && live.activeIsWhoop
+                ? live.batteryPct.map { String(localized: "Battery \(Int($0))%") } ?? String(localized: "Strap not connected")
+                : String(localized: "Strap not connected"),
+            dot: statusColor,
+            isLive: live.connected
+        )
     }
 
     // Shares LiveState.connectionStatus* with the Settings strap card so the two never disagree (#266):
@@ -580,5 +624,17 @@ private struct SidebarStatus: View {
     }
     private var statusText: String {
         live.connectionStatusLabel
+    }
+}
+
+/// Makes the sidebar column a keyboard focus target for `onMoveCommand`, without the focus ring macOS 14+
+/// would otherwise draw around the whole column (the selected row's capsule already shows where you are).
+private struct SidebarKeyboardFocus: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.focusable().focusEffectDisabled()
+        } else {
+            content.focusable()
+        }
     }
 }

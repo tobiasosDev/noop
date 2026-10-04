@@ -14,8 +14,8 @@ import StrandDesign
 // number. When there is no snapshot at all we show a NEUTRAL placeholder (a dash + the NOOP
 // glyph), not a zero, so an empty face never reads as "your Charge is 0".
 //
-// Families: accessoryCircular (ring + number), accessoryCorner, accessoryInline (text), and
-// accessoryRectangular (a compact card with all three scores).
+// Families: accessoryCircular (ring + number), accessoryCorner (number + bezel arc), accessoryInline
+// (text), and accessoryRectangular (all three scores as bars).
 
 // MARK: - Snapshot access
 //
@@ -190,7 +190,7 @@ struct NOOPChargeView: View {
         switch family {
         case .accessoryCircular:    circular
         case .accessoryCorner:      corner
-        case .accessoryInline:      Text(inlineText)
+        case .accessoryInline:      inline
         case .accessoryRectangular: rectangular
         default:                    circular
         }
@@ -208,32 +208,55 @@ struct NOOPChargeView: View {
 
     // MARK: accessoryCircular — a ring + the Charge number
     //
-    // The clean NOOP ring, scaled to the watch face. WidgetKit tints accessory complications with the
-    // face's vibrant colour by default; we use a Gauge so the system renders a crisp circular ring,
-    // and tint it to the Charge colour where we have a real value. A small "cal" marker replaces the
-    // number when Charge is calibrating.
+    // The v2 ring at complication size: a faint track, the Charge arc (tinted to its band where we have a
+    // real value) with a white knob at its end, and the number in the dot-matrix face. A small "cal"
+    // marker replaces the number when Charge is calibrating. The arc is accentable so tinted faces keep it.
 
     private var circular: some View {
-        Gauge(value: charge.fraction, in: 0...1) {
-            // The minimumValueLabel slot stays empty; the centre carries the read-out.
-            EmptyView()
-        } currentValueLabel: {
+        ZStack {
+            Circle().stroke(Color.white.opacity(0.12), lineWidth: 4.5)
+            if charge.fraction > 0 {
+                Circle()
+                    .trim(from: 0, to: charge.fraction)
+                    .stroke(chargeTint, style: StrokeStyle(lineWidth: 4.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .widgetAccentable()
+                ringKnob(fraction: charge.fraction, lineWidth: 4.5)
+            }
             VStack(spacing: 0) {
                 Text(charge.numberText)
-                    .font(StrandFont.rounded(15, weight: .semibold))
+                    .font(StrandFont.dot(16))
+                    .tracking(StrandFont.dotTracking(16))
                     .minimumScaleFactor(0.6)
+                    .padding(.leading, 2)
                 if case .calibrating = charge {
                     calPip
                 }
             }
         }
-        .gaugeStyle(.accessoryCircular)
-        .tint(chargeTint)
+        // The ring sits a few points inside the face's disc, as the board draws it.
+        .padding(4.5)
         // The curved label carries the recency so even the tiny circle is honest: "Charge · 2h ago"
         // when aging, plain "Charge" when fresh, a sync hint when nothing has synced.
         .widgetLabel(circularLabel)
-        .widgetAccentable()
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityCharge)
+    }
+
+    /// The white knob at the end of the Charge arc, as on every v2 ring. Placed by geometry so it follows
+    /// whatever diameter the face gives the complication; a stroked circle's line is centred on the
+    /// frame's radius, so that is where the knob sits.
+    private func ringKnob(fraction: Double, lineWidth: CGFloat) -> some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            let r = side / 2
+            let a = Angle.degrees(-90 + 360 * fraction).radians
+            Circle()
+                .fill(Color.white)
+                .frame(width: lineWidth * 1.25, height: lineWidth * 1.25)
+                .position(x: geo.size.width / 2 + r * CGFloat(cos(a)),
+                          y: geo.size.height / 2 + r * CGFloat(sin(a)))
+        }
     }
 
     /// The circular family's curved widgetLabel. Appends the freshness once a snapshot starts aging so
@@ -246,19 +269,36 @@ struct NOOPChargeView: View {
         return String(localized: "Charge · \(fresh)")
     }
 
-    // MARK: accessoryCorner — number hugging the corner, "Charge" curved along the bezel
+    // MARK: accessoryCorner — the number in the corner, the Charge arc (or its status) along the bezel
 
+    @ViewBuilder
     private var corner: some View {
+        if case .value = charge, !isStale, isFreshToday {
+            // A current, earned Charge rides the bezel as an arc.
+            cornerNumber
+                .widgetLabel {
+                    Gauge(value: charge.fraction, in: 0...1) {
+                        Text("Charge")
+                    }
+                    .tint(chargeTint)
+                }
+                .accessibilityLabel(accessibilityCharge)
+        } else {
+            // Anything else says what it is in words along the bezel: the age, "cal", or a sync hint.
+            cornerNumber
+                .widgetLabel {
+                    Text(cornerLabel)
+                }
+                .accessibilityLabel(accessibilityCharge)
+        }
+    }
+
+    private var cornerNumber: some View {
         Text(charge.numberText)
-            .font(StrandFont.rounded(17, weight: .semibold))
-            .foregroundStyle(chargeTint)
+            .font(StrandFont.dot(22))
+            .tracking(StrandFont.dotTracking(22))
+            .foregroundStyle(StrandPalette.textPrimary)
             .widgetAccentable()
-            // The curved label rides the watch-face bezel. When calibrating we say so plainly rather
-            // than leaving a bare dash with no context.
-            .widgetLabel {
-                Text(cornerLabel)
-            }
-            .accessibilityLabel(accessibilityCharge)
     }
 
     private var cornerLabel: String {
@@ -283,6 +323,13 @@ struct NOOPChargeView: View {
 
     // MARK: accessoryInline — a single line of text along the top of the face
 
+    /// The wordmark in medium weight ahead of the line, so it reads as NOOP's among the face's other
+    /// inline complications. The "open on iPhone" hint already leads with it.
+    private var inline: Text {
+        if noSnapshot { return Text(inlineText) }
+        return Text(verbatim: "NOOP ").fontWeight(.medium) + Text(inlineText)
+    }
+
     private var inlineText: String {
         if noSnapshot { return String(localized: "NOOP · open on iPhone") }
         // When the snapshot has aged out we never print the old number; we say it is stale and how old.
@@ -292,10 +339,10 @@ struct NOOPChargeView: View {
         }
         switch charge {
         case .value(let v):
-            // A fresh number reads as live, so append the recency once it starts to age.
-            let suffix = inlineFreshnessSuffix
-            if let hr = entry.snapshot?.hr { return String(localized: "Charge \(v) · \(hr) bpm\(suffix)") }
-            return String(localized: "Charge \(v)\(suffix)")
+            // A fresh number reads as live, so append the recency once it starts to age. The synced heart
+            // rate stays off this line: behind the wordmark the slot has no room for it, and a truncated
+            // "6…" says less than nothing. The glance carries the wrist's own live reading.
+            return String(localized: "Charge \(v)\(inlineFreshnessSuffix)")
         case .calibrating:
             return String(localized: "Charge calibrating")
         case .missing:
@@ -312,29 +359,27 @@ struct NOOPChargeView: View {
 
     // MARK: accessoryRectangular — a compact card showing all three scores
     //
-    // The richest family: a small NOOP header line plus the Charge / Effort / Rest triplet, each a
-    // number (or a dash + cal marker) over its label. This is the only place all three scores live, so
-    // it doubles as the "everything at a glance" face.
+    // The richest family: a NOOP header line with the snapshot's age, then Charge / Effort / Rest as a
+    // label, a thin bar and the number (or a dash + cal marker). This is the only place all three scores
+    // live, so it doubles as the "everything at a glance" face.
 
     private var rectangular: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             // Header: the wordmark + the snapshot age (or a sync hint when empty).
             HStack(spacing: 4) {
-                Text("NOOP")
-                    .font(StrandFont.rounded(11, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                Spacer(minLength: 0)
-                Text(headerTrailing)
-                    .font(.system(size: 10))
+                Text(verbatim: "NOOP")
+                    .font(StrandFont.medium(11))
+                    .tracking(0.2)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(verbatim: "· \(headerTrailing)")
+                    .font(StrandFont.light(11))
                     .foregroundStyle(StrandPalette.textTertiary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            // The three scores, equal-width.
-            HStack(alignment: .top, spacing: 0) {
-                scoreCell(String(localized: "Charge"), readout: charge, tint: chargeTint)
-                scoreCell(String(localized: "Effort"), readout: effort, tint: effortTint)
-                scoreCell(String(localized: "Rest"), readout: rest, tint: restTint)
-            }
+            scoreRow(String(localized: "Charge"), readout: charge, tint: chargeTint)
+            scoreRow(String(localized: "Effort"), readout: effort, tint: effortTint)
+            scoreRow(String(localized: "Rest"), readout: rest, tint: restTint)
         }
         .widgetAccentable()
         .accessibilityElement(children: .combine)
@@ -342,37 +387,40 @@ struct NOOPChargeView: View {
     }
 
     /// The trailing header text: a sync hint when empty, otherwise the honest recency label so a stale
-    /// snapshot reads as "Yesterday" / "2h ago" rather than implying it is live. The three cells below
-    /// already collapse to the calibrating dash when stale, so the header and the numbers agree.
+    /// snapshot reads as "Yesterday" / "2h ago" rather than implying it is live. The rows below already
+    /// collapse to the calibrating dash when stale, so the header and the numbers agree.
     private var headerTrailing: String {
         guard let snap = entry.snapshot else { return String(localized: "open iPhone") }
         return snap.freshnessText(now: entry.date)
     }
 
-    /// One labelled score in the rectangular card. A real value tints to its colour world; a
-    /// calibrating score shows a dash plus a tiny "cal" marker; missing shows a neutral dash.
-    private func scoreCell(_ label: String, readout: ScoreReadout, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(readout.numberText)
-                    .font(StrandFont.rounded(18, weight: .semibold))
-                    .foregroundStyle(readoutIsValue(readout) ? tint : StrandPalette.textTertiary)
-                    .minimumScaleFactor(0.7)
-                if case .calibrating = readout {
-                    Text("cal")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .padding(.horizontal, 2)
-                        .background(
-                            Capsule().fill(StrandPalette.surfaceInset)
-                        )
+    /// One labelled score in the rectangular card: the label, a bar filled to the score in its colour (an
+    /// empty track when calibrating or missing), and the number or a dash with a tiny "cal" marker.
+    private func scoreRow(_ label: String, readout: ScoreReadout, tint: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(StrandFont.light(11))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .lineLimit(1)
+                .frame(width: 44, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.12))
+                    if readout.fraction > 0 {
+                        Capsule().fill(tint)
+                            .frame(width: max(5, geo.size.width * readout.fraction))
+                    }
                 }
             }
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundStyle(StrandPalette.textTertiary)
+            .frame(height: 5)
+            HStack(spacing: 1) {
+                Text(readout.numberText)
+                    .font(StrandFont.dot(12))
+                    .foregroundStyle(readoutIsValue(readout) ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                if case .calibrating = readout { calPip }
+            }
+            .frame(width: 26, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func readoutIsValue(_ r: ScoreReadout) -> Bool {
@@ -383,11 +431,11 @@ struct NOOPChargeView: View {
     // MARK: Effort / Rest tints (rectangular only)
 
     private var effortTint: Color {
-        if case let .value(v) = effort { return StrandPalette.effortTint(fraction: Double(v) / 100) }
+        if case .value = effort { return StrandPalette.effortColor }
         return StrandPalette.textTertiary
     }
     private var restTint: Color {
-        if case let .value(v) = rest { return StrandPalette.recoveryColor(Double(v)) }
+        if case .value = rest { return StrandPalette.restColor }
         return StrandPalette.textTertiary
     }
 
@@ -398,7 +446,7 @@ struct NOOPChargeView: View {
 
     private var calPip: some View {
         Text("cal")
-            .font(.system(size: 7, weight: .semibold))
+            .font(StrandFont.medium(7))
             .foregroundStyle(StrandPalette.textTertiary)
     }
 
@@ -451,7 +499,7 @@ struct NOOPChargeComplication: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ChargeProvider()) { entry in
             NOOPChargeView(entry: entry)
-                .containerBackground(StrandPalette.surfaceBase, for: .widget)
+                .containerBackground(NoopVisualStyle.canvas, for: .widget)
         }
         .configurationDisplayName("NOOP Charge")
         .description("Your Charge (recovery) on the watch face, with Effort and Rest in the rectangular card.")

@@ -10,8 +10,7 @@ import StrandAnalytics
 //
 // It only ever SUGGESTS: tapping Save creates a manual-style "Workout" for the window (via the
 // same manual-save path the edit sheet uses); the X dismisses it durably so it never re-prompts.
-// Nothing is created automatically. Design-Reset compliant — a flat NoopCard using NoopMetrics /
-// StrandPalette / StrandFont, no gold, matching the other Today cards.
+// Nothing is created automatically. A neutral v2 card, matching the other Today cards.
 
 struct AutoWorkoutCard: View {
 
@@ -41,51 +40,37 @@ struct AutoWorkoutCard: View {
 
     @ViewBuilder
     private func card(for w: DetectedWorkout) -> some View {
-        NoopCard(tint: StrandPalette.accent) {
-            VStack(alignment: .leading, spacing: NoopMetrics.space3) {
-                HStack(spacing: NoopMetrics.space2) {
-                    Image(systemName: "figure.run")
-                        .font(.system(size: 18))
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Looks like a workout")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
-                    Button {
-                        dismiss(w)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .padding(NoopMetrics.space1)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss this workout suggestion")
+        VStack(alignment: .leading, spacing: 12) {
+            NoopCardHeader("Looks like a workout", icon: "person-simple-run") {
+                Button {
+                    dismiss(w)
+                } label: {
+                    PhIcon("x", size: 14)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss this workout suggestion")
+            }
 
-                Text(promptText(w))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            Text(promptText(w))
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: NoopMetrics.space3) {
-                    Button {
-                        save(w)
-                    } label: {
-                        Label("Save it", systemImage: "checkmark")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(StrandPalette.accent)
+            HStack(spacing: 10) {
+                LTActionButton("Save it", icon: "check", kind: .primary, height: 40, fontSize: 13, fullWidth: false) {
+                    save(w)
+                }
+                .disabled(saving)
+
+                LTActionButton("Not a workout", height: 40, fontSize: 13, fullWidth: false) { dismiss(w) }
                     .disabled(saving)
-
-                    Button("Not a workout") { dismiss(w) }
-                        .buttonStyle(.bordered)
-                        .disabled(saving)
-                    Spacer()
-                }
+                Spacer(minLength: 0)
             }
         }
+        .ltCard()
         .accessibilityElement(children: .contain)
     }
 

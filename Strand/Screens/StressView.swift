@@ -53,8 +53,15 @@ struct StressView: View {
     /// (`.baselineRelative`, once enough worn history exists) instead of the day's own calm hours
     /// (`.dayRelative`). Drives only the explanatory copy — the 0–3 scale + bands are identical either way.
     @State private var daytimeUsesPersonalBaseline = false
-    /// Drives the Breathe sheet presented from the sustained-stress suggestion.
-    @State private var showBreathe = false
+
+    /// The screen's drill-downs, as ONE item-driven sheet (stacked `.sheet` modifiers race on macOS):
+    /// the Breathe trainer from the sustained-stress suggestion, the range-controlled trend, and the
+    /// "How this is computed" note.
+    private enum StressSheet: String, Identifiable {
+        case breathe, trend, method
+        var id: String { rawValue }
+    }
+    @State private var sheet: StressSheet?
 
     /// ADDITIVE, on-demand advanced readouts, computed live from the SAME day's R-R the
     /// daytime timeline already reads. These do NOT feed the 0..3 score or the timeline; they
@@ -73,26 +80,47 @@ struct StressView: View {
     @State private var modelSignature: StressInputs?
 
     var body: some View {
-        ScreenScaffold(title: "Stress", subtitle: "Autonomic load across your waking day",
-                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
-                       // alignment/spacing/header). The content is one inner eager VStack, so the staggered
-                       // section reveal is unchanged; this only defers building that stack until it scrolls in.
-                       lazy: true,
-                       // The day-of-sky liquid backdrop, matching Today / Health / Live / Sleep / Trends: a
-                       // fixed, full-bleed time-of-day sky behind the scroll content (does not scroll), so the
-                       // Stress screen sits in the same liquid atmosphere as every other tab.
-                       topBackground: liquidScaffoldSky()) {
+        ScreenScaffold(title: nil,
+                       // PERF (scroll): lazy column; the content is one inner eager VStack, so this only
+                       // defers building that stack until it scrolls in.
+                       lazy: true) {
             if let model {
                 content(model)
-            } else if !loaded {
-                ComingSoon(what: "Reading your heart-rate variability and resting heart rate…")
             } else {
-                emptyState
+                NoopScreenHeader("Stress")
+                    .padding(.bottom, 8)
+                if !loaded {
+                    G5EmptyCard(icon: "wave-sine",
+                                message: Text("Reading your heart-rate variability and resting heart rate…"))
+                } else {
+                    emptyState
+                }
             }
         }
+        .noopHidesSystemNavBar()
         .onAppear { rebuildModelIfNeeded() }
         .onChangeCompat(of: repo.days) { _ in rebuildModelIfNeeded() }
         .task(id: repo.refreshSeq) { await load() }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .breathe:
+                // The sustained-stress suggestion opens the existing Breathe trainer — in-app and
+                // passive (no alert / notification), inheriting the app environment.
+                // BreathingView draws its own v2 header; its back circle closes this sheet.
+                NavigationStack {
+                    BreathingView()
+                }
+                #if os(macOS)
+                .frame(width: 520, height: 760)
+                #else
+                .noopSheetPresentation(largeFirst: true)
+                #endif
+            case .trend:
+                if let model { StressTrendSheet(model: model, range: $range) }
+            case .method:
+                if let model { StressMethodSheet(model: model) }
+            }
+        }
     }
 
     private func load() async {
@@ -145,9 +173,7 @@ struct StressView: View {
         else { daytimeUsesPersonalBaseline = false }
         // includeTimeline: the SLIDING read, so the screen's line moves in half-hours instead of
         // stepping through whole clock hours (#2144). The scored unit is still a full hour; this only
-        // decides how often that hour is re-read, so a thin ten minutes costs the windows that overlap
-        // it rather than a whole hour of chart. The Today card and the widget have always asked for
-        // this; the screen people actually study was the one still stepping. Twin of the Kotlin change.
+        // decides how often that hour is re-read. Twin of the Kotlin change.
         // #2181: this is pure, database-free computation over a whole local day of samples, and it used
         // to run inline on this view's (main) actor. `analyze` memoises behind a lock-guarded
         // `AnalyticsMemoCache`, so it is safe off the main actor and the Today card already reads its own
@@ -170,13 +196,10 @@ struct StressView: View {
         // in which case its row is simply hidden.
         // A SECOND hop on purpose (#2181). `HRVFreqDomain` is a Lomb-Scargle periodogram: its cost is
         // (clean beats x frequency-grid steps) with a transcendental per step, and it takes whatever beat
-        // count the day's read returned — the store read above is bounded at 200 000, this is not bounded
-        // at all. On a live-banked day that is seconds of arithmetic, and run inline it held the main
-        // thread for all of them, which is why the screen stayed blank rather than drawing the timeline it
-        // already had. Both engines are pure statics over the same `rr`, so they compute together off the
-        // main actor and publish when done; their card is hidden until then, exactly as it is when a gate
-        // is unmet. Same `runUnescalated` reasoning as above, and the default `.utility` is real here
-        // because nothing escalates it: this is the phase that must yield to the UI.
+        // count the day's read returned. Run inline it held the main thread for seconds, which is why the
+        // screen stayed blank rather than drawing the timeline it already had. Both engines are pure statics
+        // over the same `rr`, so they compute together off the main actor and publish when done; their card
+        // is hidden until then, exactly as it is when a gate is unmet.
         let advanced = await runUnescalated {
             (index: StressIndex.components(rr: rr), freq: HRVFreqDomain.freqDomain(rr: rr))
         }
@@ -198,155 +221,111 @@ struct StressView: View {
 
     @ViewBuilder
     private func content(_ model: StressModel) -> some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            // 1. HERO — the arc gauge, the 0–3 number and the tagged read of why. Bleeds under the
+            //    status bar.
+            StressHero(model: model)
 
-            // 1. HERO — the liquid stress-level vessel + band + one plain-English line, all in one card.
-            heroCard(model)
-                .staggeredAppear(index: 0)
+            // The plain-English line on why, with its advice.
+            NoopInsightRow(verbatim: model.explanation)
+                .padding(.horizontal, 4)
+                .padding(.top, 12)
 
-            // 1b. ADVANCED HRV readouts (additive, on-demand). A separate, clearly-labelled card
-            //     that appears only when at least one engine returned a value. It sits BELOW the
-            //     hero and never alters the hero, the markers or the timeline.
-            if hasAdvancedReadouts {
-                advancedReadoutsCard()
-                    .staggeredAppear(index: 1)
-            }
-
-            // 2. Today's numbers — uniform tiles in one grid.
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                SectionHeader("Today", overline: "Markers", trailing: String(localized: "vs 30-day baseline"))
-                tileGrid(model)
-            }
-            .staggeredAppear(index: 1)
-
-            // 3. Today's intraday timeline — when in the day stress ran high, + a
-            //    passive Breathe suggestion when the recent hours stay elevated.
+            // 2. Today's intraday timeline — when in the day stress ran high, + a passive Breathe
+            //    suggestion when the recent hours stay elevated.
             // #2535: THREE states, not two. `daytime` is nil only while the read is still running, and this
             // used to render nothing then, so a fold that takes seconds looked exactly like a day with no
             // data. An empty `scored` after the read is a fact about the day and still stays silent.
             if daytime == nil {
                 daytimeLoading()
-                    .staggeredAppear(index: 2)
             } else if let daytime, !daytime.scored.isEmpty {
                 daytimeSection(daytime)
-                    .staggeredAppear(index: 2)
             }
 
-            // 4. Trend over the chosen window.
-            trendSection(model)
-                .staggeredAppear(index: 3)
+            // 3. Today's numbers vs the 30-day baseline.
+            NoopSectionTitle("Markers", caption: String(localized: "vs 30-day baseline"))
+            markerGrid(model)
 
-            // 5. Transparency — how the number is built.
-            methodologyCard(model)
-                .staggeredAppear(index: 4)
-        }
-        // The sustained-stress suggestion opens the existing Breathe trainer in a sheet —
-        // in-app and passive (no alert / notification), inheriting the app environment.
-        .sheet(isPresented: $showBreathe) {
-            NavigationStack {
-                BreathingView()
-                    .toolbar {
-                        ToolbarItem {
-                            Button("Done") { showBreathe = false }
-                        }
-                    }
+            // Sustained-high suggestion — only when the recent run stays in the HIGH band.
+            if let daytime, daytime.sustainedHigh { sustainedBreatheCard(daytime) }
+
+            // 4. ADVANCED HRV readouts (additive, on-demand), only when at least one engine returned a
+            //    value. They never alter the score, the markers or the timeline.
+            if hasAdvancedReadouts {
+                NoopSectionTitle("Advanced HRV", caption: String(localized: "on demand · today's R-R"))
+                advancedReadoutsCard()
             }
-            #if os(macOS)
-            .frame(width: 520, height: 760)
-            #endif
+
+            // 5. The trend and the method, each one tap away.
+            NoopList {
+                Button { sheet = .trend } label: {
+                    NoopRow(title: Text("Stress Trend"), caption: trendCaption(model), icon: "chart-line-up",
+                            chevron: true) { EmptyView() }
+                }
+                .buttonStyle(.plain)
+                Button { sheet = .method } label: {
+                    NoopRow(title: Text("How this is computed"),
+                            caption: model.usingStored ? Text("Today's value is your recorded daily stress score (0-3).")
+                                                       : Text("Stress is derived from two autonomic signals."),
+                            icon: "info", chevron: true) { EmptyView() }
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 18)
         }
     }
 
-    // MARK: 3 · Daytime timeline (intraday, same 0–3 proxy)
+    /// "History · avg 1.1 · 30 days" for the trend row.
+    private func trendCaption(_ model: StressModel) -> Text {
+        let recent = model.fullTrend.suffix(30)
+        guard recent.count >= 2 else { return Text("History") }
+        let avg = recent.map(\.value).reduce(0, +) / Double(recent.count)
+        return Text("History") + Text(verbatim: " · ") + Text("avg \(StressTrace.formatLevel(avg))")
+            + Text(verbatim: " · ") + Text("\(recent.count) days")
+    }
+
+    // MARK: 2 · Daytime timeline (intraday, same 0–3 proxy)
 
     /// The intraday timeline while its read is still running (#2535).
     ///
     /// Deliberately NOT the "no stress history" note: that is a conclusion, this says the answer is still
-    /// being computed, which is what a caller waiting on the thirty-day fold needs to see. Keeps the header
-    /// and tint `daytimeSection` uses, so the section does not appear out of nowhere when the read lands; the
-    /// height is approximate, not equal, since the real card carries a chart. Twin of the Kotlin
-    /// `StressDaytimeLoading`.
+    /// being computed, which is what a caller waiting on the thirty-day fold needs to see. Twin of the
+    /// Kotlin `StressDaytimeLoading`.
     @ViewBuilder
     private func daytimeLoading() -> some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Today's Timeline", overline: "Intraday")
-            NoopCard(tint: StressRamp.calm) {
-                Text("Reading today's heart rate…")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .frame(maxWidth: .infinity, minHeight: 160, alignment: .center)
-                    .multilineTextAlignment(.center)
-            }
+        NoopCard {
+            Text("Reading today's heart rate…")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(maxWidth: .infinity, minHeight: 160, alignment: .center)
+                .multilineTextAlignment(.center)
         }
+        .padding(.top, 22)
     }
 
     @ViewBuilder
     private func daytimeSection(_ day: DaytimeStress.Result) -> some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Today's Timeline", overline: "Intraday",
-                          trailing: timelineTrailing(day))
+        StressDayChart(points: day.timeline, hourLabel: hourLabel)
+            .padding(.top, 22)
 
-            NoopCard(tint: StressRamp.calm) {
-                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                    HStack {
-                        Text("Autonomic load through the day").strandOverline()
-                        Spacer()
-                        // The peak of what is DRAWN, not of the whole hours (#2144). A sliding window
-                        // can exceed both hourly neighbours when the busy stretch straddles a boundary,
-                        // so `day.peak` would caption the line with a number below its visible maximum.
-                        // Everything that COUNTS hours still reads `hours`; a maximum is not a count.
-                        let drawnPeak = day.timeline.filter { $0.level != nil }
-                            .max { ($0.level ?? 0) < ($1.level ?? 0) }
-                        if let peak = drawnPeak, let lvl = peak.level {
-                            Text("peak \(StressTrace.formatLevel(lvl)) · \(hourLabel(peak.hour))")
-                                .font(StrandFont.captionNumber)
-                                .foregroundStyle(StressRamp.color(lvl))
-                        }
-                    }
-
-                    // README screen-9: the day autonomic-load LINE, drawn with the same
-                    // 3-stop blue→green→amber WHOOP gradient as the gauge.
-                    // The SLIDING series, not the bare hours (#2144). Everything that COUNTS hours
-                    // keeps reading `hours`: the totals bar's shares still have to sum to the day.
-                    // Only the line and its ruler follow the finer read.
-                    DaytimeLoadLine(hours: day.timeline)
-
-                    // Hour ruler under the line (first / midday / last covered hour).
-                    if let lo = day.timeline.first?.hour, let hi = day.timeline.last?.hour {
-                        HStack {
-                            Text(hourLabel(lo)).font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                            Spacer()
-                            Text(hourLabel((lo + hi) / 2)).font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                            Spacer()
-                            Text(hourLabel(hi)).font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                        }
-                    }
-
-                    Divider().overlay(StrandPalette.hairline)
-
-                    // README screen-9: the Calm / Moderate / High totals bar — one stacked
-                    // bar split by how many waking hours sat in each band, with durations.
-                    StressTotalsBar(totals: StressTotals(hours: day.hours))
-
-                    Text(daytimeTimelineCaption)
+        NoopCard {
+            VStack(alignment: .leading, spacing: 14) {
+                NoopCardHeader("Today's Timeline", icon: "wave-sine") { Text(verbatim: timelineTrailing(day)) }
+                // The Calm / Moderate / High split — how many waking hours sat in each band.
+                StressTotalsBar(totals: StressTotals(hours: day.hours))
+                Text(daytimeTimelineCaption)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let maskedCaption = stressActivityMaskedHoursCaption(day.activityMaskedHours) {
+                    Text(maskedCaption)
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let maskedCaption = stressActivityMaskedHoursCaption(day.activityMaskedHours) {
-                        Text(maskedCaption)
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
             }
-
-            // Sustained-high suggestion — only when the recent run stays in the HIGH band.
-            if day.sustainedHigh { sustainedBreatheCard(day) }
         }
+        .padding(.top, 6)
     }
 
     /// "avg 1.4 · 9h" summary for the timeline header, from the scored hours.
@@ -369,23 +348,32 @@ struct StressView: View {
     /// A passive, in-app nudge to run a Breathe session after a sustained high-stress run.
     /// No notification — just a card with a CTA that opens the existing trainer.
     private func sustainedBreatheCard(_ day: DaytimeStress.Result) -> some View {
-        NoopCard(tint: StressRamp.calm) {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                HStack(spacing: NoopMetrics.rowSpacing) {
-                    Image(systemName: "lungs.fill")
-                        .foregroundStyle(StressRamp.calm)
-                    Text("Sustained high stress").strandOverline()
-                    Spacer()
-                    StatePill("\(day.sustainedRun)h elevated", tone: .warning, showsDot: true)
+        NoopCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 14) {
+                    PhIcon("warning-circle", size: 18)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(NoopVisualStyle.raised))
+                        .overlay(Circle().strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sustained high stress")
+                            .font(StrandFont.book(16, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("Your last \(day.sustainedRun) hours have stayed in the high band. A few minutes of paced breathing can help downshift your nervous system.")
+                            .font(StrandFont.light(13.5, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Text("Your last \(day.sustainedRun) hours have stayed in the high band. A few minutes of paced breathing can help downshift your nervous system.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                NoopButton("Start a Breathe session", systemImage: "wind",
-                           kind: .primary, fullWidth: true) {
-                    showBreathe = true
+                Button { sheet = .breathe } label: {
+                    HStack(spacing: 8) {
+                        PhIcon("wind", size: 18)
+                        Text("Start a Breathe session")
+                    }
                 }
+                .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
             }
         }
         .softCardTransition()
@@ -399,50 +387,12 @@ struct StressView: View {
         return date.formatted(.dateTime.hour())
     }
 
-    // MARK: 1 · Hero — the liquid stress-level vessel.
+    // MARK: 4 · Advanced HRV readouts (additive, on-demand)
     //
-    // The 0–3 stress score reads as the signature liquid gauge: a LiquidVessel that fills to score/3
-    // and is tinted by the live band (calm blue → steady green → tense amber), with the count-up value +
-    // "of 3" over it (the Today HeroScoreCell / Live BPM-gauge idiom). The band pill sits top-trailing and
-    // one plain-English line explains the number below. Frosted card, liquid finish.
-
-    private func heroCard(_ model: StressModel) -> some View {
-        NoopCard(tint: StressRamp.calm) {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                HStack {
-                    Text("Stress monitor").strandOverline()
-                    Spacer()
-                    StatePill("\(model.band.title)", tone: model.band.tone, showsDot: true)
-                }
-
-                HStack(alignment: .center, spacing: NoopMetrics.space5) {
-                    // The stress-level vessel: fills to score/3, tinted to the live band, the value
-                    // counting up over it. Taps splash the gauge (the numeral is hit-transparent).
-                    StressHeroGauge(score: model.score, tint: StressRamp.color(model.score))
-
-                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                        Text(model.band.title)
-                            .font(StrandFont.overline)
-                            .tracking(StrandFont.overlineTracking)
-                            .foregroundStyle(StressRamp.color(model.score))
-                        // One plain-English line beside the gauge.
-                        Text(model.explanation)
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
-    // MARK: 1b · Advanced HRV readouts (additive, on-demand)
-    //
-    // Two extra, clearly-labelled lenses on the SAME day's R-R the timeline already reads, surfaced
-    // in their own card so they are visibly separate from the 0..3 monitor. Each row is shown only
-    // when its engine produced a value (the engines self-gate on clean-beat count / record span),
-    // and the whole card is gated by `hasAdvancedReadouts`. Nothing here feeds the score.
+    // Extra, clearly-labelled lenses on the SAME day's R-R the timeline already reads, surfaced in their
+    // own card so they are visibly separate from the 0..3 monitor. Each readout is shown only when its
+    // engine produced a value (the engines self-gate on clean-beat count / record span), and the whole
+    // card is gated by `hasAdvancedReadouts`. Nothing here feeds the score.
 
     /// True when at least one advanced readout is presentable (an SI value, or an LF/HF ratio, or
     /// at least the HF power). Drives whether the advanced card is shown at all.
@@ -454,277 +404,590 @@ struct StressView: View {
 
     @ViewBuilder
     private func advancedReadoutsCard() -> some View {
-        NoopCard(tint: StressRamp.calm) {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                HStack {
-                    Text("Advanced HRV").strandOverline()
-                    Spacer()
-                    Text("on demand · today's R-R")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)],
-                    alignment: .leading,
-                    spacing: NoopMetrics.gap
-                ) {
+        NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopMetricRow {
                     // Baevsky Stress Index, a whole number; higher means a more rigid, stressed rhythm.
                     if let si = stressIndex {
-                        StatTile(
-                            label: "Baevsky Stress Index",
-                            value: "\(Int(si.si.rounded()))",
-                            caption: String(localized: "Autonomic rigidity from your heart-rate rhythm. Higher means a more rigid, stressed rhythm."),
-                            accent: StressRamp.tense
-                        )
+                        NoopMetric(value: "\(Int(si.si.rounded()))", label: "Baevsky Stress Index")
+                            .accessibilityHint("Autonomic rigidity from your heart-rate rhythm. Higher means a more rigid, stressed rhythm.")
                     }
-
-                    // Frequency-domain HRV: prefer the LF/HF ratio; if the span was too short for
-                    // LF (lfhf nil) fall back to the HF (rest) band power so the lens still reads.
+                    // Frequency-domain HRV: the LF/HF ratio when the span allowed LF, and the HF (rest)
+                    // band power whenever it read.
                     if let f = freqHRV {
                         if let ratio = f.lfhf {
-                            StatTile(
-                                label: "Autonomic balance (LF/HF)",
-                                value: StressTrace.formatRatio(ratio),
-                                caption: String(localized: "Sympathetic vs parasympathetic tone from frequency-domain HRV. Higher leans sympathetic (stress-ward)."),
-                                accent: StressRamp.steady
-                            )
-                        } else if f.hf > 0 {
-                            StatTile(
-                                label: "HF power",
-                                value: "\(Int(f.hf.rounded()))",
-                                caption: String(localized: "Parasympathetic (rest) band of your HRV."),
-                                accent: StressRamp.steady
-                            )
+                            NoopMetric(value: StressTrace.formatRatio(ratio), label: "Autonomic balance (LF/HF)")
+                                .accessibilityHint("Sympathetic vs parasympathetic tone from frequency-domain HRV. Higher leans sympathetic (stress-ward).")
+                        }
+                        if f.hf > 0 {
+                            NoopMetric(value: "\(Int(f.hf.rounded()))", unit: "ms²", label: "HF power")
+                                .accessibilityHint("Parasympathetic (rest) band of your HRV.")
                         }
                     }
                 }
-
                 Text("These are extra, on-demand HRV lenses computed from today's R-R intervals. They are informational and do not change the stress score above.")
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+                    .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
+                    .padding(.top, 14)
             }
         }
     }
 
-    // MARK: 2 · Today's tiles (uniform grid)
+    // MARK: 3 · Markers (2 × 2 tiles vs the 30-day baseline)
 
-    private func tileGrid(_ model: StressModel) -> some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)],
-            alignment: .leading,
-            spacing: NoopMetrics.gap
-        ) {
-            // Today's stress value, with its band as the caption.
-            StatTile(
-                label: "Stress",
-                value: StressTrace.formatLevel(model.score),
-                caption: String(localized: "of 3 · \(model.band.title)"),
-                accent: StressRamp.color(model.score),
-                sparkline: model.sparkValues.count > 1 ? model.sparkValues : nil,
-                sparkColor: StressRamp.color(model.score)
-            )
-            // Resting HR — an INCREASE is the stressful direction.
-            markerTile(
-                label: "Resting HR",
-                value: model.rhrToday.map { String(localized: "\($0) bpm") } ?? "—",
-                delta: model.rhrDelta,
-                accent: StrandPalette.metricRose,
-                higherIsStress: true
-            )
-            // HRV — a DECREASE is the stressful direction.
-            markerTile(
-                label: "HRV",
-                value: model.hrvToday.map { String(localized: "\(Int($0.rounded())) ms") } ?? "—",
-                delta: model.hrvDelta,
-                accent: StrandPalette.metricPurple,
-                higherIsStress: false
-            )
-            // Estimated calm time — share of recent days spent in the LOW band.
-            StatTile(
-                label: "Calm time",
-                value: model.calmTimeValue,
-                caption: model.calmTimeCaption,
-                accent: StressRamp.calm
-            )
+    private func markerGrid(_ model: StressModel) -> some View {
+        Grid(horizontalSpacing: NoopMetrics.gap, verticalSpacing: NoopMetrics.gap) {
+            GridRow {
+                // Today's stress value, with its band as the chip.
+                StressMarkerTile(label: "Stress", icon: "wave-sine",
+                                 value: StressTrace.formatLevel(model.score), unit: String(localized: "of 3"),
+                                 chip: model.band.title, chipIcon: nil)
+                // Resting HR — an INCREASE is the stressful direction.
+                markerTile(label: "Resting HR", icon: "heart",
+                           value: model.rhrToday.map { "\($0)" }, unit: "bpm",
+                           delta: model.rhrDelta, deltaUnit: "bpm")
+            }
+            GridRow {
+                // HRV — a DECREASE is the stressful direction.
+                markerTile(label: "HRV", icon: "heartbeat",
+                           value: model.hrvToday.map { "\(Int($0.rounded()))" }, unit: "ms",
+                           delta: model.hrvDelta, deltaUnit: "ms")
+                // Estimated calm time — share of recent days spent in the LOW band.
+                StressMarkerTile(label: "Calm time", icon: "leaf", value: model.calmTimeValue, unit: nil,
+                                 chip: model.calmTimeCaption, chipIcon: nil)
+            }
         }
     }
 
-    /// A vs-baseline marker as a fixed-height StatTile. The delta is tinted by
-    /// whether the move is toward stress (warning) or recovery (positive).
-    private func markerTile(label: LocalizedStringKey, value: String, delta: Double?, accent: Color, higherIsStress: Bool) -> some View {
-        let deltaText: String?
-        let deltaColor: Color
+    /// A vs-baseline marker tile. The chip states the move against the 30-day baseline.
+    private func markerTile(label: LocalizedStringKey, icon: String, value: String?, unit: String,
+                            delta: Double?, deltaUnit: String) -> some View {
+        let chip: String?
+        let chipIcon: String?
         // NO CHIP for a missing delta, rather than a claim we cannot make (#2145). It is nil when
         // today has no reading or there is no 30-day baseline to stand one against, and both fell
         // through to the at-baseline chip: a tile with no reading read "— at baseline", and a
-        // first-week tile put a reading exactly on a baseline that did not exist yet. StatTile draws
-        // the pill only for a non-nil delta, so nil is already the way to say nothing here.
+        // first-week tile put a reading exactly on a baseline that did not exist yet.
         if delta == nil {
-            deltaText = nil
-            deltaColor = StrandPalette.textTertiary
+            chip = nil
+            chipIcon = nil
         } else if let delta, abs(delta) >= 0.5 {
             let up = delta > 0
-            let isStressful = (up == higherIsStress)
-            deltaText = String(localized: "\(up ? "+" : "−")\(Int(abs(delta).rounded())) vs base")
-            deltaColor = isStressful ? StrandPalette.statusWarning : StrandPalette.statusPositive
+            chip = "\(up ? "+" : "−")\(Int(abs(delta).rounded())) \(deltaUnit)"
+            chipIcon = up ? "arrow-up" : "arrow-down"
         } else {
-            deltaText = String(localized: "at baseline")
-            deltaColor = StrandPalette.textTertiary
+            chip = String(localized: "at baseline")
+            chipIcon = nil
         }
-        return StatTile(
-            label: label,
-            value: value,
-            caption: nil,
-            accent: accent,
-            delta: deltaText,
-            deltaColor: deltaColor
-        )
+        return StressMarkerTile(label: label, icon: icon, value: value ?? "—", unit: value == nil ? nil : unit,
+                                chip: chip, chipIcon: chipIcon)
     }
 
-    // MARK: 3 · Trend (range-controlled)
+    // MARK: Empty state
 
-    @ViewBuilder
-    private func trendSection(_ model: StressModel) -> some View {
-        let points = windowedTrend(model)
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Stress Trend", overline: "History", trailing: range.name)
-            if points.count >= 2 {
-                let avg = points.map(\.value).reduce(0, +) / Double(points.count)
-                // Axis top = highest reading rounded up, plus a little headroom, so a peak curve and
-                // the top axis label clear the plot clip (#974). Floor of 1 keeps a flat calm history
-                // from collapsing to a zero-height axis. The gradient stays on the full 0–3 scale
-                // because TrendChart keys its colors off `valueRange`, not this domain.
-                let peak = (points.map(\.value).max() ?? 3).rounded(.up)
-                let yTop = max(1, peak + 0.3)
-                ChartCard(
-                    title: "Stress · \(range.label)",
-                    subtitle: String(localized: "Daily 0-3 proxy"),
-                    trailing: String(localized: "avg \(StressTrace.formatLevel(avg))"),
-                    tint: StressRamp.calm
-                ) {
-                    TrendChart(
-                        points: points,
-                        gradient: StressRamp.gradient,
-                        valueRange: 0...3,
-                        showsArea: true,
-                        height: NoopMetrics.chartHeight,
-                        valueFormat: { StressTrace.formatLevel($0) },
-                        accessibilityLabel: String(localized: "Stress trend"),
-                        yDomain: 0...yTop
-                    )
-                } footer: {
-                    ChartFooter([
-                        ("Today", StressTrace.formatLevel(model.score)),
-                        ("Average", StressTrace.formatLevel(avg)),
-                        ("Days", "\(points.count)"),
-                    ])
-                }
-                // The one segmented control. Its eight options use the shared adaptive-width mode so
-                // the control stays inside the same page gutter as the chart on compact iPhones.
-                SegmentedPillControl(ExploreRange.allCases, selection: $range,
-                                     adaptsToAvailableWidth: true) { $0.label }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            } else {
-                NoopCard(tint: StressRamp.calm) {
-                    Text("Not enough recent days to chart a trend yet. Import a history or keep wearing your strap.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
-                        .multilineTextAlignment(.center)
+    private var emptyState: some View {
+        G5EmptyCard(icon: "wave-sine",
+                    message: Text("No stress history yet. Import your WHOOP export in Data Sources to see it."))
+    }
+}
+
+// MARK: - Stress hero (bleeds under the status bar)
+
+/// The Stress hero: the screen header, the 0–3 arc gauge across the top of the glow, the dot-matrix
+/// score, the scored day, and a tagged read of why (band, resting HR and HRV against baseline).
+private struct StressHero: View {
+    let model: StressModel
+
+    /// The scored day as a LOCAL date (a UTC parse would render the previous day west of Greenwich).
+    private var dayDate: Date? { Self.localDayParser.date(from: model.day) }
+    private static let localDayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+    private var isToday: Bool { model.day == Repository.localDayKey(Date()) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            NoopScreenHeader("Stress") {
+                if let dayDate {
+                    NoopPill(verbatim: dayDate.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)
+                        .locale(AppLanguage.activeLocale)))
                 }
             }
+            NoopDotNumber(StressTrace.formatLevel(model.score), size: 96)
+                .padding(.top, 146)
+                .accessibilityLabel(String(localized: "Stress \(StressTrace.formatLevel(model.score)) of 3"))
+            Text(captionText)
+                .font(StrandFont.light(13, relativeTo: .footnote))
+                .foregroundStyle(Color.white.opacity(0.45))
+                .multilineTextAlignment(.center)
+                .padding(.top, 12)
+            VStack(spacing: 2) {
+                G5TaggedSentence(bandSentence, tag: model.band.title)
+                if let rhr = model.rhrDelta {
+                    G5TaggedSentence(String(localized: "Resting HR was \(G5TaggedSentence.slot) your baseline."),
+                                     tag: Self.relation(rhr))
+                }
+                if let hrv = model.hrvDelta {
+                    G5TaggedSentence(String(localized: "HRV was \(G5TaggedSentence.slot) your baseline."),
+                                     tag: Self.relation(hrv))
+                }
+            }
+            .padding(.top, 22)
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 34)
+        .frame(maxWidth: .infinity, minHeight: 466, alignment: .top)
+        .background(alignment: .top) {
+            StressArcGauge(fraction: model.score / 3)
+                .frame(height: 300)
+                .allowsHitTesting(false)
+        }
+        // The glow runs on up under the status bar (the scroll view's top inset).
+        .background(alignment: .bottom) {
+            NoopHeroSurface(glow: .stress, bleed: true)
+                .padding(.top, -90)
+        }
+        .environment(\.colorScheme, .dark)
+        .padding(.horizontal, -NoopMetrics.screenHPadding)
+        .padding(.top, -8)
+    }
+
+    /// "Thu 1 Oct · from resting HR and HRV vs your baseline" — which day was scored and how.
+    private var captionText: String {
+        let day = dayDate.map { $0.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)
+            .locale(AppLanguage.activeLocale)) } ?? model.day
+        return model.usingStored
+            ? String(localized: "\(day) · your recorded daily score")
+            : String(localized: "\(day) · resting HR and HRV vs your baseline")
+    }
+
+    private var bandSentence: String {
+        if isToday { return String(localized: "Your stress ran \(G5TaggedSentence.slot) today.") }
+        let weekday = dayDate.map { $0.formatted(.dateTime.weekday(.wide).locale(AppLanguage.activeLocale)) } ?? model.day
+        return String(localized: "Your stress ran \(G5TaggedSentence.slot) on \(weekday).")
+    }
+
+    /// The tag word for a reading against its baseline, with the same ±1 dead band the explanation uses.
+    private static func relation(_ delta: Double) -> String {
+        if delta > 1 { return String(localized: "above") }
+        if delta < -1 { return String(localized: "below") }
+        return String(localized: "at")
+    }
+}
+
+/// The hero arc: a wide 72° sweep near the top of the glow, a ruler of ticks inside it, the filled part
+/// lit in the stress accent up to `fraction` (0…1 of the 0–3 scale), and a glowing knob with a short
+/// needle at the value.
+private struct StressArcGauge: View {
+    let fraction: Double
+
+    /// Radius of the sweep, in points; the centre sits this far below the arc's crest.
+    private static let radius: CGFloat = 352
+    /// The crest of the arc, measured from the top of the hero content.
+    private static let crestY: CGFloat = 126
+    private static let start = -125.9, end = -54.1   // degrees, 0 = +x, clockwise
+
+    var body: some View {
+        Canvas { ctx, size in
+            let r = Self.radius
+            let c = CGPoint(x: size.width / 2, y: Self.crestY + r)
+            let f = min(max(fraction, 0), 1)
+            let valueAngle = Self.start + (Self.end - Self.start) * f
+            func point(_ deg: Double, _ radius: CGFloat) -> CGPoint {
+                let a = Angle.degrees(deg).radians
+                return CGPoint(x: c.x + radius * CGFloat(cos(a)), y: c.y + radius * CGFloat(sin(a)))
+            }
+            let accent = NoopGlow.stress.accent
+
+            // Ruler: 120 small ticks inside the arc and a long one every 20th, brighter before the value.
+            let tickStart = -121.6, tickEnd = -58.4
+            for i in 0...120 {
+                let t = Double(i) / 120
+                let deg = tickStart + (tickEnd - tickStart) * t
+                let long = i % 20 == 0
+                let lit = deg <= valueAngle
+                var opacity: Double
+                if long {
+                    opacity = lit ? (i == 0 ? 0.3 : 0.85) : (i == 120 ? 0.15 : 0.42)
+                } else {
+                    opacity = lit ? min(0.5, 0.2 + t * 2.5) : max(0.08, 0.2 - (t - f) * 0.4)
+                }
+                var p = Path()
+                p.move(to: point(deg, long ? 325 : 337.6))
+                p.addLine(to: point(deg, long ? 354.5 : 348.6))
+                ctx.stroke(p, with: .color(.white.opacity(opacity)), lineWidth: long ? 1.4 : 1)
+            }
+
+            // The unlit remainder of the sweep.
+            var rest = Path()
+            rest.addArc(center: c, radius: r, startAngle: .degrees(valueAngle), endAngle: .degrees(Self.end + 9),
+                        clockwise: false)
+            ctx.stroke(rest, with: .color(.white.opacity(0.16)), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+
+            // The lit sweep: a soft glow under a crisp line, fading in from the left.
+            var lit = Path()
+            lit.addArc(center: c, radius: r, startAngle: .degrees(Self.start - 9), endAngle: .degrees(valueAngle),
+                       clockwise: false)
+            let litShading = GraphicsContext.Shading.linearGradient(
+                Gradient(stops: [.init(color: accent.opacity(0.05), location: 0),
+                                 .init(color: accent.opacity(0.55), location: 0.45),
+                                 .init(color: accent, location: 0.85),
+                                 .init(color: .white, location: 1)]),
+                startPoint: point(Self.start - 9, r), endPoint: point(valueAngle, r))
+            ctx.drawLayer { l in
+                l.addFilter(.blur(radius: 5))
+                l.opacity = 0.35
+                l.stroke(lit, with: litShading, lineWidth: 12)
+            }
+            ctx.stroke(lit, with: litShading, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+
+            // Needle + knob at the value.
+            let knob = point(valueAngle, r)
+            var needle = Path()
+            needle.move(to: knob)
+            needle.addLine(to: point(valueAngle, r - 66))
+            ctx.stroke(needle, with: .linearGradient(Gradient(colors: [.white, .white.opacity(0)]),
+                                                     startPoint: knob, endPoint: point(valueAngle, r - 66)),
+                       style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+            ctx.fill(Path(ellipseIn: CGRect(x: knob.x - 22, y: knob.y - 22, width: 44, height: 44)),
+                     with: .radialGradient(Gradient(colors: [.white.opacity(0.9), accent.opacity(0.35), accent.opacity(0)]),
+                                           center: knob, startRadius: 0, endRadius: 22))
+            let core = Path(ellipseIn: CGRect(x: knob.x - 8, y: knob.y - 8, width: 16, height: 16))
+            ctx.fill(core, with: .color(.white))
+            ctx.stroke(core, with: .color(accent.opacity(0.9)), lineWidth: 3)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// One marker tile: an icon + label header, the value with its unit, and a neutral chip (the move
+/// against baseline, or the band).
+private struct StressMarkerTile: View {
+    let label: LocalizedStringKey
+    let icon: String
+    let value: String
+    let unit: String?
+    let chip: String?
+    let chipIcon: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                PhIcon(icon, size: 15).opacity(0.9)
+                Text(label).font(StrandFont.book(13, relativeTo: .footnote)).lineLimit(1)
+            }
+            .foregroundStyle(StrandPalette.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(verbatim: value)
+                    .font(StrandFont.value(27, weight: 300))
+                    .tracking(-0.54)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let unit {
+                    Text(verbatim: unit)
+                        .font(StrandFont.book(11))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.top, 12)
+            if let chip {
+                HStack(spacing: 4) {
+                    if let chipIcon { PhIcon(chipIcon, size: 11) }
+                    Text(verbatim: chip).lineLimit(1).minimumScaleFactor(0.75)
+                }
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(Capsule(style: .continuous).fill(NoopVisualStyle.raised))
+                .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                .padding(.top, 10)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 15)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .noopPanel()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The intraday stress chart: a 0–3 scale on the left, the HIGH band floor dashed at 2.0, the day's
+/// scored stretches as a line + fill in the stress accent (a gap where an hour has no reading), the peak
+/// hour highlighted and labelled, and a cursor on the latest reading.
+private struct StressDayChart: View {
+    let points: [DaytimeStress.HourPoint]
+    let hourLabel: (Int) -> String
+
+    private var peak: DaytimeStress.HourPoint? {
+        points.filter { $0.level != nil }.max { ($0.level ?? 0) < ($1.level ?? 0) }
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading) {
+                    Text(verbatim: "3.0"); Spacer(); Text(verbatim: "2.0"); Spacer()
+                    Text(verbatim: "1.0"); Spacer(); Text(verbatim: "0")
+                }
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(width: 28, alignment: .leading)
+                .padding(.vertical, 4)
+                .padding(.top, 6)
+                GeometryReader { geo in
+                    plot(size: geo.size)
+                }
+            }
+            .frame(height: 176)
+            hourAxis
+                .padding(.leading, 28)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private func y(_ level: Double, _ h: CGFloat) -> CGFloat {
+        let top: CGFloat = 10, bottom = h - 10
+        return bottom - (bottom - top) * CGFloat(min(max(level / 3, 0), 1))
+    }
+
+    private func x(_ i: Int, _ w: CGFloat) -> CGFloat {
+        points.count <= 1 ? w / 2 : w * CGFloat(i) / CGFloat(points.count - 1)
+    }
+
+    /// Contiguous runs of scored points, so a hole in the day stays a hole.
+    private func runs(_ size: CGSize) -> [[CGPoint]] {
+        var out: [[CGPoint]] = [], run: [CGPoint] = []
+        for (i, p) in points.enumerated() {
+            guard let level = p.level else {
+                if !run.isEmpty { out.append(run); run = [] }
+                continue
+            }
+            run.append(CGPoint(x: x(i, size.width), y: y(level, size.height)))
+        }
+        if !run.isEmpty { out.append(run) }
+        return out
+    }
+
+    @ViewBuilder
+    private func plot(size: CGSize) -> some View {
+        let w = size.width, h = size.height
+        let accent = NoopGlow.stress.accent
+        let segs = runs(size)
+        ZStack(alignment: .topLeading) {
+            ForEach([3.0, 1.0, 0.0], id: \.self) { lv in
+                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).offset(y: y(lv, h))
+            }
+            Path { p in
+                p.move(to: CGPoint(x: 0, y: y(2, h)))
+                p.addLine(to: CGPoint(x: w, y: y(2, h)))
+            }
+            .stroke(Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+            Text("High zone")
+                .font(StrandFont.light(9.5))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(width: w, alignment: .trailing)
+                .offset(y: y(2, h) - 14)
+            if let peak, let lvl = peak.level, let i = points.firstIndex(of: peak) {
+                let px = x(i, w)
+                let bandW = max(w / CGFloat(max(points.count, 1)), 14)
+                Rectangle().fill(Color.white.opacity(0.06))
+                    .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.6)).frame(height: 1) }
+                    .frame(width: bandW, height: h - 20)
+                    .offset(x: min(max(px - bandW / 2, 0), w - bandW), y: 10)
+                Text("peak \(StressTrace.formatLevel(lvl)) · \(hourLabel(peak.hour))")
+                    .font(StrandFont.light(10))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize()
+                    .position(x: min(max(px, 50), w - 50), y: -4)
+            }
+            ForEach(Array(segs.enumerated()), id: \.offset) { _, seg in
+                if seg.count >= 2 {
+                    Path { p in
+                        p.move(to: CGPoint(x: seg[0].x, y: h - 10))
+                        seg.forEach { p.addLine(to: $0) }
+                        p.addLine(to: CGPoint(x: seg[seg.count - 1].x, y: h - 10))
+                        p.closeSubpath()
+                    }
+                    .fill(LinearGradient(colors: [accent.opacity(0.42), accent.opacity(0)],
+                                         startPoint: .top, endPoint: .bottom))
+                    Path { p in p.addLines(seg) }
+                        .stroke(LinearGradient(colors: [accent.opacity(0.6), accent, .white.opacity(0.9)],
+                                               startPoint: .leading, endPoint: .trailing),
+                                style: StrokeStyle(lineWidth: 1.1, lineJoin: .round))
+                } else if let only = seg.first {
+                    Circle().fill(accent).frame(width: 5, height: 5).position(only)
+                }
+            }
+            if let last = segs.last?.last {
+                Path { p in
+                    p.move(to: last)
+                    p.addLine(to: CGPoint(x: last.x, y: h - 10))
+                }
+                .stroke(Color.white.opacity(0.65), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                Circle().fill(Color.white).frame(width: 6, height: 6).position(last)
+                Circle().fill(Color.white).frame(width: 7, height: 7).position(x: last.x, y: h - 10)
+            }
+        }
+    }
+
+    /// First, a middle and the last covered hour under the plot.
+    private var hourAxis: some View {
+        HStack {
+            if let lo = points.first?.hour, let hi = points.last?.hour {
+                Text(verbatim: hourLabel(lo))
+                Spacer()
+                Text(verbatim: hourLabel((lo + hi) / 2))
+                Spacer()
+                Text(verbatim: hourLabel(hi)).foregroundStyle(StrandPalette.textPrimary)
+            }
+        }
+        .font(StrandFont.footnote)
+        .foregroundStyle(StrandPalette.textTertiary)
+    }
+
+    private var accessibilitySummary: String {
+        let scored = points.compactMap { p in p.level.map { (p.hour, $0) } }
+        guard !scored.isEmpty else { return String(localized: "No intraday stress data yet today.") }
+        let parts = scored.map { "\($0.0):00 \(StressTrace.formatLevel($0.1))" }
+        return String(localized: "Autonomic load today: \(parts.joined(separator: ", "))")
+    }
+}
+
+/// The range-controlled daily stress trend, one tap from the Stress screen.
+private struct StressTrendSheet: View {
+    let model: StressModel
+    @Binding var range: ExploreRange
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let points = windowedTrend
+        VStack(spacing: 0) {
+            NoopSheetHeader("Stress Trend", cancelTitle: "Done", doneTitle: nil, onCancel: { dismiss() })
+            ScrollView {
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    if points.count >= 2 {
+                        let avg = points.map(\.value).reduce(0, +) / Double(points.count)
+                        // Axis top = highest reading rounded up, plus a little headroom, so a peak curve and
+                        // the top axis label clear the plot clip (#974). Floor of 1 keeps a flat calm history
+                        // from collapsing to a zero-height axis.
+                        let peak = (points.map(\.value).max() ?? 3).rounded(.up)
+                        let yTop = max(1, peak + 0.3)
+                        NoopCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                NoopCardHeader("Stress · \(range.label)", icon: "chart-line-up") {
+                                    Text("avg \(StressTrace.formatLevel(avg))")
+                                }
+                                TrendChart(
+                                    points: points,
+                                    gradient: Gradient(colors: [NoopGlow.stress.accent.opacity(0.6), NoopGlow.stress.accent]),
+                                    valueRange: 0...3,
+                                    showsArea: true,
+                                    height: NoopMetrics.chartHeight,
+                                    valueFormat: { StressTrace.formatLevel($0) },
+                                    accessibilityLabel: String(localized: "Stress trend"),
+                                    yDomain: 0...yTop
+                                )
+                                NoopMetricRow {
+                                    NoopMetric(value: StressTrace.formatLevel(model.score), label: "Today")
+                                    NoopMetric(value: StressTrace.formatLevel(avg), label: "Average")
+                                    NoopMetric(value: "\(points.count)", label: "Days")
+                                }
+                                Text("Daily 0-3 proxy")
+                                    .font(StrandFont.footnote)
+                                    .foregroundStyle(StrandPalette.textTertiary)
+                            }
+                        }
+                        SegmentedPillControl(ExploreRange.allCases, selection: $range,
+                                             adaptsToAvailableWidth: true) { $0.label }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        G5EmptyCard(icon: "chart-line-up",
+                                    message: Text("Not enough recent days to chart a trend yet. Import a history or keep wearing your strap."))
+                    }
+                }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 30)
+            }
+        }
+        .background(NoopSheetBackground())
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #else
+        .frame(width: 560, height: 640)
+        #endif
     }
 
     /// The full daily proxy trend, sliced to the selected trailing window. Falls
     /// back to ALL when the trailing slice holds < 2 points.
-    private func windowedTrend(_ model: StressModel) -> [TrendPoint] {
+    private var windowedTrend: [TrendPoint] {
         let all = model.fullTrend
         guard let days = range.days, let last = all.last?.date else { return all }
         let cutoff = last.addingTimeInterval(-Double(days - 1) * 86_400)
         let slice = all.filter { $0.date >= cutoff }
         return slice.count >= 2 ? slice : all
     }
-
-    // MARK: 4 · Methodology (transparency)
-
-    private func methodologyCard(_ model: StressModel) -> some View {
-        NoopCard(tint: StressRamp.calm) {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                Text("How this is computed").strandOverline()
-                Text(model.usingStored
-                     ? "Today's value is your recorded daily stress score (0-3)."
-                     : "Stress is derived from two autonomic signals.")
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Text("We compare today's resting heart rate and HRV to your own 30-day baseline. A higher-than-usual resting HR and a lower-than-usual HRV both push the score up, classic signs the body is activated. The combined shift is mapped onto a 0-3 scale: 0 is calm, 1.5 sits at your baseline, 3 is highly activated.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Divider().overlay(StrandPalette.hairline)
-                HStack(spacing: 0) {
-                    bandLegend("0-1", String(localized: "LOW"), StressRamp.calm)
-                    bandLegend("1-2", String(localized: "MEDIUM"), StressRamp.steady)
-                    bandLegend("2-3", String(localized: "HIGH"), StressRamp.tense)
-                }
-            }
-        }
-    }
-
-    private func bandLegend(_ range: String, _ label: String, _ color: Color) -> some View {
-        HStack(spacing: 7) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
-                Text(range).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: Empty state
-
-    private var emptyState: some View {
-        ComingSoon(what: "No stress history yet. Import your WHOOP export in Data Sources to see it.")
-    }
 }
 
-// MARK: - Stress hero gauge (liquid vessel + count-up score)
-
-/// The stress-level vessel: a LiquidVessel filled to `score`/3 and tinted to the live band, with the
-/// 0–3 value counting up over it and "of 3" beneath (the Today HeroScoreCell / Live BPM-gauge idiom).
-/// CountUpText self-animates the number roll; the numeral is hit-transparent so a tap reaches the
-/// vessel and splashes it.
-private struct StressHeroGauge: View {
-    let score: Double        // 0–3
-    let tint: Color
-
-    private var frac: Double { max(0, min(1, score / 3.0)) }
+/// "How this is computed": the transparency note, one tap from the Stress screen.
+private struct StressMethodSheet: View {
+    let model: StressModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack {
-            LiquidVessel(value: frac, tint: tint, animated: true)
-                .frame(width: 104, height: 104)
-            VStack(spacing: 0) {
-                // CountUpText self-animates (counts up from 0 on appear, re-rolls on value change),
-                // so the score is passed straight through — no external roll state needed.
-                CountUpText(
-                    value: score,
-                    format: { StressTrace.formatLevel($0) },
-                    font: StrandFont.rounded(34, weight: .bold),
-                    color: .white
-                )
-                .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                Text("of 3")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textSecondary)
+        VStack(spacing: 0) {
+            NoopSheetHeader("How this is computed", cancelTitle: "Done", doneTitle: nil, onCancel: { dismiss() })
+            ScrollView {
+                NoopCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text(model.usingStored
+                             ? "Today's value is your recorded daily stress score (0-3)."
+                             : "Stress is derived from two autonomic signals.")
+                            .font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("We compare today's resting heart rate and HRV to your own 30-day baseline. A higher-than-usual resting HR and a lower-than-usual HRV both push the score up, classic signs the body is activated. The combined shift is mapped onto a 0-3 scale: 0 is calm, 1.5 sits at your baseline, 3 is highly activated.")
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        HStack(spacing: 0) {
+                            bandLegend("0-1", String(localized: "LOW"))
+                            bandLegend("1-2", String(localized: "MEDIUM"))
+                            bandLegend("2-3", String(localized: "HIGH"))
+                        }
+                    }
+                }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 30)
             }
-            .allowsHitTesting(false)   // taps fall through to the vessel → splash
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Stress \(StressTrace.formatLevel(score)) of 3"))
+        .background(NoopSheetBackground())
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: false)
+        #else
+        .frame(width: 520, height: 420)
+        #endif
+    }
+
+    private func bandLegend(_ range: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            NoopTag(verbatim: label, size: 11).fixedSize()
+            Text(verbatim: range).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -814,6 +1077,8 @@ private struct StressInputs: Equatable {
 // MARK: - Stress model (transparent: stored value OR z-score derivation)
 
 struct StressModel {
+    /// The day key (`yyyy-MM-dd`) whose signal was scored — today, or the newest day carrying any (#543).
+    let day: String
     let score: Double            // 0–3 (today)
     let band: StressBand
     let explanation: String
@@ -885,6 +1150,7 @@ struct StressModel {
             : nil
 
         let s = storedToday ?? derivedToday ?? 1.5
+        self.day = today.day
         self.usingStored = storedToday != nil
         self.score = s
         self.band = StressBand(score: s)
@@ -1196,13 +1462,12 @@ struct StressTotals {
     }
 }
 
-// MARK: - Stress totals bar (README screen-9, liquid finish)
+// MARK: - Stress totals bar
 //
-// The Calm / Moderate / High split of the scored day, rendered as three labelled liquid tubes (the
-// signature LiquidTube, matching Health's recovery contributors and Today's Key-Metrics tubes). Each
-// tube fills to that band's SHARE of the scored day and is tinted to the band's WHOOP colour (calm blue /
-// steady green / tense amber), with the band name + its duration above it. A day with no scored hours
-// leaves all three tubes empty (no fabricated fill).
+// The Calm / Moderate / High split of the scored day: three labelled tracks, each filled to that band's
+// SHARE of the scored day, with the band name and its duration above it. One accent (the stress glow's),
+// so the split reads by length, not by colour. A day with no scored hours leaves all three tracks empty
+// (no fabricated fill).
 
 struct StressTotalsBar: View {
     let totals: StressTotals
@@ -1211,33 +1476,31 @@ struct StressTotalsBar: View {
         let id = UUID()
         let band: StressBand
         let label: String
-        let color: Color
     }
 
     private var bands: [Band] {
         [
-            Band(band: .low,    label: String(localized: "Calm"),     color: StressRamp.calm),
-            Band(band: .medium, label: String(localized: "Moderate"), color: StressRamp.steady),
-            Band(band: .high,   label: String(localized: "High"),     color: StressRamp.tense),
+            Band(band: .low,    label: String(localized: "Calm")),
+            Band(band: .medium, label: String(localized: "Moderate")),
+            Band(band: .high,   label: String(localized: "High")),
         ]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.space3) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(bands) { b in
-                VStack(alignment: .leading, spacing: NoopMetrics.space1) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(b.label)
-                            .font(StrandFont.captionNumber)
+                            .font(StrandFont.book(13, relativeTo: .footnote))
                             .foregroundStyle(StrandPalette.textPrimary)
                         Spacer()
                         Text(durationLabel(totals.hours(b.band)))
                             .font(StrandFont.footnote)
                             .foregroundStyle(StrandPalette.textTertiary)
                     }
-                    // The signature liquid tube: fills to the band's share of the scored day, tinted to the
-                    // band colour. Static (posed) — a row of small bars shouldn't each run a live Canvas.
-                    LiquidTube(frac: totals.fraction(b.band), tint: b.color, height: 10, animated: false)
+                    NoopTrack(fraction: totals.fraction(b.band), height: 8,
+                              fill: [NoopGlow.stress.accent.opacity(0.55), NoopGlow.stress.accent])
                 }
             }
         }
@@ -1288,30 +1551,6 @@ private struct StressPreviewHarness: View {
         ScrollView {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 Text("Stress").font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
-
-                // Liquid hero — the stress-level vessel + band + one plain-English line.
-                NoopCard(tint: StressRamp.calm) {
-                    VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                        HStack {
-                            Text("Stress monitor").strandOverline()
-                            Spacer()
-                            StatePill("\(band.title)", tone: band.tone)
-                        }
-                        HStack(alignment: .center, spacing: NoopMetrics.space5) {
-                            StressHeroGauge(score: score, tint: StressRamp.color(score))
-                            VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                                Text(band.title).font(StrandFont.overline)
-                                    .tracking(StrandFont.overlineTracking)
-                                    .foregroundStyle(StressRamp.color(score))
-                                Text(StressMath.explanation(band: band, rhrDelta: 3, hrvDelta: -8, usingStored: false))
-                                    .font(StrandFont.subhead)
-                                    .foregroundStyle(StrandPalette.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
 
                 // Screen-9 day autonomic-load line + Calm/Moderate/High totals bar.
                 NoopCard(tint: StressRamp.calm) {

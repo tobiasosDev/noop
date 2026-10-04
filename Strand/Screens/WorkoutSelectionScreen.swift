@@ -3,30 +3,35 @@ import StrandDesign
 
 // MARK: - Workout selection browser
 //
-// Full-screen activity picker for live start (and the merge-name reuse). Catalogue, recents, GPS
-// flags, and `onStart` / `RecentSportsPrefs` are unchanged — only the presentation is rebuilt into
-// large destination cards with native Liquid Glass search.
+// The v2 activity picker for a live start (and the merge-name reuse): a sheet with a search field, the
+// recent sports as chips, every sport as a three-column grid of tiles, and a docked primary action. A
+// tap SELECTS a sport; the docked button starts (or merges) with it. Catalogue, recents, GPS flags,
+// and `onStart` / `RecentSportsPrefs` are unchanged.
 
 /// Public entry used by Live / Workouts. Keeps the prior `onStart` + optional title overrides so the
 /// merge-name prompt can reuse the same browser.
 struct StartWorkoutSheet: View {
     let onStart: (_ sport: String) -> Void
     private let heading: String
-    private let explainer: String
+    private let explainer: String?
     private let actionVerb: String
+    /// The live-start flow (no overrides): the dock names what recording will do (GPS on).
+    private let isStartFlow: Bool
 
     init(title: String? = nil, subtitle: String? = nil, actionVerb: String? = nil,
          onStart: @escaping (_ sport: String) -> Void) {
         self.onStart = onStart
-        self.heading = title ?? String(localized: "Choose a workout")
+        self.heading = title ?? String(localized: "Start a workout")
+        // The default explainer is what the dock and the tiles already say, so only a caller's own
+        // subtitle (the merge prompt's instruction) is shown.
         self.explainer = subtitle
-            ?? String(localized: "Pick an activity to begin recording heart rate, effort, peak, and average.")
         self.actionVerb = actionVerb ?? String(localized: "Start")
+        self.isStartFlow = actionVerb == nil
     }
 
     var body: some View {
         WorkoutSelectionScreen(heading: heading, explainer: explainer, actionVerb: actionVerb,
-                               onStart: onStart)
+                               isStartFlow: isStartFlow, onStart: onStart)
     }
 }
 
@@ -34,12 +39,14 @@ struct StartWorkoutSheet: View {
 
 struct WorkoutSelectionScreen: View {
     let heading: String
-    let explainer: String
+    let explainer: String?
     let actionVerb: String
+    let isStartFlow: Bool
     let onStart: (_ sport: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    @State private var selected: String?
     @FocusState private var searchFocused: Bool
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
@@ -48,88 +55,89 @@ struct WorkoutSelectionScreen: View {
         RecentSportsPrefs.recent().compactMap { WorkoutCatalog.sport(named: $0) }
     }
     private var showRecent: Bool { trimmedQuery.isEmpty && !recentSports.isEmpty }
+    private var selectedSport: WorkoutCatalog.Sport? { selected.flatMap { WorkoutCatalog.sport(named: $0) } }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            NoopSheetHeader(LocalizedStringKey(heading), doneTitle: nil, onCancel: { dismiss() })
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: NoopMetrics.space5) {
-                    headerCopy
-                    WorkoutSearchField(query: $query, isFocused: $searchFocused)
-                        .padding(.top, NoopMetrics.space1)
-
-                    if showRecent {
-                        recentSection
+                VStack(alignment: .leading, spacing: 0) {
+                    WorkoutSearchField(query: $query, isFocused: $searchFocused,
+                                       prompt: String(localized: "Search \(WorkoutCatalog.all.count) sports"))
+                    if let explainer {
+                        Text(explainer)
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 16)
                     }
-
+                    if showRecent {
+                        sectionLabel("Recent")
+                        recentChips
+                    }
+                    sectionLabel(trimmedQuery.isEmpty ? "All sports" : "Results") {
+                        Text(String(localized: "\(filtered.count) sports"))
+                    }
                     if filtered.isEmpty {
                         emptyResults
-                            .padding(.top, NoopMetrics.space8)
                     } else {
-                        LazyVStack(spacing: NoopMetrics.space4) {
+                        LazyVGrid(columns: columns, spacing: 10) {
                             ForEach(filtered) { sport in
-                                WorkoutSelectionCard(sport: sport, actionVerb: actionVerb) {
+                                WorkoutSportTile(sport: sport, isSelected: sport.name == selected) {
                                     select(sport.name)
                                 }
                             }
                         }
                     }
                 }
-                .padding(.horizontal, NoopMetrics.space5)
-                .padding(.top, NoopMetrics.space2)
-                .padding(.bottom, NoopMetrics.space10)
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 24)
             }
             #if os(iOS)
             // #697/#horizontal-swipe parity, see ScreenScaffold.
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             #endif
             .scrollDismissesKeyboard(.interactively)
-            .background {
-                StrandPalette.surfaceBase.ignoresSafeArea()
-            }
-            .navigationBarTitleDisplayModeCompat()
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailingCompat) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textPrimary)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Circle())
-                    }
-                    .nativeLiquidGlassWorkoutSelectionControl()
-                    .accessibilityLabel(Text("Close"))
-                }
-            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { dock }
         }
+        .background(NoopSheetBackground())
+        .onAppear {
+            // Pre-select the most recent sport so a repeat session is one tap on the dock.
+            if selected == nil { selected = recentSports.first?.name }
+        }
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #endif
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 640)
         #endif
     }
 
-    private var headerCopy: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-            Text(heading)
-                .font(StrandFont.rounded(34, weight: .bold))
-                .foregroundStyle(StrandPalette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(explainer)
-                .font(StrandFont.subhead)
-                .foregroundStyle(StrandPalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
+    private func sectionLabel(_ title: LocalizedStringKey) -> some View {
+        sectionLabel(title) { EmptyView() }
     }
 
-    private var recentSection: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.space3) {
-            Text("Recent")
-                .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textSecondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: NoopMetrics.space2) {
-                    ForEach(recentSports) { sport in
-                        RecentWorkoutChip(sport: sport) { select(sport.name) }
+    private func sectionLabel<Trailing: View>(_ title: LocalizedStringKey,
+                                              @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            NoopOverline(title)
+            Spacer(minLength: 8)
+            trailing()
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
+        .padding(.top, 24)
+        .padding(.bottom, 12)
+    }
+
+    private var recentChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(recentSports) { sport in
+                    RecentWorkoutChip(sport: sport, isSelected: sport.name == selected) {
+                        select(sport.name)
                     }
                 }
             }
@@ -137,9 +145,8 @@ struct WorkoutSelectionScreen: View {
     }
 
     private var emptyResults: some View {
-        VStack(spacing: NoopMetrics.space3) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 28, weight: .semibold))
+        VStack(spacing: 10) {
+            PhIcon("magnifying-glass", size: 28)
                 .foregroundStyle(StrandPalette.textTertiary)
             Text("No workouts found")
                 .font(StrandFont.headline)
@@ -149,11 +156,67 @@ struct WorkoutSelectionScreen: View {
                 .foregroundStyle(StrandPalette.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, NoopMetrics.space8)
+        .padding(.vertical, 32)
         .accessibilityElement(children: .combine)
     }
 
+    /// The docked summary of the selection and the primary action.
+    private var dock: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Group {
+                if let sport = selectedSport {
+                    (Text(verbatim: SportName.display(sport.name)).foregroundColor(StrandPalette.textPrimary)
+                     + Text(verbatim: summaryDetail(sport)).foregroundColor(StrandPalette.textSecondary))
+                } else {
+                    Text("Pick a sport").foregroundColor(StrandPalette.textTertiary)
+                }
+            }
+            .font(StrandFont.light(13, relativeTo: .subheadline))
+            .lineLimit(1)
+            Button {
+                if let selected { start(selected) }
+            } label: {
+                HStack(spacing: 8) {
+                    PhIcon("play", weight: .fill, size: 18)
+                    Text(verbatim: actionVerb)
+                }
+            }
+            .buttonStyle(LTPillStyle(kind: .primary))
+            .disabled(selected == nil)
+        }
+        .padding(.horizontal, NoopMetrics.screenHPadding)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .background {
+            NoopVisualStyle.surface
+                .overlay(alignment: .top) { LTHairline() }
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .background(alignment: .top) {
+            // The grid fades out under the dock instead of being cut by its edge.
+            LinearGradient(colors: [NoopVisualStyle.surface.opacity(0), NoopVisualStyle.surface],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 56)
+                .offset(y: -56)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// " · Outdoor · GPS on" — catalogue facts only; GPS is named only for a live start, where
+    /// `startWorkout` records a route for every distance sport.
+    private func summaryDetail(_ sport: WorkoutCatalog.Sport) -> String {
+        var parts = WorkoutActivityMeta.items(for: sport).filter { $0.symbol == nil }.map(\.text)
+        if isStartFlow && sport.isDistanceSport { parts.append(String(localized: "GPS on")) }
+        return parts.isEmpty ? "" : " · " + parts.joined(separator: " · ")
+    }
+
     private func select(_ name: String) {
+        searchFocused = false
+        withAnimation(StrandMotion.interactive) { selected = name }
+        StrandHaptic.selection.play()
+    }
+
+    private func start(_ name: String) {
         searchFocused = false
         RecentSportsPrefs.recordSelection(name)
         onStart(name)
@@ -163,102 +226,143 @@ struct WorkoutSelectionScreen: View {
 
 // MARK: - Search
 
+/// The v2 search field (`.srch`): a 48 pt raised capsule with a magnifier and a plain text field.
 struct WorkoutSearchField: View {
     @Binding var query: String
     var isFocused: FocusState<Bool>.Binding
+    var prompt: String = String(localized: "Search workouts")
 
     var body: some View {
-        NoopLiquidGlassSearchField(text: $query,
-                                   prompt: String(localized: "Search workouts"),
-                                   isFocused: isFocused)
+        HStack(spacing: 10) {
+            PhIcon("magnifying-glass", size: 18)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .opacity(0.6)
+            TextField(prompt, text: $query)
+                .textFieldStyle(.plain)
+                .font(StrandFont.light(15, relativeTo: .body))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .focused(isFocused)
+                .submitLabel(.search)
+                #if os(iOS)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                #endif
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    PhIcon("x-circle", weight: .fill, size: 18)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Clear search"))
+            }
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 48)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+        .accessibilityElement(children: .contain)
     }
 }
 
 // MARK: - Recent chip
 
+/// A recent sport as a `.chip`: its glyph and name; the selected one is the ink chip.
 struct RecentWorkoutChip: View {
     let sport: WorkoutCatalog.Sport
+    var isSelected: Bool = false
     let onTap: () -> Void
-
-    private var accent: Color { StrandPalette.effortColor }
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: NoopMetrics.space2) {
-                WorkoutTypeIcon(workoutType: sport.name, size: 18, weight: .semibold, color: accent)
-                Text(sport.name)
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textPrimary)
+            HStack(spacing: 6) {
+                WorkoutTypeIcon(workoutType: sport.name, size: 15, weight: .light,
+                                color: isSelected ? StrandPalette.goldDeepText : StrandPalette.textSecondary)
+                Text(verbatim: SportName.display(sport.name))
+                    .font(StrandFont.book(12, relativeTo: .caption))
                     .lineLimit(1)
             }
-            .padding(.horizontal, NoopMetrics.space3)
-            .padding(.vertical, NoopMetrics.space2)
+            .foregroundStyle(isSelected ? StrandPalette.goldDeepText : StrandPalette.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(Capsule(style: .continuous).fill(isSelected ? StrandPalette.gold : NoopVisualStyle.inset))
+            .overlay(Capsule(style: .continuous)
+                .strokeBorder(isSelected ? Color.clear : NoopVisualStyle.border, lineWidth: 1))
             .frame(minHeight: 44)
             .contentShape(Capsule())
         }
-        .nativeLiquidGlassWorkoutSelectionControl(capsule: true)
-        .accessibilityLabel(Text("\(sport.name) workout"))
-        .accessibilityHint(Text("Double tap to start"))
+        .buttonStyle(LTPressStyle())
+        .accessibilityLabel(Text("\(SportName.display(sport.name)) workout"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
-// MARK: - Activity card
+// MARK: - Sport tile
 
-struct WorkoutSelectionCard: View {
+/// One sport in the three-column grid (`.sp`): a 42 pt glyph disc over the name. Selected = a white
+/// rim with a soft glow, the disc inverted to ink, and a check in the corner.
+struct WorkoutSportTile: View {
     let sport: WorkoutCatalog.Sport
-    let actionVerb: String
+    let isSelected: Bool
     let onSelect: () -> Void
 
-    private var accent: Color { StrandPalette.effortColor }
-    private var meta: [WorkoutActivityMeta.Item] {
-        WorkoutActivityMeta.items(for: sport)
-    }
+    private var meta: [WorkoutActivityMeta.Item] { WorkoutActivityMeta.items(for: sport) }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         Button(action: onSelect) {
-            HStack(alignment: .center, spacing: NoopMetrics.space4) {
-                WorkoutTypeIcon(workoutType: sport.name, size: 42, weight: .medium, color: accent)
-                    .frame(width: 52, height: 52)
-                    .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                    Text(sport.name)
-                        .font(StrandFont.title2)
+            VStack(spacing: 12) {
+                WorkoutTypeIcon(workoutType: sport.name, size: 19, weight: .light,
+                                color: isSelected ? StrandPalette.goldDeepText : StrandPalette.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(isSelected ? StrandPalette.gold : NoopVisualStyle.raised))
+                    .overlay(Circle().strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                tileName
+                    .font(StrandFont.book(13, relativeTo: .footnote))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 6)
+            }
+            .frame(maxWidth: .infinity, minHeight: 104)
+            .background(shape.fill(LinearGradient(colors: [NoopVisualStyle.inset, NoopVisualStyle.surface],
+                                                  startPoint: .top, endPoint: .bottom)))
+            .overlay(shape.strokeBorder(isSelected ? Color.white.opacity(0.75) : NoopVisualStyle.border,
+                                        lineWidth: 1))
+            .overlay(shape.inset(by: 1).strokeBorder(Color.white.opacity(isSelected ? 0.4 : 0), lineWidth: 1))
+            .shadow(color: .white.opacity(isSelected ? 0.06 : 0), radius: 12)
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    PhIcon("check-circle", weight: .fill, size: 18)
                         .foregroundStyle(StrandPalette.textPrimary)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !meta.isEmpty {
-                        WorkoutActivityMetadataView(items: meta)
-                    }
+                        .padding(10)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "play.fill")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(StrandPalette.goldDeepText)
-                    .frame(width: 52, height: 52)
-                    .background(Circle().fill(StrandPalette.accent))
-                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, NoopMetrics.space5)
-            .padding(.vertical, NoopMetrics.space5)
-            .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
-            .background {
-                NoopPanelSurface(tint: accent, cornerRadius: 28, elevated: true)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .contentShape(shape)
         }
-        .buttonStyle(LiquidPressStyle())
+        .buttonStyle(LTPressStyle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(accessibilityLabelText))
-        .accessibilityHint(Text("Double tap to \(actionVerb.lowercased())"))
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    /// Up to two lines, but a single word too long for the tile ("Freiwasserschwimmen") shrinks onto one
+    /// line instead of being broken mid-word.
+    @ViewBuilder private var tileName: some View {
+        let name = SportName.display(sport.name)
+        let longestWord = name.split(whereSeparator: { $0 == " " || $0 == "-" }).map(\.count).max() ?? 0
+        if longestWord >= 15 {
+            Text(verbatim: name).lineLimit(1).minimumScaleFactor(0.6)
+        } else {
+            Text(verbatim: name).lineLimit(2).minimumScaleFactor(0.8)
+        }
     }
 
     private var accessibilityLabelText: String {
         let labels = meta.map(\.text)
-        if labels.isEmpty { return "\(sport.name) workout" }
-        return "\(sport.name) workout, \(labels.joined(separator: ", "))"
+        let name = SportName.display(sport.name)
+        if labels.isEmpty { return String(localized: "\(name) workout") }
+        return String(localized: "\(name) workout") + ", " + labels.joined(separator: ", ")
     }
 }
 
@@ -279,15 +383,15 @@ enum WorkoutActivityMeta {
         if let type = KnownWorkoutType.exact(matching: sport.name) {
             switch type {
             case .treadmillRun, .treadmillWalk, .indoorCycle, .poolSwim, .rowMachine, .elliptical:
-                items.append(Item(symbol: nil, text: "Indoor"))
+                items.append(Item(symbol: nil, text: String(localized: "Indoor")))
             case .running, .walking, .hiking, .cycling, .openWaterSwim, .rowing, .skiing, .snowboarding:
-                items.append(Item(symbol: nil, text: "Outdoor"))
+                items.append(Item(symbol: nil, text: String(localized: "Outdoor")))
             case .strength, .bodybuilding, .weightlifting:
-                items.append(Item(symbol: nil, text: "Strength"))
+                items.append(Item(symbol: nil, text: String(localized: "Strength")))
             case .yoga, .pilates, .stretching:
-                items.append(Item(symbol: nil, text: "Mindfulness"))
+                items.append(Item(symbol: nil, text: String(localized: "Mindfulness")))
             case .hiit:
-                items.append(Item(symbol: nil, text: "Cardio"))
+                items.append(Item(symbol: nil, text: String(localized: "Cardio")))
             default:
                 break
             }
@@ -296,104 +400,26 @@ enum WorkoutActivityMeta {
     }
 }
 
-struct WorkoutActivityMetadataView: View {
-    let items: [WorkoutActivityMeta.Item]
-
-    var body: some View {
-        HStack(spacing: NoopMetrics.space3) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                HStack(spacing: 4) {
-                    if let symbol = item.symbol {
-                        Image(systemName: symbol)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    Text(item.text)
-                        .font(StrandFont.footnote)
-                }
-                .foregroundStyle(StrandPalette.textSecondary)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Presentation helper
 
 extension View {
-    /// Full-screen workout browser on iOS; plain sheet on macOS (no fullScreenCover there).
+    /// The workout browser as a v2 sheet on iOS (it carries its own detents and background) and a plain
+    /// sheet on macOS.
     @ViewBuilder
     func workoutSelectionCover(isPresented: Binding<Bool>,
                                @ViewBuilder content: @escaping () -> StartWorkoutSheet) -> some View {
-        #if os(iOS)
-        self.fullScreenCover(isPresented: isPresented, content: content)
-        #else
         self.sheet(isPresented: isPresented, content: content)
-        #endif
     }
 
     @ViewBuilder
     func workoutSelectionCover<Item: Identifiable>(item: Binding<Item?>,
                                                    @ViewBuilder content: @escaping (Item) -> StartWorkoutSheet) -> some View {
-        #if os(iOS)
-        self.fullScreenCover(item: item, content: content)
-        #else
         self.sheet(item: item, content: content)
-        #endif
-    }
-}
-
-// MARK: - Native Liquid Glass chrome (selection browser)
-
-private extension View {
-    /// Circular (or capsule) interactive Liquid Glass for close / recent chips. iOS 26 uses the
-    /// platform glass button; macOS and older iOS keep circular geometry with the shared material
-    /// fallback already used by Home header / live-workout controls.
-    @ViewBuilder
-    func nativeLiquidGlassWorkoutSelectionControl(capsule: Bool = false) -> some View {
-        self.nativeLiquidGlassButtonChrome(controlSize: .regular, capsule: capsule) {
-            self
-                .buttonStyle(LiquidPressStyle())
-                .background {
-                    if capsule {
-                        Capsule().fill(.ultraThinMaterial)
-                    } else {
-                        Circle().fill(.ultraThinMaterial)
-                    }
-                }
-        }
-    }
-
-    /// Native Liquid Glass search field chrome. iOS 26 uses `glassEffect`; macOS / older OS use a
-    /// raised solid surface (not a simulated glass stack).
-    @ViewBuilder
-    func nativeLiquidGlassSearchField() -> some View {
-        self.nativeLiquidGlassSearchChrome()
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func navigationBarTitleDisplayModeCompat() -> some View {
-        #if os(iOS)
-        self.navigationBarTitleDisplayMode(.inline)
-        #else
-        self
-        #endif
-    }
-}
-
-private extension ToolbarItemPlacement {
-    static var topBarTrailingCompat: ToolbarItemPlacement {
-        #if os(iOS)
-        .topBarTrailing
-        #else
-        .automatic
-        #endif
     }
 }
 
 #if DEBUG
-#Preview("Choose a workout") {
+#Preview("Start a workout") {
     StartWorkoutSheet { _ in }
         .preferredColorScheme(.dark)
 }

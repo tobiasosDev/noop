@@ -78,32 +78,48 @@ struct DataSourcesView: View {
         }))
     }
 
+    /// Bytes the local database occupies (the hero's "On disk"); nil until measured.
+    @State private var databaseBytes: Int64?
+    @Environment(\.isPresented) private var isPresented
+
     var body: some View {
-        ScreenScaffold(title: "Data Sources",
-                       subtitle: "Everything stays on \(Platform.deviceNounPhrase). Bring your history in once, then it's yours.",
+        ScreenScaffold(title: nil,
                        onRefresh: { await repo.refresh() },
                        // PERF: a ten-card import/source column (WHOOP, Apple Health, Xiaomi, nutrition,
-                       // lifting, activity files, wearables, Oura cloud, broadcast-out, live strap). The LazyVStack
-                       // path is byte-identical layout. The cards stay in their inner VStack(sectionSpacing)
-                       // for pixel-identical spacing, so the lazy win is partial until they're promoted to
-                       // direct children. NOTE: this screen still observes `LiveState` for the broadcaster
-                       // lifecycle binding in onAppear/onDisappear, so a ~1 Hz tick still re-evaluates the
-                       // built cards — that observation can't be removed here (see the lane-B2 note).
+                       // lifting, activity files, wearables, Oura cloud, broadcast-out, live strap), each a
+                       // direct child of the scaffold's LazyVStack. NOTE: this screen still observes
+                       // `LiveState` for the broadcaster lifecycle binding in onAppear/onDisappear, so a
+                       // ~1 Hz tick still re-evaluates the built cards — that observation can't be removed
+                       // here (see the lane-B2 note).
                        lazy: true) {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
-                whoopCard.staggeredAppear(index: 0)
-                appleHealthCard.staggeredAppear(index: 1)
-                xiaomiCard.staggeredAppear(index: 2)
-                nutritionCard.staggeredAppear(index: 3)
-                liftingCard.staggeredAppear(index: 4)
-                activityFileCard.staggeredAppear(index: 5)
-                wearableCard.staggeredAppear(index: 6)
-                #if OURA_CLOUD_IMPORT
-                ouraCloudCard.staggeredAppear(index: 7)
-                #endif
-                broadcastHrCard.staggeredAppear(index: 8)
-                liveCard.staggeredAppear(index: 9)
-            }
+            header
+            hero
+            NoopSectionTitle("Import history", captionKey: "From files you export")
+            whoopCard
+            appleHealthCard
+            xiaomiCard
+            nutritionCard
+            liftingCard
+            activityFileCard
+            wearableCard
+            #if OURA_CLOUD_IMPORT
+            ouraCloudCard
+            #endif
+            NoopSectionTitle("Share live", captionKey: "Bluetooth only")
+            broadcastHrCard
+            liveCard
+            Text("Files are read on \(Platform.deviceNounPhrase) and then let go. NOOP keeps the data, never the account behind it.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+        }
+        .noopHidesSystemNavBar()
+        .task(id: repo.refreshSeq) {
+            databaseBytes = await model.storageReport().db
         }
         .onAppear {
             // Point the broadcaster's diagnostic sink at this screen's `live` so its broadcast-out
@@ -133,165 +149,216 @@ struct DataSourcesView: View {
         }
     }
 
-    private var whoopCard: some View {
-        let hasWhoop = !repo.days.isEmpty
-        return card(title: String(localized: "WHOOP Export"), icon: "square.and.arrow.down.fill",
-             tint: StrandPalette.accent,
-             status: StatePill(hasWhoop ? "Imported" : "Nothing imported",
-                               tone: hasWhoop ? .accent : .neutral),
-             subtitle: String(localized: "Import your full WHOOP history (recovery, strain, sleep, workouts) from a data export (.zip). Works for WHOOP 4.0, 5.0 and MG. Get one at app.whoop.com → Data Management.")) {
-            let importingWhoop = model.isImporting(.whoop)
-            HStack(spacing: NoopMetrics.space3) {
-                Button {
-                    presentImporter(.whoop)
-                } label: {
-                    Label(importingWhoop ? "Importing…" : "Choose export…",
-                          systemImage: "tray.and.arrow.down")
+    // MARK: - Header + hero
+
+    /// Back circle (only when pushed or presented), then the page title and its promise.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isPresented {
+                NoopScreenHeader(verbatim: "") { EmptyView() }
+                    .padding(.bottom, 12)
+            }
+            Text("Data sources")
+                .font(StrandFont.title1)
+                .tracking(-0.5)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Text("Everything stays on \(Platform.deviceNounPhrase). Bring your history in once, then it's yours.")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.bottom, 10)
+    }
+
+    /// The ink hero: how much history lives on this device, since when, and what it weighs.
+    private var hero: some View {
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge(verbatim: String(localized: "On \(Platform.deviceNounPhrase)"), icon: "database")
+                    Spacer(minLength: 8)
+                    if let since = sinceLabel {
+                        NoopPill(verbatim: String(localized: "Since \(since)"), compact: true)
+                    }
                 }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
-                if importingWhoop { ProgressView().controlSize(.small) }
+                NoopDotNumber(Self.grouped(repo.days.count), size: 92)
+                    .padding(.top, 30)
+                Text("days of history on \(Platform.deviceNounPhrase).")
+                    .font(StrandFont.light(19, relativeTo: .title3))
+                    .tracking(-0.2)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .padding(.top, 16)
+                NoopMetricRow {
+                    NoopMetric(value: Self.grouped(repo.sleeps.count), label: "Sleeps stored", labelColor: NoopMetric.heroLabel)
+                    NoopMetric(value: Self.grouped(repo.freshness.appleDays), label: "Apple Health days", labelColor: NoopMetric.heroLabel)
+                    if let bytes = databaseBytes {
+                        let parts = Self.byteParts(bytes)
+                        NoopMetric(value: parts.number, unit: parts.unit, label: "On disk", labelColor: NoopMetric.heroLabel)
+                    }
+                }
+                .padding(.top, 20)
             }
+            .padding(.bottom, 2)
+        }
+    }
+
+    /// The earliest day on record ("17 Jun 2023"), from the repository's freshness summary.
+    private var sinceLabel: String? {
+        guard let day = repo.freshness.earliestDay ?? repo.days.first?.day,
+              let d = Self.dayParser.date(from: day) else { return nil }
+        return d.formatted(.dateTime.day().month(.abbreviated).year())
+    }
+
+    private static let dayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static func grouped(_ n: Int) -> String {
+        n.formatted(.number.grouping(.automatic))
+    }
+
+    /// "412" + "MB": the byte count split so the unit sets small.
+    private static func byteParts(_ bytes: Int64) -> (number: String, unit: String?) {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        let s = f.string(fromByteCount: bytes)
+        guard let space = s.lastIndex(of: " ") else { return (s, nil) }
+        return (String(s[..<space]), String(s[s.index(after: space)...]))
+    }
+
+    // MARK: - Import cards
+
+    /// True while any import (or the Apple Health purge) is running — every Choose button waits for it.
+    private var anyImportBusy: Bool {
+        model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting
+    }
+
+    private var whoopCard: some View {
+        let importing = model.isImporting(.whoop)
+        return importCard(title: "WHOOP", icon: "file-csv",
+                          detail: String(localized: "Import your full WHOOP history (recovery, strain, sleep, workouts) from a data export (.zip). Works for WHOOP 4.0, 5.0 and MG. Get one at app.whoop.com → Data Management."),
+                          importing: importing, disabled: anyImportBusy,
+                          action: { presentImporter(.whoop) }) {
             if let s = model.whoopImportSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(model.whoopImportFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: model.whoopImportFailed)
+            } else {
+                ImportStatusText(text: String(localized: "\(repo.days.count) days · \(repo.sleeps.count) sleeps stored"))
             }
-            Text("\(repo.days.count) days · \(repo.sleeps.count) sleeps stored")
-                .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
         }
     }
 
     private var appleHealthCard: some View {
-        card(title: "Apple Health", icon: "heart.fill",
-             tint: StrandPalette.metricCyan,
-             subtitle: String(localized: "Import an Apple Health export (Health app → profile → Export All Health Data → export.zip). 7 years of HR, HRV, sleep, SpO₂, steps and more, streamed locally. Large exports take a minute or two.")) {
-            let importingAppleHealth = model.isImporting(.appleHealth)
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.appleHealth) } label: {
-                    Label(importingAppleHealth ? "Working…" : "Choose export.zip…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting || appleHealthDeleting)
-                if importingAppleHealth { ProgressView().controlSize(.small) }
-            }
+        let importing = model.isImporting(.appleHealth)
+        return importCard(title: "Apple Health", icon: "heart",
+                          detail: String(localized: "Import an Apple Health export (Health app → profile → Export All Health Data → export.zip). 7 years of HR, HRV, sleep, SpO₂, steps and more, streamed locally. Large exports take a minute or two."),
+                          importing: importing, disabled: anyImportBusy || appleHealthDeleting,
+                          action: { presentImporter(.appleHealth) }) {
             if let s = model.appleHealthImportSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(model.appleHealthImportFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: model.appleHealthImportFailed)
+            } else if repo.freshness.appleDays > 0 {
+                ImportStatusText(text: String(localized: "\(repo.freshness.appleDays) days stored"))
+            } else {
+                ImportStatusText(text: String(localized: "Not imported yet"))
             }
+        } extra: {
             // ah-delete (#616): a destructive "Remove imported data" action wired to
             // DeviceRegistryStore.deleteAllData(deviceId: "apple-health"). Always offered (the user may
             // have imported in a prior session, so we don't gate on this run's summary), with a
             // confirmation step since it permanently clears every Apple-Health-sourced row.
-            HStack(spacing: NoopMetrics.space3) {
-                Button(role: .destructive) {
-                    confirmDeleteAppleHealth = true
-                } label: {
-                    Label(appleHealthDeleting ? "Removing…" : "Remove imported data", systemImage: "trash")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Button(role: .destructive) {
+                        confirmDeleteAppleHealth = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            PhIcon("trash", size: 14)
+                            Text(appleHealthDeleting ? "Removing…" : "Remove imported data")
+                        }
+                        .font(StrandFont.book(12.5, relativeTo: .footnote))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.hasActiveImport || appleHealthDeleting)
+                    .accessibilityLabel("Remove Apple Health imported data")
+                    if appleHealthDeleting { ProgressView().controlSize(.small) }
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(NoopButtonStyle(.destructive))
-                .disabled(model.hasActiveImport || appleHealthDeleting)
-                .accessibilityLabel("Remove Apple Health imported data")
-                if appleHealthDeleting { ProgressView().controlSize(.small) }
+                if let s = appleHealthDeletedSummary {
+                    ImportStatusText(text: s)
+                }
             }
-            if let s = appleHealthDeletedSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.statusPositive)
-            }
+            .padding(.top, 10)
         }
     }
 
     private var xiaomiCard: some View {
-        card(title: "Xiaomi Smart Band (Mi Band)", icon: "figure.walk.motion",
-             tint: StrandPalette.metricAmber,
-             subtitle: String(localized: "Import your Mi Band history (steps, heart rate, resting HR, sleep stages, SpO₂, stress and sleep score) straight from the Mi Fitness app. On your iPhone: Files → On My iPhone → Mi Fitness, long-press the folder → Compress, then choose the .zip here. Fully offline; no Xiaomi account or Bluetooth needed. Smart Band 8/9/10.")) {
-            let importingXiaomi = model.isImporting(.xiaomi)
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.xiaomi) } label: {
-                    Label(importingXiaomi ? "Importing…" : "Choose Mi Fitness export…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
-                if importingXiaomi { ProgressView().controlSize(.small) }
-            }
+        let importing = model.isImporting(.xiaomi)
+        return importCard(title: "Xiaomi Smart Band", icon: "watch",
+                          detail: String(localized: "Import your Mi Band history (steps, heart rate, resting HR, sleep stages, SpO₂, stress and sleep score) straight from the Mi Fitness app. On your iPhone: Files → On My iPhone → Mi Fitness, long-press the folder → Compress, then choose the .zip here. Fully offline; no Xiaomi account or Bluetooth needed. Smart Band 8/9/10."),
+                          importing: importing, disabled: anyImportBusy,
+                          action: { presentImporter(.xiaomi) }) {
             if let s = model.xiaomiImportSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(model.xiaomiImportFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: model.xiaomiImportFailed)
+            } else {
+                ImportStatusText(text: String(localized: ".zip or .db"))
             }
         }
     }
 
     private var nutritionCard: some View {
-        card(title: String(localized: "Nutrition (.csv)"), icon: "fork.knife",
-             tint: StrandPalette.metricAmber,
-             subtitle: String(localized: "Import daily nutrition totals from a Cronometer or MacroFactor CSV export: calories in, protein, carbs, fat (and weight if present). Other trackers work too if the file has a date column and daily totals.")) {
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.nutrition) } label: {
-                    Label(nutritionImporting ? "Importing…" : "Choose .csv…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
-                if nutritionImporting { ProgressView().controlSize(.small) }
-            }
+        importCard(title: "Nutrition CSV", icon: "bowl-food",
+                   detail: String(localized: "Import daily nutrition totals from a Cronometer or MacroFactor CSV export: calories in, protein, carbs, fat (and weight if present). Other trackers work too if the file has a date column and daily totals."),
+                   importing: nutritionImporting, disabled: anyImportBusy,
+                   action: { presentImporter(.nutrition) }) {
             if let s = nutritionSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(nutritionFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: nutritionFailed)
+            } else {
+                ImportStatusText(text: String(localized: ".csv"))
             }
         }
     }
 
     private var liftingCard: some View {
-        card(title: String(localized: "Lifting log (Hevy / Liftosaur)"), icon: "dumbbell.fill",
-             tint: DomainTheme.effort.color,
-             subtitle: String(localized: "Import your strength-training history from a Hevy CSV export or a Liftosaur JSON export. Each workout becomes a Strength session with a training-volume estimate (weight × reps). It's a volume figure, not a measured strain. It never changes your Effort.")) {
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.lifting) } label: {
-                    Label(liftingImporting ? "Importing…" : "Choose export…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
-                if liftingImporting { ProgressView().controlSize(.small) }
-            }
+        importCard(title: "Lifting", icon: "barbell",
+                   detail: String(localized: "Import your strength-training history from a Hevy CSV export or a Liftosaur JSON export. Each workout becomes a Strength session with a training-volume estimate (weight × reps). It's a volume figure, not a measured strain. It never changes your Effort."),
+                   importing: liftingImporting, disabled: anyImportBusy,
+                   action: { presentImporter(.lifting) }) {
             if let s = liftingSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(liftingFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: liftingFailed)
+            } else {
+                ImportStatusText(text: String(localized: ".csv or .json"))
             }
         }
     }
 
     private var activityFileCard: some View {
-        card(title: String(localized: "Workout file (GPX / TCX / FIT)"), icon: "point.topleft.down.curvedto.point.bottomright.up",
-             tint: StrandPalette.metricAmber,
-             subtitle: String(localized: "Import a single exported workout file from any brand (Garmin, Coros, Suunto, Wahoo, Polar, Strava, Apple) straight off your device. GPS route, distance, heart rate and calories come in where the file has them. Fully offline; nothing leaves \(Platform.deviceNounPhrase).")) {
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.activityFile) } label: {
-                    Label(activityFileImporting ? "Importing…" : "Choose .gpx / .tcx / .fit…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting)
-                if activityFileImporting { ProgressView().controlSize(.small) }
-            }
+        importCard(title: "Activity file", icon: "map-trifold",
+                   detail: String(localized: "Import a single exported workout file from any brand (Garmin, Coros, Suunto, Wahoo, Polar, Strava, Apple) straight off your device. GPS route, distance, heart rate and calories come in where the file has them. Fully offline; nothing leaves \(Platform.deviceNounPhrase)."),
+                   importing: activityFileImporting, disabled: anyImportBusy,
+                   action: { presentImporter(.activityFile) }) {
             if let s = activityFileSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(activityFileFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: activityFileFailed)
+            } else {
+                ImportStatusText(text: String(localized: ".gpx · .tcx · .fit"))
             }
         }
     }
 
     private var wearableCard: some View {
-        card(title: String(localized: "Oura / Fitbit / Garmin export"), icon: "figure.mind.and.body",
-             tint: StrandPalette.metricPurple,
-             subtitle: String(localized: "Import your own data export from Oura, Fitbit or Garmin: sleep, resting heart rate, HRV, steps and more, where the export has them. Download it from the brand's app (Oura: Account → Export Data; Fitbit: Google Takeout; Garmin: Export Your Data), then choose the file here. Fully offline; nothing leaves \(Platform.deviceNounPhrase). Each brand's own readiness or sleep score is kept for reference only. Your scores stay yours.")) {
-            HStack(spacing: NoopMetrics.space3) {
-                Button { presentImporter(.wearable) } label: {
-                    Label(wearableImporting ? "Importing…" : "Choose export…", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(NoopButtonStyle(.primary))
-                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting || activityFileImporting || wearableImporting)
-                if wearableImporting { ProgressView().controlSize(.small) }
-            }
+        importCard(title: "Oura / Fitbit / Garmin export", icon: "file-zip",
+                   detail: String(localized: "Import your own data export from Oura, Fitbit or Garmin: sleep, resting heart rate, HRV, steps and more, where the export has them. Download it from the brand's app (Oura: Account → Export Data; Fitbit: Google Takeout; Garmin: Export Your Data), then choose the file here. Fully offline; nothing leaves \(Platform.deviceNounPhrase). Each brand's own readiness or sleep score is kept for reference only. Your scores stay yours."),
+                   importing: wearableImporting, disabled: anyImportBusy || wearableImporting,
+                   action: { presentImporter(.wearable) }) {
             if let s = wearableSummary {
-                Text(s).font(StrandFont.subhead)
-                    .foregroundStyle(wearableFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+                ImportStatusText(text: s, failed: wearableFailed)
+            } else {
+                ImportStatusText(text: String(localized: ".json or .zip"))
             }
         }
     }
@@ -303,32 +370,81 @@ struct DataSourcesView: View {
     /// `disconnect(repo:)` take `repo` at call time (see the `@StateObject` declaration's note)
     /// rather than storing it in `OuraConnectModel` at construction.
     private var ouraCloudCard: some View {
-        card(title: String(localized: "Oura history import"), icon: "circle.circle", tint: StrandPalette.metricPurple,
-             subtitle: String(localized: "A one-time import of your own Oura history over the Oura API. Runs only when you tap it.")) {
-            VStack(alignment: .leading, spacing: 8) {
+        NoopCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 0) {
+                ImportCardTop(title: "Oura history import", icon: "cloud-arrow-down",
+                              detail: String(localized: "A one-time import of your own Oura history over the Oura API. Runs only when you tap it."))
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                    .padding(.top, 14).padding(.bottom, 12)
                 if oura.isConnected {
-                    HStack {
-                        Button { oura.connectAndImport(repo: repo) } label: { Label("Import again", systemImage: "arrow.clockwise") }
-                            .buttonStyle(NoopButtonStyle(.primary))
-                        Button(role: .destructive) { oura.disconnect(repo: repo) } label: { Label("Forget Oura access", systemImage: "xmark.circle") }
-                            .buttonStyle(NoopButtonStyle(.destructive))
-                    }.disabled(oura.busy)
-                } else {
-                    Button { oura.connectAndImport(repo: repo) } label: {
-                        Label(oura.busy ? "Working…" : "Import your Oura history", systemImage: "square.and.arrow.down")
+                    HStack(spacing: 10) {
+                        Button { oura.connectAndImport(repo: repo) } label: { Text("Import again") }
+                            .buttonStyle(ImportGhostButtonStyle())
+                        Button(role: .destructive) { oura.disconnect(repo: repo) } label: { Text("Forget Oura access") }
+                            .buttonStyle(ImportGhostButtonStyle())
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(NoopButtonStyle(.primary))
-                    .disabled(oura.busy || !oura.isConfigured)
+                    .disabled(oura.busy)
+                } else {
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button { oura.connectAndImport(repo: repo) } label: {
+                            Text(oura.busy ? "Working…" : "Import your Oura history")
+                        }
+                        .buttonStyle(ImportGhostButtonStyle())
+                        .disabled(oura.busy || !oura.isConfigured)
+                    }
                     if !oura.isConfigured {
-                        Text("Add your Oura app credentials to OuraSecrets.xcconfig to enable this.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        ImportStatusText(text: String(localized: "Add your Oura app credentials to OuraSecrets.xcconfig to enable this."))
+                            .padding(.top, 8)
                     }
                 }
-                if let s = oura.statusText { Text(s).font(.caption).foregroundStyle(.secondary) }
+                if let s = oura.statusText {
+                    ImportStatusText(text: s).padding(.top, 8)
+                }
             }
         }
     }
     #endif // OURA_CLOUD_IMPORT
+
+    /// One `.imp` import card: the source tile, title and how-to, a hairline, then the status line and
+    /// the "Choose export…" pill; `extra` adds rows below (Apple Health's remove action).
+    private func importCard<Status: View, Extra: View>(
+        title: LocalizedStringKey, icon: String, detail: String,
+        importing: Bool, disabled: Bool, action: @escaping () -> Void,
+        @ViewBuilder status: () -> Status,
+        @ViewBuilder extra: () -> Extra
+    ) -> some View {
+        let statusView = status()
+        let extraView = extra()
+        return NoopCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 0) {
+                ImportCardTop(title: title, icon: icon, detail: detail)
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                    .padding(.top, 14).padding(.bottom, 12)
+                HStack(spacing: 10) {
+                    if importing { ProgressView().controlSize(.small).tint(StrandPalette.textSecondary) }
+                    statusView
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(action: action) {
+                        Text(importing ? "Importing…" : "Choose export…")
+                    }
+                    .buttonStyle(ImportGhostButtonStyle())
+                    .disabled(disabled)
+                }
+                extraView
+            }
+        }
+    }
+
+    private func importCard<Status: View>(
+        title: LocalizedStringKey, icon: String, detail: String,
+        importing: Bool, disabled: Bool, action: @escaping () -> Void,
+        @ViewBuilder status: () -> Status
+    ) -> some View {
+        importCard(title: title, icon: icon, detail: detail, importing: importing, disabled: disabled,
+                   action: action, status: status, extra: { EmptyView() })
+    }
 
     private func presentImporter(_ target: ImportTarget) {
         importTarget = target
@@ -810,65 +926,94 @@ struct DataSourcesView: View {
             }
         }
     }
+    // MARK: - Share live
+
     private var broadcastHrCard: some View {
-        // Status pill reflects the real broadcast state once it's on: advertising vs starting up.
-        let status: StatePill? = broadcastHrEnabled
-            ? StatePill(hrBroadcaster.advertising ? "Broadcasting" : "Starting…",
-                        tone: hrBroadcaster.advertising ? .positive : .warning,
-                        pulsing: !hrBroadcaster.advertising)
-            : nil
-        return card(title: String(localized: "Broadcast HR from this phone"), icon: "dot.radiowaves.up.forward",
-             tint: DomainTheme.effort.color,
-             status: status ?? StatePill("Off", tone: .neutral, showsDot: false),
-             subtitle: String(localized: "Re-share your live strap heart rate over Bluetooth as a standard heart-rate sensor, so a gym treadmill, bike, Zwift, Peloton or any fitness app nearby can read it. Local Bluetooth only. Nothing leaves \(Platform.deviceNounPhrase). Off by default.")) {
-            Toggle(isOn: $broadcastHrEnabled) {
-                Text("Broadcast HR from this phone")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textPrimary)
-            }
-            .toggleStyle(.switch)
-            .tint(DomainTheme.effort.color)
-            .accessibilityLabel("Broadcast heart rate as a Bluetooth sensor")
-            .onChangeCompat(of: broadcastHrEnabled) { on in
-                if on { hrBroadcaster.start() } else { hrBroadcaster.stop() }
-            }
-            Text("Acts as a standard Bluetooth heart-rate strap. Pair NOOP from your treadmill, bike or app to see your strap's heart rate there.")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+        NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                Toggle(isOn: $broadcastHrEnabled) {
+                    ImportCardTop(title: "Broadcast HR from this phone", icon: "broadcast",
+                                  detail: String(localized: "Shows up as a heart-rate sensor"))
+                }
+                .toggleStyle(.noop)
+                .accessibilityLabel("Broadcast heart rate as a Bluetooth sensor")
+                .onChangeCompat(of: broadcastHrEnabled) { on in
+                    if on { hrBroadcaster.start() } else { hrBroadcaster.stop() }
+                }
 
-            // FI-2 (#490) — the 4.0-vs-5.0 explainer. Broadcast works for BOTH strap generations because it
-            // re-shares whatever LIVE heart rate NOOP already has off the strap; it doesn't depend on the
-            // 5/MG-only deep-data path. The honest distinction is WHERE that live HR comes from (4.0 = the
-            // strap's standard HR characteristic; 5/MG = PPG-derived once connected), not whether broadcast
-            // works at all. Stated plainly so a 4.0 owner knows this is for them too.
-            generationExplainer
+                Text("Re-share your live strap heart rate over Bluetooth as a standard heart-rate sensor, so a gym treadmill, bike, Zwift, Peloton or any fitness app nearby can read it. Local Bluetooth only. Nothing leaves \(Platform.deviceNounPhrase). Off by default.")
+                    .font(StrandFont.light(12.5, relativeTo: .footnote))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 14)
 
-            // Honest live status only while it's on: a warning note if the radio can't run, else either
-            // who's reading it or that we're waiting (never a fabricated "connected").
-            if broadcastHrEnabled {
-                if let note = hrBroadcaster.statusNote {
-                    Text(note)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.statusWarning)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if hrBroadcaster.subscriberCount > 0 {
-                    let n = hrBroadcaster.subscriberCount
-                    // Whole-phrase variants per count so translators never see a stitched plural.
-                    Text(n == 1 ? "1 device reading your heart rate"
-                                : "\(n) devices reading your heart rate")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                } else if let hr = live.heartRate {
-                    Text("Sharing \(hr) bpm. Waiting for a device to pair.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                } else {
-                    Text("No live heart rate yet. Open Live to pair your strap.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                Text("Acts as a standard Bluetooth heart-rate strap. Pair NOOP from your treadmill, bike or app to see your strap's heart rate there.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+
+                // FI-2 (#490) — the 4.0-vs-5.0 explainer. Broadcast works for BOTH strap generations because it
+                // re-shares whatever LIVE heart rate NOOP already has off the strap; it doesn't depend on the
+                // 5/MG-only deep-data path. The honest distinction is WHERE that live HR comes from (4.0 = the
+                // strap's standard HR characteristic; 5/MG = PPG-derived once connected), not whether broadcast
+                // works at all. Stated plainly so a 4.0 owner knows this is for them too.
+                generationExplainer
+                    .padding(.top, 12)
+
+                if broadcastHrEnabled {
+                    Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        .padding(.top, 20).padding(.bottom, 16)
+                    broadcastLiveRow
                 }
             }
+        }
+    }
+
+    /// Honest live status only while it's on: the heart rate being shared, whether the radio is
+    /// advertising, and a warning note if it can't run — else who's reading it or that we're waiting
+    /// (never a fabricated "connected").
+    private var broadcastLiveRow: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 8) {
+                NoopDotNumber(live.heartRate.map { "\($0)" } ?? "--", size: 52)
+                Text("bpm")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .padding(.bottom, 5)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 5) {
+                HStack(spacing: 8) {
+                    Circle().fill(hrBroadcaster.advertising ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                        .frame(width: 7, height: 7)
+                        .background(Circle().fill(Color.white.opacity(0.08)).padding(-4))
+                    Text(hrBroadcaster.advertising ? "Broadcasting" : "Starting…")
+                        .font(StrandFont.book(13, relativeTo: .footnote))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                Group {
+                    if let note = hrBroadcaster.statusNote {
+                        Text(note).foregroundStyle(StrandPalette.statusWarning)
+                    } else if hrBroadcaster.subscriberCount > 0 {
+                        let n = hrBroadcaster.subscriberCount
+                        // Whole-phrase variants per count so translators never see a stitched plural.
+                        Text(n == 1 ? "1 device reading your heart rate"
+                                    : "\(n) devices reading your heart rate")
+                    } else if let hr = live.heartRate {
+                        Text("Sharing \(hr) bpm. Waiting for a device to pair.")
+                    } else {
+                        Text("No live heart rate yet. Open Live to pair your strap.")
+                    }
+                }
+                .font(StrandFont.light(11.5, relativeTo: .caption2))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.bottom, 4)
         }
     }
 
@@ -877,28 +1022,22 @@ struct DataSourcesView: View {
     /// owner knows broadcast is for them and a 5/MG owner understands the PPG-derived source — without
     /// over-promising. Plain copy, no claim that either generation is "better".
     private var generationExplainer: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             generationRow(title: "WHOOP 4.0",
                           detail: String(localized: "Broadcasts the strap's own live heart rate over Bluetooth."))
             generationRow(title: "WHOOP 5.0 & MG",
                           detail: String(localized: "Broadcasts the live heart rate NOOP derives from the strap once connected."))
         }
-        .padding(.top, 2)
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(DomainTheme.effort.color.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func generationRow(title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DomainTheme.effort.color)
+            PhIcon("check-circle", size: 14)
+                .foregroundStyle(StrandPalette.textSecondary)
                 .padding(.top, 1)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(StrandFont.footnote.weight(.semibold))
+                    .font(StrandFont.book(11, relativeTo: .footnote))
                     .foregroundStyle(StrandPalette.textSecondary)
                 Text(detail)
                     .font(StrandFont.footnote)
@@ -915,68 +1054,118 @@ struct DataSourcesView: View {
         // Three-state, consistent with the Live screen's connection pill — a connected-but-
         // not-yet-streaming strap (e.g. an experimental WHOOP 5/MG link) no longer reads as
         // "Not connected" on one screen and "Connected" on another (issue #8).
-        // Written as statements rather than a ternary chain: five arms of (StrandTone,
-        // LocalizedStringKey) tuples is the shape that pushes this expression past the iOS type-check
-        // budget, and it fails in CI rather than here.
-        let tone: StrandTone
+        // Written as statements rather than a ternary chain: a long chain of LocalizedStringKey
+        // arms is the shape that pushes this expression past the iOS type-check budget, and it fails
+        // in CI rather than here.
         let label: LocalizedStringKey
         if live.encryptedBond {
-            tone = .positive; label = "Bonded, streaming."
+            label = "Bonded, streaming."
         } else if live.bonded {
-            tone = .warning; label = "Live HR (not fully paired)"
+            label = "Live HR (not fully paired)"
         } else if live.connected {
-            tone = .warning; label = "Connected."
+            label = "Connected."
         } else {
-            tone = .critical; label = "Not connected. Open Live to pair."
+            label = "Not connected. Open Live to pair."
         }
-        return card(title: String(localized: "WHOOP Strap (Live BLE)"), icon: "antenna.radiowaves.left.and.right",
-             tint: StrandPalette.accent,
-             status: StatePill(label, tone: tone, pulsing: live.connected && !live.bonded),
-             subtitle: String(localized: "Pairs directly with your strap over Bluetooth: no WHOOP app, no cloud.")) {
-            Toggle(isOn: $strapBroadcastHrEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Broadcast heart rate from the strap")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text("Broadcasts the strap's own live heart rate over Bluetooth.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                ImportCardTop(title: "WHOOP Strap (Live BLE)", icon: "bluetooth",
+                              detail: String(localized: "Pairs directly with your strap over Bluetooth: no WHOOP app, no cloud."))
+                HStack(spacing: 8) {
+                    Circle().fill(live.connected ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                        .frame(width: 7, height: 7)
+                    Text(label)
+                        .font(StrandFont.book(13, relativeTo: .footnote))
+                        .foregroundStyle(StrandPalette.textSecondary)
                 }
+                .padding(.top, 14)
+                .accessibilityElement(children: .combine)
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                    .padding(.top, 14).padding(.bottom, 14)
+                Toggle(isOn: $strapBroadcastHrEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Broadcast heart rate from the strap")
+                            .font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("Broadcasts the strap's own live heart rate over Bluetooth.")
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.noop)
+                .accessibilityLabel("Broadcast heart rate from the strap")
+                .onChangeCompat(of: strapBroadcastHrEnabled) { model.ble.setBroadcastHr($0) }
             }
-            .toggleStyle(.switch)
-            .tint(StrandPalette.accent)
-            .accessibilityLabel("Broadcast heart rate from the strap")
-            .onChangeCompat(of: strapBroadcastHrEnabled) { model.ble.setBroadcastHr($0) }
         }
     }
+}
 
-    /// One source as a frosted, domain-tinted NoopCard: a tinted source glyph + title, an optional
-    /// status pill on the trailing edge, the explainer line, then the connect/import action(s). The
-    /// glyph + accents take the card's `tint` (its colour world); the status pill carries connection
-    /// state. Replaces the old flat surfaceRaised rectangle with the shared Bevel card surface.
-    @ViewBuilder
-    private func card<C: View, S: View>(title: String, icon: String,
-                              tint: Color = StrandPalette.accent,
-                              status: S = EmptyView(),
-                              subtitle: String,
-                              @ViewBuilder content: @escaping () -> C) -> some View {
-        NoopCard(padding: 18, tint: tint) {
-            VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                HStack(spacing: NoopMetrics.space2 + 2) {
-                    Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 30, height: 30)
-                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .accessibilityHidden(true)
-                    Text(title).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                    Spacer(minLength: 8)
-                    status
-                }
-                Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+// MARK: - Import card pieces
+
+/// The top of an import card: the 46 pt source tile, the source name, and its how-to line.
+private struct ImportCardTop: View {
+    let title: LocalizedStringKey
+    let icon: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            PhIcon(icon, size: 21)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .frame(width: 46, height: 46)
+                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(
+                    LinearGradient(colors: [NoopVisualStyle.raised, NoopVisualStyle.inset],
+                                   startPoint: .top, endPoint: .bottom)))
+                .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(StrandFont.book(16, relativeTo: .headline))
+                    .tracking(-0.16)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(detail)
+                    .font(StrandFont.light(12.5, relativeTo: .footnote))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
-                content()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
         }
+    }
+}
+
+/// The status line under an import card's hairline ("1,204 days · 980 sleeps stored", an import's
+/// summary). A failure reads in the warning tone; everything else stays quiet.
+private struct ImportStatusText: View {
+    let text: String
+    var failed: Bool = false
+
+    var body: some View {
+        Text(text)
+            .font(StrandFont.light(11.5, relativeTo: .caption2))
+            .foregroundStyle(failed ? StrandPalette.statusWarning : StrandPalette.textTertiary)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The `.gb` pill on an import card: 34 pt, grey, hairline-highlight border.
+private struct ImportGhostButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(StrandFont.book(12.5, relativeTo: .footnote))
+            .foregroundStyle(StrandPalette.textPrimary)
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+            .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .fixedSize()
+            .contentShape(Capsule())
     }
 }

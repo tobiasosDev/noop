@@ -70,9 +70,10 @@ struct LiftProgramItemSheet: View {
     }
 
     var body: some View {
-        ScreenScaffold(
-            title: item == nil ? "Add exercise" : "Edit exercise",
-            subtitle: "Type any name you like. NOOP remembers it, with the muscles you give it."
+        LiftSheetScaffold(
+            item == nil ? "Add exercise" : "Edit exercise",
+            subtitle: "Type any name you like. NOOP remembers it, with the muscles you give it.",
+            onCancel: { dismiss() }
         ) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 exerciseSection
@@ -82,12 +83,9 @@ struct LiftProgramItemSheet: View {
                 footer
             }
         }
-        #if os(iOS)
-        .presentationDragIndicator(.visible)
-        #else
+        #if os(macOS)
         .frame(width: 520, height: 720)
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .dismissesKeyboardOnTap($focused)
         .task { await loadIfNeeded() }
@@ -124,7 +122,7 @@ struct LiftProgramItemSheet: View {
 
     private var exerciseSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Exercise", overline: "Movement")
+            NoopSectionTitle("Exercise", captionKey: "Movement", topPadding: 0)
             NoopCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                     TextField("Incline dumbbell press", text: $exercise)
@@ -151,9 +149,10 @@ struct LiftProgramItemSheet: View {
                                     Button(role: .destructive) {
                                         forgetting = row
                                     } label: {
-                                        Image(systemName: "trash")
-                                            .font(.system(size: 12, weight: .semibold))
+                                        PhIcon("trash", size: 15)
                                             .foregroundStyle(StrandPalette.textTertiary)
+                                            .frame(width: 30, height: 30)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("Forget this exercise")
@@ -170,7 +169,7 @@ struct LiftProgramItemSheet: View {
 
     private var targetsSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Targets", overline: "What you're aiming for")
+            NoopSectionTitle("Targets", captionKey: "What you're aiming for", topPadding: 0)
             NoopCard {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: NoopMetrics.gap) {
@@ -219,7 +218,7 @@ struct LiftProgramItemSheet: View {
 
     private var noteSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Technique note", overline: "In your words")
+            NoopSectionTitle("Technique note", captionKey: "In your words", topPadding: 0)
             NoopCard {
                 TextField("Slow eccentric, pause at the bottom", text: $note, axis: .vertical)
                     // A cue read between sets, and it renders directly above the set rows — every
@@ -240,20 +239,11 @@ struct LiftProgramItemSheet: View {
 
     // MARK: - Footer
 
+    /// Save, as the sheet's one primary action; Cancel is in the sheet header.
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer()
-            Button("Save") { Task { await save() } }
-                .buttonStyle(.noopPrimary)
-                .frame(maxWidth: 160)
-                .disabled(!canSave)
-                .opacity(canSave ? 1 : NoopButtonMetrics.disabledOpacity)
-                .accessibilityLabel("Save exercise")
-        }
+        LTActionButton("Save", kind: .primary) { Task { await save() } }
+            .disabled(!canSave)
+            .accessibilityLabel("Save exercise")
     }
 
     // MARK: - Field helpers (the house form idiom)

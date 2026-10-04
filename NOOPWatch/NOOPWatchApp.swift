@@ -49,6 +49,10 @@ struct NOOPWatchApp: App {
         case "workout":   WatchWorkoutView()
         case "intervals": WatchIntervalView()
         case "glance":    WatchGlanceView()
+        // The same pages mid-session, for the states a simulator cannot reach by tapping.
+        case "breathe-running":   WatchBreatheView(startsOnAppear: true)
+        case "intervals-running": WatchIntervalView(startsOnAppear: true)
+        case "workout-recording": WatchWorkoutView(session: .demoRecording())
         default:          WatchRootView()
         }
         #else

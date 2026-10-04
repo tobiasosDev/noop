@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import StrandDesign
 #if canImport(UIKit)
 import UIKit
 import Speech
@@ -237,5 +238,71 @@ final class CoachVoiceInput: ObservableObject {
         case authorized
         case denied
         case unavailable
+    }
+}
+
+/// The v2 composer mic: starts/stops on-device speech recognition into `draft`. Disabled when the
+/// locale lacks on-device support or permission is denied; tapping when permission is not yet
+/// determined triggers the system prompt. Shared by the Coach composer and the Quick ask sheet.
+struct CoachMicButton: View {
+    @Binding var draft: String
+    /// The caller's own reason to refuse input (a reply in flight).
+    var disabled: Bool = false
+    @StateObject private var voiceInput = CoachVoiceInput()
+
+    var body: some View {
+        Button(action: toggleVoice) {
+            Group {
+                if voiceInput.isRecording {
+                    PhIcon("stop-circle", weight: .fill, size: 22)
+                        .foregroundStyle(NoopGlow.low.tint)
+                } else {
+                    PhIcon("microphone", size: 20)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .opacity(voiceInput.canUseVoice ? 0.7 : 0.35)
+                }
+            }
+            .frame(width: 30, height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(voiceInput.statusMessage ?? "Ask out loud")
+        .accessibilityLabel(voiceInput.isRecording ? "Stop voice input" : "Voice input")
+        .accessibilityHint(voiceInput.statusMessage ?? "Transcribes your question on-device")
+        .task {
+            // Pre-check on appear so the button reflects the right state without a tap.
+            if voiceInput.authorization == .notDetermined {
+                voiceInput.requestAuthorization { _ in }
+            }
+        }
+    }
+
+    /// Tappable only if voice is either already usable or permission hasn't been asked yet (the first
+    /// tap triggers the prompt).
+    private var enabled: Bool {
+        !disabled && (voiceInput.canUseVoice || voiceInput.authorization == .notDetermined)
+    }
+
+    private func toggleVoice() {
+        if voiceInput.isRecording {
+            voiceInput.stopTranscribing { finalText in
+                let trimmed = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    // Append to the draft (not replace) so a user can speak into existing text.
+                    draft = draft.isEmpty ? trimmed : "\(draft) \(trimmed)"
+                }
+            }
+        } else if voiceInput.authorization == .notDetermined {
+            // First tap with undetermined permission triggers the system prompt; if granted, start
+            // transcribing straight away.
+            voiceInput.requestAuthorization { state in
+                if state == .authorized {
+                    voiceInput.startTranscribing { partial in draft = partial }
+                }
+            }
+        } else {
+            voiceInput.startTranscribing { partial in draft = partial }
+        }
     }
 }

@@ -9,9 +9,9 @@ import WhoopStore
 // Phase 1b of the mental-health track (design:
 // 2026-06-12-noop-mind-mental-health-design.md). Two pieces:
 //
-//  1. CHECK-IN — a one-tap "How's your mood today?" card with five faces (1–5).
-//     Shown until answered for the local day, then collapses to the chosen face
-//     + an "Edit" affordance. Storage via MoodStore (dedicated `noop-mood`
+//  1. CHECK-IN — a one-tap "How's your mood today?" card with five values (1–5).
+//     The chosen value stays marked; tapping another changes today's answer.
+//     Storage via MoodStore (dedicated `noop-mood`
 //     source id, one row per local day, edits overwrite).
 //
 //  2. INSIGHTS — once ≥ 7 mood days exist, up to three plain-English lines
@@ -29,8 +29,6 @@ struct MindSection: View {
 
     /// Today's stored mood (1–5); nil until the user checks in.
     @State private var todayMood: Int?
-    /// True while the user re-opens the collapsed card to change today's answer.
-    @State private var editing = false
     /// Up to three plain-English correlation lines (strongest |r| first).
     @State private var lines: [MoodLine] = []
     /// Distinct days with a mood entry (insights need ≥ `minDays`).
@@ -42,142 +40,102 @@ struct MindSection: View {
     private static let minAbsR = 0.3
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Mind", overline: "Mood, alongside your body's signals")
-
-            checkInCard
-
-            if !lines.isEmpty {
-                insightsCard
+        VStack(alignment: .leading, spacing: 10) {
+            NoopCard(padding: 18) {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoopCardHeader("Mind", icon: "smiley", captionKey: "How's your mood today?")
+                        .padding(.bottom, 6)
+                    checkInRow
+                    if !lines.isEmpty {
+                        insightsBlock
+                    }
+                }
             }
-
             // Standing footnote — always visible, never conditional.
             Text("Self-tracking, not a clinical assessment. If low mood persists, talk to a professional. You deserve support.")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
         }
         .task(id: repo.refreshSeq) { await load() }
     }
 
-    // MARK: - Check-in card
+    // MARK: - Check-in
 
-    @ViewBuilder
-    private var checkInCard: some View {
-        NoopCard(tint: StrandPalette.restColor) {
-            if let mood = todayMood, !editing {
-                answeredRow(mood)
-            } else {
-                askRow
-            }
-        }
-    }
-
-    /// The full five-face prompt (also shown while editing an existing answer).
-    private var askRow: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            Text("How's your mood today?")
-                .font(StrandFont.headline)
-                .foregroundStyle(StrandPalette.textPrimary)
-            HStack(spacing: NoopMetrics.gap) {
-                ForEach(MoodStore.scale, id: \.self) { value in
+    /// Five numbered circles, 1 (rough) to 5 (great). The chosen one fills with ink — the same neutral,
+    /// non-valenced treatment for every value (no red for low mood; the fill marks the choice, nothing
+    /// more). Tapping another value changes today's answer.
+    private var checkInRow: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 0) {
+                ForEach(Array(MoodStore.scale), id: \.self) { value in
                     faceButton(value)
+                    if value < MoodStore.scale.upperBound { Spacer(minLength: 4) }
                 }
             }
+            HStack {
+                Text(verbatim: MoodStore.label(for: MoodStore.scale.lowerBound))
+                Spacer()
+                if let mood = todayMood {
+                    Text(verbatim: MoodStore.label(for: mood))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .accessibilityLabel("Today's mood: \(MoodStore.label(for: mood)), \(mood) of 5")
+                }
+                Spacer()
+                Text(verbatim: MoodStore.label(for: MoodStore.scale.upperBound))
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// One tappable face. Selection reads via a calm Rest STROKE + soft fill —
-    /// deliberately the same neutral, non-valenced treatment for every face (no red
-    /// for low mood; the indigo carries no good/bad signal, it just marks the choice).
     private func faceButton(_ value: Int) -> some View {
         let selected = todayMood == value
         return Button {
             select(value)
         } label: {
-            Text(MoodStore.face(for: value))
-                .font(StrandFont.number(24))
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
-                .background(Capsule().fill(
-                    selected ? StrandPalette.restColor.opacity(0.16) : StrandPalette.surfaceInset))
-                .overlay(Capsule().strokeBorder(
-                    selected ? StrandPalette.restBright : StrandPalette.hairline,
-                    lineWidth: selected ? 1.5 : 1))
+            Text(verbatim: "\(value)")
+                .font(StrandFont.book(18, relativeTo: .title3))
+                .foregroundStyle(selected ? NoopVisualStyle.canvas : StrandPalette.textSecondary)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(selected ? StrandPalette.textPrimary : NoopVisualStyle.inset))
+                .overlay(Circle().strokeBorder(selected ? Color.clear : NoopVisualStyle.border, lineWidth: 1))
+                .contentShape(Circle())
         }
-        // Liquid tap response: the same physical settle-inward every tappable liquid control gets.
+        // Liquid tap response: the same physical settle-inward every tappable control gets.
         .buttonStyle(LiquidPressStyle())
         .accessibilityLabel("\(MoodStore.label(for: value)), mood \(value) of 5")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// The collapsed state: chosen face + label + "Edit".
-    private func answeredRow(_ mood: Int) -> some View {
-        HStack(spacing: NoopMetrics.gap) {
-            Text(MoodStore.face(for: mood))
-                .font(StrandFont.number(24))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Today's mood").strandOverline()
-                Text(MoodStore.label(for: mood))
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Today's mood: \(MoodStore.label(for: mood)), \(mood) of 5")
-            Spacer()
-            Button("Edit") { editing = true }
-                .buttonStyle(.plain)
-                .font(StrandFont.caption)
-                .foregroundStyle(StrandPalette.restBright)
-                .accessibilityLabel("Edit today's mood")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Persist the tap, collapse the card, and refresh the insight lines (today's
-    /// point may shift a correlation).
+    /// Persist the tap and refresh the insight lines (today's point may shift a correlation).
     private func select(_ value: Int) {
         todayMood = value
-        editing = false
         Task {
             await repo.saveMood(day: Repository.localDayKey(Date()), value: value)
             await load()
         }
     }
 
-    // MARK: - Insights card
+    // MARK: - Insights
 
-    private var insightsCard: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+    private var insightsBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                .padding(.top, 16)
             Text("What tracks your mood (\(moodDayCount) check-ins)")
                 .strandOverline()
-            // Each correlation as its own frosted Rest-tinted insight card. The indigo wash is
-            // calm and carries no valence — a link is just a link, never framed as good or bad.
+            // A link is just a link, never framed as good or bad: plain insight lines, no colour.
             ForEach(lines) { line in
-                NoopCard(tint: StrandPalette.restColor) {
-                    HStack(alignment: .top, spacing: 12) {
-                        // A small liquid vessel filled to the link's strength (|r|) marks the row and reads
-                        // its magnitude at a glance — the leading-gauge idiom Insights' effect cards use.
-                        // Rest-tinted so it carries no valence (a link is just a link, never good or bad).
-                        LiquidVessel(value: line.strength, tint: StrandPalette.restBright, animated: false)
-                            .frame(width: 22, height: 22)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(line.text)
-                                .font(StrandFont.subhead)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(line.caption)
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .combine)
+                VStack(alignment: .leading, spacing: 4) {
+                    NoopInsightRow(verbatim: line.text)
+                    Text(line.caption)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.leading, 30)
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -187,7 +145,7 @@ struct MindSection: View {
         let id: String
         let text: String
         let caption: String
-        /// Correlation magnitude 0...1 (|r|), for the leading strength vessel.
+        /// Correlation magnitude 0...1 (|r|).
         let strength: Double
     }
 

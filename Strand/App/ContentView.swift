@@ -35,6 +35,8 @@ struct ContentView: View {
                     .zIndex(2)
             }
         }
+        // The v2 ground under the shell, so the onboarding / terms crossfades never show the window's grey.
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
         // Calm easing cubic-bezier(0.22,1,0.36,1) at the README sheet-present duration (~0.42s) for
         // the full-screen onboarding / terms overlays — decelerating, nothing overshoots.
         .animation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.42), value: onboarded)

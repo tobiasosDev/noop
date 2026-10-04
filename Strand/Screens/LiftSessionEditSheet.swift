@@ -65,20 +65,18 @@ struct LiftSessionEditSheet: View {
     }
 
     var body: some View {
-        ScreenScaffold(title: "Edit sets",
-                       subtitle: "Fix numbers, or add and remove sets. Sets left at 0 reps stay out of the figures, and only this session changes — not the program.") {
+        LiftSheetScaffold("Edit sets",
+                          subtitle: "Fix numbers, or add and remove sets. Sets left at 0 reps stay out of the figures, and only this session changes — not the program.",
+                          onCancel: { dismiss() }) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 sessionRpeCard
                 ForEach(exercises.indices, id: \.self) { exerciseCard($0) }
                 footer
             }
         }
-        #if os(iOS)
-        .presentationDragIndicator(.visible)
-        #else
+        #if os(macOS)
         .frame(width: 560, height: 780)
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .dismissesKeyboardOnTap($focused)
         // A field holding 0 (a discarded set) empties when focused, so typing replaces the 0 instead of
@@ -93,8 +91,8 @@ struct LiftSessionEditSheet: View {
 
     private var sessionRpeCard: some View {
         NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                Text("How hard was the whole session? (1–10)").strandOverline()
+            VStack(alignment: .leading, spacing: 12) {
+                NoopCardHeader("How hard was the whole session? (1–10)", icon: "barbell", caption: nil)
                 field(.sessionRpe, text: Binding(
                     get: { sessionRpeText },
                     set: { sessionRpeText = $0.replacingOccurrences(of: ",", with: ".") }))
@@ -105,17 +103,25 @@ struct LiftSessionEditSheet: View {
     private func exerciseCard(_ index: Int) -> some View {
         let group = exercises[index]
         return NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
-                Text(group.name)
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                HStack(spacing: 8) {
-                    Text("Set").strandOverline()
-                        .frame(width: LiftSessionView.setColumnWidth, alignment: .center)
-                    Text(weightHeading).strandOverline().frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Reps").strandOverline().frame(maxWidth: .infinity, alignment: .leading)
-                    Text("RPE").strandOverline().frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 12) {
+                    NoopIconTile("barbell", size: 38)
+                    Text(group.name)
+                        .font(StrandFont.book(16, relativeTo: .headline))
+                        .foregroundStyle(StrandPalette.textPrimary)
                 }
+                .padding(.bottom, 10)
+                // The session sheet's column headings, so the two read alike.
+                HStack(spacing: 8) {
+                    Text("Set").frame(width: LiftSessionView.setColumnWidth, alignment: .center)
+                    Text(weightHeading).frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Reps").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("RPE").frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(StrandFont.book(10.5, relativeTo: .caption2))
+                .tracking(0.84)
+                .textCase(.uppercase)
+                .foregroundStyle(StrandPalette.textTertiary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 ForEach(Array(group.entries.enumerated()), id: \.element.id) { position, entry in
@@ -133,8 +139,9 @@ struct LiftSessionEditSheet: View {
         return HStack(spacing: 8) {
             Button { update(exercise, entry.id) { $0.form.isWarmup.toggle() } } label: {
                 Text(warmup ? String(localized: "W") : "\(position + 1)")
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(warmup ? StrandPalette.metricAmber : StrandPalette.textSecondary)
+                    .font(warmup ? StrandFont.medium(13, relativeTo: .footnote)
+                                 : StrandFont.value(13, relativeTo: .footnote))
+                    .foregroundStyle(warmup ? StrandPalette.textPrimary : StrandPalette.textTertiary)
                     .frame(width: LiftSessionView.setColumnWidth, alignment: .center)
                     .contentShape(Rectangle())
             }
@@ -157,37 +164,30 @@ struct LiftSessionEditSheet: View {
         let canRemove = group.entries.count > 1
         return HStack(spacing: 8) {
             Button { addSet(index) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("Add set").font(StrandFont.caption)
-                }
-                .foregroundStyle(canAdd ? StrandPalette.effortColor : StrandPalette.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                NoopChip("Add set", icon: "plus")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LTPressStyle())
             .disabled(!canAdd)
+            .opacity(canAdd ? 1 : 0.38)
             .accessibilityLabel(String(localized: "Add a set to \(group.name)"))
 
             Button { removeSet(index) } label: {
-                Image(systemName: "minus.circle")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(canRemove ? StrandPalette.textSecondary
-                                               : StrandPalette.textTertiary.opacity(0.4))
-                    .contentShape(Rectangle())
+                NoopChip("Remove set", icon: "minus")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LTPressStyle())
+            // Dimmed rather than gone: the pair reads as one control.
             .disabled(!canRemove)
+            .opacity(canRemove ? 1 : 0.38)
             .accessibilityLabel(String(localized: "Remove the last set from \(group.name)"))
+            Spacer(minLength: 0)
         }
-        .padding(.top, 2)
+        .padding(.top, 10)
     }
 
     private func field(_ target: Field, text: Binding<String>) -> some View {
         TextField(Self.empty, text: text)
             .textFieldStyle(.plain)
-            .font(StrandFont.bodyNumber)
+            .font(StrandFont.value(15, relativeTo: .body))
             .foregroundStyle(StrandPalette.textPrimary)
             .numericKeyboard()
             .focused($focused, equals: target)
@@ -252,19 +252,10 @@ struct LiftSessionEditSheet: View {
         exercises[exercise].entries.removeLast()
     }
 
+    /// Save, as the sheet's one primary action; Cancel is in the sheet header.
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer()
-            Button("Save changes") { Task { await save() } }
-                .buttonStyle(.noopPrimary)
-                .frame(maxWidth: 180)
-                .disabled(saving || !hasChanges)
-                .opacity(saving || !hasChanges ? NoopButtonMetrics.disabledOpacity : 1)
-        }
+        LTActionButton("Save changes", kind: .primary) { Task { await save() } }
+            .disabled(saving || !hasChanges)
     }
 
     private func fill() {

@@ -128,56 +128,86 @@ struct TodayCustomizationSheet: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TodaySectionsCustomizationPage(
-                draft: $sectionDraft,
-                keyMetricCount: keyMetricDraft.visible.count,
-                dashboardCardCount: dashboardDraft.visible.count,
-                hostedCardCount: hostedDraft.visible.count,
-                onConfigure: openConfiguration,
-                onReset: resetCurrentLayout
-            )
-            .toolbar {
-                customizationToolbar(showCancel: true)
+            VStack(spacing: 0) {
+                NoopSheetHeader("Customize Today", doneTitle: "Save", onCancel: cancel, onDone: save)
+                TodaySectionsCustomizationPage(
+                    draft: $sectionDraft,
+                    keyMetrics: keyMetricDraft.visible,
+                    dashboardCards: dashboardDraft.visible,
+                    hostedCardCount: hostedDraft.visible.count,
+                    detailed: $detailed,
+                    windowDays: $windowDays,
+                    onConfigure: openConfiguration,
+                    onReset: resetCurrentLayout
+                )
             }
+            .background(NoopSheetBackground())
+            .noopHidesSystemNavBar()
             .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .keyMetrics:
-                    KeyMetricsCustomizationPage(
-                        draft: $keyMetricDraft,
-                        detailed: $detailed,
-                        windowDays: $windowDays,
-                        onReset: resetCurrentLayout
-                    )
-                    .toolbar {
-                        customizationToolbar(showCancel: false)
+                VStack(spacing: 0) {
+                    subpageHeader(route)
+                    switch route {
+                    case .keyMetrics:
+                        KeyMetricsCustomizationPage(
+                            draft: $keyMetricDraft,
+                            detailed: $detailed,
+                            windowDays: $windowDays,
+                            onReset: resetCurrentLayout
+                        )
+                    case .yourCards:
+                        DashboardCardsCustomizationPage(
+                            draft: $dashboardDraft,
+                            onReset: resetCurrentLayout
+                        )
+                    case .addedCards:
+                        HostedCardsCustomizationPage(
+                            draft: $hostedDraft,
+                            onReset: resetCurrentLayout
+                        )
                     }
-                case .yourCards:
-                    DashboardCardsCustomizationPage(
-                        draft: $dashboardDraft,
-                        onReset: resetCurrentLayout
-                    )
-                        .toolbar {
-                            customizationToolbar(showCancel: false)
-                        }
-                case .addedCards:
-                    HostedCardsCustomizationPage(
-                        draft: $hostedDraft,
-                        onReset: resetCurrentLayout
-                    )
-                        .toolbar {
-                            customizationToolbar(showCancel: false)
-                        }
                 }
+                .background(NoopSheetBackground())
+                .noopHidesSystemNavBar()
             }
         }
         .interactiveDismissDisabled(isDirty)
-        .tint(StrandPalette.accent)
+        .tint(StrandPalette.textPrimary)
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #endif
         #if os(macOS)
         .frame(
             minWidth: NoopMetrics.editorSheetMinWidth,
             minHeight: NoopMetrics.editorSheetMinHeight
         )
         #endif
+    }
+
+    /// A nested editor's header: back to Customize Today, the editor's title, and Save (which commits
+    /// every page's draft at once, as the root's Save does).
+    private func subpageHeader(_ route: Route) -> some View {
+        let title: LocalizedStringKey
+        switch route {
+        case .keyMetrics: title = "Key metrics"
+        case .yourCards: title = "Your cards"
+        case .addedCards: title = "Added cards"
+        }
+        return ZStack {
+            Text(title).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary).lineLimit(1)
+            HStack {
+                NoopCircleButton("caret-left", size: 34, accessibilityLabel: "Back") {
+                    if !path.isEmpty { path.removeLast() }
+                }
+                Spacer()
+                Button(action: save) { Text("Save") }
+                    .buttonStyle(.plain)
+                    .font(StrandFont.medium(15))
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
     }
 
     private func openConfiguration(_ section: TodaySection) {
@@ -235,71 +265,158 @@ struct TodayCustomizationSheet: View {
         dismiss()
     }
 
-    @ToolbarContentBuilder
-    private func customizationToolbar(showCancel: Bool) -> some ToolbarContent {
-        if showCancel {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", action: cancel)
-            }
-        }
-        ToolbarItem(placement: .confirmationAction) {
-            Button("Save", action: save)
-        }
-    }
 }
 
 // MARK: - Editor pages
 
 private struct TodaySectionsCustomizationPage: View {
     @Binding var draft: EditableLayoutDraft<TodaySection>
-    let keyMetricCount: Int
-    let dashboardCardCount: Int
+    let keyMetrics: [KeyMetric]
+    let dashboardCards: [DashboardCard]
     let hostedCardCount: Int
+    @Binding var detailed: Bool
+    @Binding var windowDays: Int
     let onConfigure: (TodaySection) -> Void
     let onReset: () -> Void
+    /// The Key metrics row opens in place to its trend window and tile chips.
+    @State private var keyMetricsExpanded = false
 
     var body: some View {
         EditableLayoutList(
             draft: $draft,
             shownTitle: String(localized: "Shown on Today"),
             hiddenTitle: String(localized: "Hidden"),
-            title: \.title,
+            title: \.customizationTitle,
             subtitle: subtitle,
             icon: \.customizationIcon,
             tint: \.customizationTint,
             configurationLabel: configurationLabel,
-            onConfigure: onConfigure,
-            onReset: onReset
+            onConfigure: configure,
+            onReset: onReset,
+            intro: String(localized: "Drag to reorder. Hidden blocks stay one tap away and keep their data."),
+            countLabel: { String(localized: "\($0) blocks") },
+            configurationIcon: { $0 == .keyMetrics ? (keyMetricsExpanded ? "caret-up" : "caret-down") : nil },
+            nested: { section in
+                guard section == .keyMetrics, keyMetricsExpanded else { return nil }
+                return AnyView(KeyMetricsInlinePanel(metrics: keyMetrics, detailed: $detailed,
+                                                     windowDays: $windowDays,
+                                                     onEdit: { onConfigure(.keyMetrics) }))
+            }
         ) {
             EmptyView()
         }
-        .navigationTitle("Customize Today")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
+    }
+
+    private func configure(_ section: TodaySection) {
+        if section == .keyMetrics {
+            withAnimation(StrandMotion.interactive) { keyMetricsExpanded.toggle() }
+        } else {
+            onConfigure(section)
+        }
     }
 
     private func subtitle(for section: TodaySection) -> String? {
         switch section {
         case .keyMetrics:
-            return String(localized: "\(keyMetricCount) metrics shown")
+            return String(localized: "\(keyMetrics.count) metrics shown")
         case .yourCards:
-            return String(localized: "\(dashboardCardCount) cards shown")
+            // "4 cards · Stress, Fitness age, +2": the first two by name, the rest as a count.
+            let names = dashboardCards.prefix(2).map(\.title)
+            let rest = dashboardCards.count - names.count
+            let list = names.joined(separator: ", ") + (rest > 0 ? ", +\(rest)" : "")
+            return String(localized: "\(dashboardCards.count) cards · \(list)")
         case .addedCards:
             return hostedCardCount == 0
                 ? String(localized: "None added yet")
                 : String(localized: "\(hostedCardCount) added")
         default:
-            return nil
+            return section.customizationCaption
         }
     }
 
     private func configurationLabel(for section: TodaySection) -> String? {
         switch section {
-        case .keyMetrics, .yourCards, .addedCards:
+        case .yourCards, .addedCards:
             return String(localized: "Edit")
         default:
             return nil
+        }
+    }
+}
+
+/// The Key metrics row's in-place panel: sparklines on or off, their trend window, and the shown
+/// tiles as chips with a dashed "Edit" chip into the full tile editor.
+private struct KeyMetricsInlinePanel: View {
+    let metrics: [KeyMetric]
+    @Binding var detailed: Bool
+    @Binding var windowDays: Int
+    let onEdit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            KeyMetricsTrendControls(detailed: $detailed, windowDays: $windowDays, compact: true)
+            TodayChipFlowLayout(spacing: 6) {
+                ForEach(metrics) { metric in
+                    Text(verbatim: metric.title)
+                        .font(StrandFont.book(11.5, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+                        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                }
+                Button(action: onEdit) {
+                    HStack(spacing: 5) {
+                        PhIcon("plus", size: 11)
+                        Text("Edit")
+                    }
+                    .font(StrandFont.book(11.5, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .overlay(Capsule(style: .continuous)
+                        .strokeBorder(NoopVisualStyle.borderHighlight, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Edit Key Metrics")
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+    }
+}
+
+/// "Sparklines on each tile" and the 1 week / 2 weeks / 1 month window they graph — the same two
+/// settings the Key metrics editor has always carried (`today.keyMetricsDetailed` / `…WindowDays`).
+private struct KeyMetricsTrendControls: View {
+    @Binding var detailed: Bool
+    @Binding var windowDays: Int
+    var compact: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $detailed) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Trend window")
+                        .font(StrandFont.book(compact ? 13 : 15, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text("Sparklines on each tile")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                }
+            }
+            .toggleStyle(.noop)
+            if detailed {
+                SegmentedPillControl([7, 14, 30], selection: $windowDays, fillsAvailableWidth: true) { days in
+                    switch days {
+                    case 7: return String(localized: "1 week")
+                    case 30: return String(localized: "1 month")
+                    default: return String(localized: "2 weeks")
+                    }
+                }
+            }
         }
     }
 }
@@ -321,29 +438,19 @@ private struct KeyMetricsCustomizationPage: View {
             tint: \.customizationTint,
             configurationLabel: { _ in nil },
             onConfigure: { _ in },
-            onReset: onReset
+            onReset: onReset,
+            intro: String(localized: "Drag to reorder. Hidden tiles stay one tap away and keep their data."),
+            countLabel: { String(localized: "\($0) tiles") }
         ) {
-            Section("Display") {
-                Picker("Key Metrics", selection: $detailed) {
-                    Text("Today").tag(false)
-                    Text("Trends").tag(true)
-                }
-                .pickerStyle(.segmented)
-
-                if detailed {
-                    Picker("Trend window", selection: $windowDays) {
-                        Text("1 week").tag(7)
-                        Text("2 weeks").tag(14)
-                        Text("1 month").tag(30)
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
+            KeyMetricsTrendControls(detailed: $detailed, windowDays: $windowDays)
+                .padding(18)
+                .background(LayoutRowSurface(position: .only))
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 28)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
         }
-        .navigationTitle("Key Metrics")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
     }
 }
 
@@ -358,18 +465,16 @@ private struct DashboardCardsCustomizationPage: View {
             hiddenTitle: String(localized: "Hidden"),
             title: \.title,
             subtitle: \.subtitle,
-            icon: \.icon,
+            icon: \.phIcon,
             tint: \.customizationTint,
             configurationLabel: { _ in nil },
             onConfigure: { _ in },
-            onReset: onReset
+            onReset: onReset,
+            intro: String(localized: "Drag to reorder. Hidden cards stay one tap away and keep their data."),
+            countLabel: { String(localized: "\($0) cards") }
         ) {
             EmptyView()
         }
-        .navigationTitle(String(localized: "Your cards"))
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
     }
 }
 
@@ -397,10 +502,6 @@ private struct HostedCardsCustomizationPage: View {
         ) {
             EmptyView()
         }
-        .navigationTitle(String(localized: "Added Cards"))
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
     }
 }
 

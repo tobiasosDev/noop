@@ -83,8 +83,8 @@ struct ActiveWorkoutIndicatorModel: Equatable {
 
     /// Elapsed ACTIVE time, formatted M:SS up to an hour and H:MM:SS once an hour has passed (so a
     /// 90-minute session reads "1:30:00", not "90:00"). Clamped at zero so a clock-skew negative reads 0:00.
-    /// Pure + injectable `now` for deterministic tests. (StrandFont.bodyNumber already applies tabular figures,
-    /// so the call site does NOT add `.monospacedDigit()`.)
+    /// Pure + injectable `now` for deterministic tests. (The call site draws it in the fixed-width dot face, so
+    /// it does NOT add `.monospacedDigit()`.)
     ///
     /// `pausedAt`/`pausedDuration` default to "never paused" so the existing call sites and tests that
     /// predate pause keep their exact meaning; the math itself lives in `ActiveWorkoutClock`.
@@ -100,18 +100,19 @@ private struct ActiveWorkoutIndicatorCard: View {
     let onReturn: () -> Void
 
     var body: some View {
-        NoopCard(tint: StrandPalette.metricRose) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: NoopMetrics.space2) {
-                    // Decorative "live" dot, hidden from VoiceOver (the card itself reads the full state).
+                    // Decorative "live" dot, hidden from VoiceOver (the card itself reads the full state). The
+                    // dot is the card's one colour; the words stay ink.
                     Circle()
-                        .fill(StrandPalette.metricRose)
-                        .frame(width: NoopMetrics.space2, height: NoopMetrics.space2)
+                        .fill(NoopGlow.heart.accent)
+                        .frame(width: 7, height: 7)
                         .accessibilityHidden(true)
                     Text("WORKOUT IN PROGRESS")
                         .font(StrandFont.overline)
                         .tracking(StrandFont.overlineTracking)
-                        .foregroundStyle(StrandPalette.metricRose)
+                        .foregroundStyle(StrandPalette.textTertiary)
                     // A frozen clock alone is ambiguous with a STALLED one, so say which it is. Reuses the
                     // "Paused" string #1533 already localized rather than minting new copy for a tag.
                     if model.isPaused {
@@ -122,13 +123,14 @@ private struct ActiveWorkoutIndicatorCard: View {
                     }
                     Spacer(minLength: NoopMetrics.space2)
                     // A per-second live clock. The TimelineView re-evaluates ONLY this Text every second, so
-                    // the tick never re-renders the rest of the card (let alone TodayView.body). bodyNumber
-                    // already carries `.monospacedDigit()`, so no extra modifier here.
+                    // the tick never re-renders the rest of the card (let alone TodayView.body). The dot face
+                    // has fixed-width figures, so the clock never jitters as it ticks.
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(ActiveWorkoutIndicatorModel.elapsed(
+                        Text(verbatim: ActiveWorkoutIndicatorModel.elapsed(
                             since: model.startedAt, pausedAt: model.pausedAt,
                             pausedDuration: model.pausedDuration, now: context.date))
-                            .font(StrandFont.bodyNumber)
+                            .font(StrandFont.dot(18))
+                            .tracking(StrandFont.dotTracking(18))
                             .foregroundStyle(StrandPalette.textPrimary)
                     }
                 }
@@ -137,14 +139,12 @@ private struct ActiveWorkoutIndicatorCard: View {
                     HStack(alignment: .center, spacing: NoopMetrics.cardInnerSpacing) {
                         sportLabel
                         Spacer(minLength: NoopMetrics.space2)
-                        NoopButton("Return to workout", systemImage: "arrow.forward.circle.fill",
-                                   kind: .primary, action: onReturn)
+                        returnButton(fullWidth: false)
                     }
 
                     VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
                         sportLabel
-                        NoopButton("Return to workout", systemImage: "arrow.forward.circle.fill",
-                                   kind: .primary, fullWidth: true, action: onReturn)
+                        returnButton(fullWidth: true)
                     }
                 }
             }
@@ -155,11 +155,22 @@ private struct ActiveWorkoutIndicatorCard: View {
     }
 
     private var sportLabel: some View {
-        Text(model.sport)
+        Text(verbatim: SportName.display(model.sport))
             .font(StrandFont.headline)
             .foregroundStyle(StrandPalette.textPrimary)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
+    }
+
+    /// The ink pill back into the running workout, with the Phosphor arrow the kit buttons carry.
+    private func returnButton(fullWidth: Bool) -> some View {
+        Button(action: onReturn) {
+            HStack(spacing: 8) {
+                Text("Return to workout")
+                PhIcon("arrow-right", size: 16)
+            }
+        }
+        .buttonStyle(NoopButtonStyle(.primary, fullWidth: fullWidth))
     }
 }
 
@@ -955,7 +966,7 @@ struct TodayView: View {
         }
     }
 
-    /// The tint for a provenance badge, gold for Whoop, cyan for Apple Health, the positive status hue
+    /// The tint for a provenance badge, ink for WHOOP, cyan for Apple Health, the positive status hue
     /// for on-device, matching the Data Sources footer so the same source reads the same colour on Today.
     private func provenanceTint(_ metricKey: String) -> Color {
         guard let provider = providerByMetric[metricKey] else { return StrandPalette.statusPositive }
@@ -964,7 +975,7 @@ struct TodayView: View {
         if source == Repository.appleHealthSource { return StrandPalette.metricCyan }
         if source == Repository.whoopSource
             || provider.brand?.caseInsensitiveCompare("WHOOP") == .orderedSame {
-            return StrandPalette.accent
+            return StrandPalette.textPrimary
         }
         return StrandPalette.statusPositive
     }
@@ -1218,23 +1229,24 @@ struct TodayView: View {
         }
     }
 
-    /// The selected day as a small locale-aware numeric date ("28/06/2026" or "6/28/2026" per region). The
-    /// top bar shows just this now, no "Today" / "Yesterday" word and no prev/next arrows. Day-change is by
-    /// horizontal swipe or by tapping to open the picker, and the rotating hint below teaches both.
+    /// The selected day as the v2 header's date line ("Saturday, 3 October", in the user's locale and field
+    /// order), under the "Today" / "Yesterday" / weekday label. Day-change is by horizontal swipe or by
+    /// tapping to open the picker, and the rotating hint below teaches both.
     private var dayNavDateText: String {
         // At offset 0 date off the row the resolver actually surfaces (`repo.today?.day`, same as
         // `selectedDayKey`) so the top-bar date matches Android (which dates off `today?.day`) and the
         // data on screen, including the pre-04:00 case where `repo.today` is still the logical day's row
         // but raw `selectedLogicalDay` formatting could read a calendar day ahead (#15). Past offsets, and
         // a not-yet-banked today, fall back to the logical day.
+        let style = Date.FormatStyle.dateTime.weekday(.wide).day().month(.wide).locale(AppLanguage.activeLocale)
         if selectedDayOffset == 0, let day = repo.today?.day, let date = Self.dayParser.date(from: day) {
-            return date.formatted(date: .numeric, time: .omitted)
+            return date.formatted(style)
         }
-        return selectedLogicalDay.formatted(date: .numeric, time: .omitted)
+        return selectedLogicalDay.formatted(style)
     }
 
     /// Periodic one-word hint shown in place of the date for ~1.5s every ~10s (nil = show the date). With the
-    /// arrows gone the day-nav affordances are otherwise invisible, so this teaches them in the accent colour.
+    /// arrows gone the day-nav affordances are otherwise invisible, so this teaches them in full ink.
     @State private var dayNavHint: String? = nil
     private static var dayNavHints: [String] {
         [String(localized: "Swipe"), String(localized: "Tap")]
@@ -1296,22 +1308,32 @@ struct TodayView: View {
     /// Apple-style large-title header: a tappable "Today ⌄" + full date on the left (taps to change day),
     /// then updates / quick-add / and an OBVIOUS menu avatar (opens Settings) on the right.
     @ViewBuilder private var todayTopBar: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Button { showDayPicker = true } label: {
-                // Just the date, small (locale numeric), no relative word and no prev/next arrows. Every ~10s
-                // it swaps for ~1.5s to a one-word "Swipe" / "Tap" hint in the accent colour so users learn
-                // they can change the day by swiping across or tapping here. fixedSize makes it claim its own
-                // width so a tight top bar never compresses it, and the trailing icon cluster keeps its room.
-                Text(dayNavHint ?? dayNavDateText)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(dayNavHint != nil ? StrandPalette.accent : StrandPalette.textPrimary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .contentTransition(.opacity)
-                    .contentShape(Rectangle())
+        HStack(alignment: .center, spacing: 12) {
+            // Menu (Settings): the profile photo, or the neutral v2 disc.
+            Button { showSettings = true } label: {
+                TodayV2Avatar(imageData: profile.avatarImageData)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .layoutPriority(1)
+            .accessibilityLabel("Menu and settings")
+            Button { showDayPicker = true } label: {
+                // The day's name over its date. Every ~10s the date line swaps for ~1.5s to a one-word
+                // "Swipe" / "Tap" hint so users learn they can change the day by swiping across or tapping.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: dayNavLabel)
+                        .font(StrandFont.headline)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1)
+                    Text(dayNavHint ?? dayNavDateText)
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(dayNavHint != nil ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             .accessibilityLabel("\(dayNavLabel). Swipe or tap to change day")
             .popover(isPresented: $showDayPicker) {
                 // Cap at the LOGICAL day (not raw Date()) so the calendar never offers a day ahead of the
@@ -1324,63 +1346,34 @@ struct TodayView: View {
                     .frame(minWidth: 320, minHeight: 360)
             }
 
-            Spacer(minLength: 8)
-
-            // Uniform 36pt circular icon set: recording-status light, updates bell, quick-add (+), menu.
-            HStack(spacing: 8) {
-                // Recording status, a colour-coded light (green recording / amber synced / red not
-                // recording), replacing the old full-width banner. Taps to Devices to connect. Its OWN
-                // subview observes LiveState so a ~1 Hz HR tick re-renders just this 36pt dot, not all of
-                // Today (the scroll-stutter fix, see the @EnvironmentObject note at the top of the type).
-                RecordingStatusLight(selectedDayOffset: selectedDayOffset) {
-                    StrandHaptic.selection.play(); router.openDevices()
-                }
-                // Updates bell.
-                Button { showUpdatesInbox = true } label: {
-                    Image(systemName: updateStore.unreadCount > 0 ? "bell.badge" : "bell")
-                        .font(.system(size: 15, weight: .medium))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(StrandPalette.surfaceInset))
-                        .overlay(alignment: .topTrailing) {
-                            if updateStore.unreadCount > 0 {
-                                Text("\(min(updateStore.unreadCount, 99))")
-                                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundStyle(StrandPalette.goldDeepText)
-                                    .padding(.horizontal, 3.5).padding(.vertical, 1)
-                                    .frame(minWidth: 14)
-                                    .background(Capsule().fill(StrandPalette.statusCritical))
-                                    .offset(x: 2, y: -1)
-                            }
-                        }
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Updates")
-                // Quick-action + (the accented primary, gold, same 36 size as the rest).
-                Button { router.requestQuickActions() } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(StrandPalette.goldDeepText)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(StrandPalette.accent))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Quick actions")
-                .accessibilityHint("Start a workout, log your journal, or breathe")
-                // Menu (Settings), the avatar, same 36 size.
-                Button { showSettings = true } label: {
-                    ProfileAvatarView(imageData: profile.avatarImageData, size: 36)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Menu and settings")
+            // Recording status, a colour-coded light (green recording / amber synced / red not recording),
+            // tapping to Devices to connect. Its OWN subview observes LiveState so a ~1 Hz HR tick
+            // re-renders just this circle, not all of Today (the scroll-stutter fix).
+            RecordingStatusLight(selectedDayOffset: selectedDayOffset) {
+                StrandHaptic.selection.play(); router.openDevices()
             }
+            // Updates bell, with the unread count on a small ink badge.
+            Button { showUpdatesInbox = true } label: {
+                NoopCircleIcon(updateStore.unreadCount > 0 ? "bell-ringing" : "bell-simple")
+                    .overlay(alignment: .topTrailing) {
+                        if updateStore.unreadCount > 0 {
+                            Text(verbatim: "\(min(updateStore.unreadCount, 99))")
+                                .font(StrandFont.medium(9))
+                                .monospacedDigit()
+                                .foregroundStyle(Color.black)
+                                .padding(.horizontal, 3.5).padding(.vertical, 1)
+                                .frame(minWidth: 14)
+                                .background(Capsule().fill(StrandPalette.textPrimary))
+                                .offset(x: 2, y: -1)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Updates")
+            NoopCircleButton("plus", accessibilityLabel: "Quick actions") { router.requestQuickActions() }
+                .accessibilityHint("Start a workout, log your journal, or breathe")
         }
-        .frame(height: 46)
+        .padding(.top, 6)
         // Cycle the swipe/tap hint: roughly every 10s flash a one-word hint for ~1.5s, alternating "Swipe" /
         // "Tap", then return to the date. One async loop, auto-cancelled when Today goes away (no leaked timer).
         .task {
@@ -1401,37 +1394,39 @@ struct TodayView: View {
     private var settingsSheet: some View {
         NavigationStack {
             SettingsView()
-                .background(StrandPalette.surfaceBase.ignoresSafeArea())
+                .background(NoopVisualStyle.canvas.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
+                // Settings hides the system bar and draws its own back circle, which closes this sheet, so
+                // this ink Done only shows if a future Settings root keeps the bar: never two close controls.
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") { showSettings = false }.foregroundStyle(StrandPalette.accent)
+                        Button("Done") { showSettings = false }
+                            .font(StrandFont.medium(15))
+                            .foregroundStyle(StrandPalette.textPrimary)
                     }
                 }
         }
     }
     #endif
 
-    /// The Updates "ringer": a bell button (~30pt) with a small gold unread-count badge. Tapping opens
-    /// the Updates inbox sheet. Shared by the iOS top bar and the macOS toolbar.
+    /// The Updates "ringer": a Phosphor bell (~34pt) with a small ink unread-count badge. Tapping opens
+    /// the Updates inbox sheet. The macOS toolbar hosts it (the iOS top bar draws its own circle).
     private var updateBell: some View {
         Button { showUpdatesInbox = true } label: {
-            Image(systemName: updateStore.unreadCount > 0 ? "bell.badge" : "bell")
-                .font(.system(size: 18))
-                .symbolRenderingMode(.hierarchical)
+            PhIcon(updateStore.unreadCount > 0 ? "bell-ringing" : "bell-simple", size: 18)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .frame(width: 34, height: 34)
                 .overlay(alignment: .topTrailing) {
                     if updateStore.unreadCount > 0 {
-                        Text("\(min(updateStore.unreadCount, 99))")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                        Text(verbatim: "\(min(updateStore.unreadCount, 99))")
+                            .font(StrandFont.medium(9))
                             .monospacedDigit()
-                            .foregroundStyle(StrandPalette.goldDeepText)
+                            .foregroundStyle(Color.black)
                             // Fixed 14pt square + Circle() = a true CIRCLE on both platforms, kept INSIDE
                             // the 34pt bell frame (offset -1,1) so the macOS toolbar (at the window's top
                             // edge) no longer clips the badge's top (2026-06-23).
                             .frame(width: 14, height: 14)
-                            .background(Circle().fill(StrandPalette.statusCritical))
+                            .background(Circle().fill(StrandPalette.textPrimary))
                             .offset(x: -1, y: 1)
                             .accessibilityHidden(true)
                     }
@@ -1467,8 +1462,9 @@ struct TodayView: View {
                        // second offscreen pass DOUBLED its cost and re-rasterised it on every TodayView
                        // body re-eval (the masked image is itself one offscreen pass). That was a v7.0.2
                        // lag regression; removing the flatten restores native layer caching.
+                       // v2: the ground is black; the day-cycle setting only warms it after sunset.
                        topBackground: showDayCycleBackground
-                           ? AnyView(SceneScreenBackground(hour: demoSceneHour)) : nil) {
+                           ? AnyView(V2GroundWarmth(height: 340)) : nil) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 #if os(iOS)
                 // Compact top bar: profile/settings (left) · ‹ Today › day-nav (centre, bold) · strap
@@ -1702,8 +1698,7 @@ struct TodayView: View {
     /// `DataPendingNote`). Matches the "New here?" card's × styling.
     private func todayCardDismissButton(_ action: @escaping () -> Void) -> some View {
         Button { withAnimation(StrandMotion.interactive) { action() } } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
+            PhIcon("x", size: 12)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .padding(8)
                 .contentShape(Rectangle())
@@ -1764,10 +1759,9 @@ struct TodayView: View {
                                     // Glyph + colour (not colour alone) so the flag reads
                                     // for colour-blind users; hidden from VoiceOver since the
                                     // flag word is folded into the row's combined label below.
-                                    Image(systemName: flagSymbol(s.flag))
-                                        .font(.system(size: 9, weight: .semibold))
+                                    PhIcon(flagSymbol(s.flag), weight: .fill, size: 11)
                                         .foregroundStyle(flagColor(s.flag))
-                                        .padding(.top, 4)
+                                        .padding(.top, 3)
                                         .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(label).font(StrandFont.caption)
@@ -1902,20 +1896,21 @@ struct TodayView: View {
         }
     }
 
-    /// Colour-independent glyph so severity isn't conveyed by hue alone.
+    /// Colour-independent glyph (a Phosphor fill-weight name) so severity isn't conveyed by hue alone.
     private func flagSymbol(_ f: ReadinessEngine.Flag) -> String {
         switch f {
-        case .good:    return "checkmark.circle.fill"
-        case .neutral: return "minus.circle.fill"
-        case .watch:   return "exclamationmark.circle.fill"
-        case .bad:     return "exclamationmark.triangle.fill"
+        case .good:    return "check-circle"
+        case .neutral: return "minus-circle"
+        case .watch:   return "warning-circle"
+        case .bad:     return "warning"
         }
     }
 
+    /// The readiness dot: the v2 status hues, with a steady day in ink rather than the chrome accent.
     private func readinessColor(_ l: ReadinessEngine.Level) -> Color {
         switch l {
-        case .primed:       return StrandPalette.accent
-        case .balanced:     return StrandPalette.statusPositive
+        case .primed:       return StrandPalette.statusPositive
+        case .balanced:     return StrandPalette.textPrimary
         case .strained:     return StrandPalette.statusWarning
         case .rundown:      return StrandPalette.metricRose
         case .insufficient: return StrandPalette.textTertiary
@@ -1924,7 +1919,7 @@ struct TodayView: View {
 
     private func flagColor(_ f: ReadinessEngine.Flag) -> Color {
         switch f {
-        case .good:    return StrandPalette.accent
+        case .good:    return StrandPalette.statusPositive
         case .neutral: return StrandPalette.textTertiary
         case .watch:   return StrandPalette.statusWarning
         case .bad:     return StrandPalette.metricRose
@@ -1962,48 +1957,57 @@ struct TodayView: View {
         }
     }
 
+    /// The three score rings in the v2 hero: the screen's one glow, in the Charge band of the score the
+    /// ring shows (today's, else the carried last night's).
     private var classicHeroSection: some View {
-        heroSection
-            .padding(.vertical, NoopMetrics.space4)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                    .fill(StrandPalette.surfaceBase.opacity(0.72))
-            )
+        NoopHeroCard(glow: NoopGlow.charge(displayDay?.recovery ?? lastScoredCharge?.value),
+                     padding: NoopVisualStyle.heroPadding) {
+            heroSection
+                .frame(maxWidth: .infinity)
+        }
     }
 
+    /// One-tap Live Session start (silent guardian, beta) as a v2 list row with its BETA tag.
     private var liveSessionStartSection: some View {
-        Button { showLiveSession = true } label: {
-            NoopCard(tint: StrandPalette.metricCyan) {
-                HStack(spacing: NoopMetrics.space3) {
-                    Image(systemName: "shield.lefthalf.filled")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.metricCyan)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                        Text("Start session")
-                            .font(StrandFont.headline)
-                            .foregroundStyle(StrandPalette.textPrimary)
+        NoopList {
+            Button { showLiveSession = true } label: {
+                HStack(spacing: 14) {
+                    NoopIconTile("play")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text("Start session")
+                                .font(StrandFont.book(15, relativeTo: .body))
+                                .foregroundStyle(StrandPalette.textPrimary)
+                            NoopTag("BETA", size: 10)
+                        }
                         Text("Silent strap coaching against today's Charge.")
-                            .font(StrandFont.caption)
-                            .foregroundStyle(StrandPalette.textSecondary)
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer(minLength: NoopMetrics.space2)
-                    Text("BETA")
-                        .strandOverline()
-                    Image(systemName: "chevron.right")
-                        .font(StrandFont.caption.weight(.semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .accessibilityHidden(true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    PhIcon("caret-right", size: 14).foregroundStyle(StrandPalette.textTertiary)
                 }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 15)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("Start a live session. Beta. Silent strap coaching against today's Charge.")
     }
 
+    /// The `.st` title with its Edit (the whole Today layout editor, as on the Liquid Today), then the card.
     private var recoveryVitalsSection: some View {
-        recoveryVitalsCard(displayDay)
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            NoopSectionTitle("Recovery vitals", topPadding: 6) {
+                Button { customizationDestination = .today } label: { Text("Edit").todayTapTarget() }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Customize Today")
+            }
+            recoveryVitalsCard(displayDay)
+        }
     }
 
     @ViewBuilder
@@ -2026,7 +2030,7 @@ struct TodayView: View {
             if chargeLegacyRRGap {
                 ChargeLegacyRRGapNote()
             } else if chargeDeepWindowGap {
-                chargeDeepWindowGapNote
+                chargeDeepWindowGapNote(inHero: true)
             } else if selectedDayOffset == 0 && !chargeScoreState.isCalibrating {
                 // Component 2, when Charge has no real today value, an explained state with its detail +
                 // next step replaces a bare blank, sitting directly under the rings. The CALIBRATING case is
@@ -2046,7 +2050,7 @@ struct TodayView: View {
             // #827: this repeats nightly through the calibration window, so it's dismissible into the inbox
             // (restorable) instead of nagging a returning user every day. Hidden once dismissed.
             if selectedDayOffset == 0, !calibratingDismissed, let banked = recoveryCalibration {
-                chargeCalibrationCountdown(banked: banked)
+                chargeCalibrationCountdown(banked: banked, inHero: true)
                     // A small × tucks the calibration note into the Updates inbox (restorable from there).
                     .overlay(alignment: .topTrailing) {
                         todayCardDismissButton {
@@ -2086,12 +2090,11 @@ struct TodayView: View {
     /// Charge is empty because the Deep window found no deep-stage sleep. Distinct from the generic
     /// calibrating/needs-strap states because here the exact cause and fix are known, so it says so, on
     /// today AND a navigated past day alike.
-    private var chargeDeepWindowGapNote: some View {
-        NoopCard(padding: 14, tint: StrandPalette.chargeColor) {
+    private func chargeDeepWindowGapNote(inHero: Bool) -> some View {
+        chargeNoteSurface(inHero: inHero) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "moon.zzz")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(StrandPalette.chargeColor)
+                PhIcon("moon-stars", size: 16)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(ChargeBreakdownFormat.chargeDeepWindowGapTitle)
@@ -2108,21 +2111,39 @@ struct TodayView: View {
         .accessibilityLabel(ChargeBreakdownFormat.chargeDeepWindowGapAccessibility)
     }
 
+    /// The surface of a note about the Charge score. Inside the glow hero it is a smoked-glass inset (a
+    /// faint white wash and hairline, concentric with the hero's corners), because a grey-black card would
+    /// cut a dark hole into the glow; in the breakdown sheet it is the ordinary neutral card.
+    @ViewBuilder
+    private func chargeNoteSurface<Content: View>(inHero: Bool,
+                                                  @ViewBuilder content: @escaping () -> Content) -> some View {
+        if inHero {
+            let shape = RoundedRectangle(cornerRadius: NoopVisualStyle.heroRadius - NoopVisualStyle.heroPadding,
+                                         style: .continuous)
+            content()
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(shape.fill(Color.white.opacity(0.06)))
+                .overlay(shape.strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+        } else {
+            NoopCard(padding: 14) { content() }
+        }
+    }
+
     /// A4 , the Charge calibrating countdown callout. `banked` is the existing `recoveryCalibration`
     /// (nights gathered so far); the nights-to-go and progress copy come from the pure
-    /// `ChargeBreakdownFormat` helpers so they read identically here and in tests. Near-black Charge card,
+    /// `ChargeBreakdownFormat` helpers so they read identically here and in tests. Neutral note surface,
     /// slate confidence tier, no fabricated number.
     @ViewBuilder
-    private func chargeCalibrationCountdown(banked: Int) -> some View {
+    private func chargeCalibrationCountdown(banked: Int, inHero: Bool = false) -> some View {
         let remaining = max(1, Baselines.minNightsSeed - banked)
         let countdown = ChargeBreakdownFormat.calibrationCountdown(nightsRemaining: remaining)
         let unlock = ChargeBreakdownFormat.calibrationUnlockCopy(scoreName: String(localized: "Charge"))
         let progress = ChargeBreakdownFormat.calibrationProgress(banked: banked, seed: Baselines.minNightsSeed)
-        NoopCard(padding: 14, tint: StrandPalette.chargeColor) {
+        chargeNoteSurface(inHero: inHero) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(StrandPalette.chargeColor)
+                PhIcon("gauge", size: 16)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -2166,12 +2187,28 @@ struct TodayView: View {
     private var chargeBreakdownSheet: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    // The sheet header: the title, and Done (a read-only sheet has nothing to cancel).
+                    ZStack {
+                        Text("What shaped your Charge")
+                            .font(StrandFont.headline)
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .lineLimit(1)
+                        HStack {
+                            Spacer()
+                            Button { showChargeBreakdown = false } label: { Text("Done") }
+                                .buttonStyle(.plain)
+                                .font(StrandFont.medium(15))
+                                .foregroundStyle(StrandPalette.textPrimary)
+                        }
+                    }
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
                     // One chargeBreakdown() call per sheet body eval: drivers + confidence share the same
                     // baseline folds (see chargeBreakdown's PERF note).
                     let breakdown = chargeBreakdown()
                     if let breakdown, !breakdown.drivers.isEmpty {
-                        NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
+                        NoopCard {
                             ChargeBreakdownSection(drivers: breakdown.drivers,
                                                    confidence: breakdown.confidence,
                                                    skinTempRel: chargeSkinTempRel)
@@ -2184,7 +2221,7 @@ struct TodayView: View {
                         if chargeLegacyRRGap {
                             ChargeLegacyRRGapNote()
                         } else if chargeDeepWindowGap {
-                            chargeDeepWindowGapNote
+                            chargeDeepWindowGapNote(inHero: false)
                         } else if let banked = recoveryCalibration {
                             // A calibrating / cold-start night has no contributions to attribute: tap through
                             // to the honest countdown rather than an empty breakdown.
@@ -2204,9 +2241,8 @@ struct TodayView: View {
                         ScoringGuideView(initialSection: .charge, onClose: { showChargeBreakdown = false })
                     } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: "function")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(StrandPalette.chargeColor)
+                            PhIcon("calculator", size: 14)
+                                .foregroundStyle(StrandPalette.textPrimary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("How Charge is calculated")
                                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
@@ -2214,49 +2250,38 @@ struct TodayView: View {
                                     .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
                             }
                             Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
+                            PhIcon("caret-right", size: 12)
                                 .foregroundStyle(StrandPalette.textTertiary)
                         }
-                        .padding(14)
-                        .background(NoopPanelSurface(cornerRadius: 14))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 15)
+                        .background(LayoutRowSurface(position: .only))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("How Charge is calculated. The method behind the score.")
                 }
-                .padding(NoopMetrics.screenPadding)
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 30)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             #if os(iOS)
             // #697/#horizontal-swipe parity, see ScreenScaffold.
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             #endif
-            .background(StrandPalette.surfaceBase.ignoresSafeArea())
+            .background(NoopSheetBackground())
             .navigationTitle("What shaped your Charge")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { showChargeBreakdown = false }
-                        .foregroundStyle(StrandPalette.accent)
-                }
-                #else
-                ToolbarItem {
-                    Button("Done") { showChargeBreakdown = false }
-                        .foregroundStyle(StrandPalette.accent)
-                }
-                #endif
-            }
+            .noopHidesSystemNavBar()
         }
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #endif
     }
 
     /// The honest fallback when the Charge ring is tapped but there is no value AND no running calibration
     /// (a navigated past day with no score, or a fresh strap with nothing banked), never a blank sheet.
     private var chargeBreakdownEmptyNote: some View {
-        NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
+        NoopCard(padding: 18) {
             VStack(alignment: .leading, spacing: NoopMetrics.space2) {
                 Text("No Charge breakdown yet")
                     .font(StrandFont.headline)
@@ -2313,17 +2338,8 @@ struct TodayView: View {
             synthesisCollapsible(d: d, score: score)
 
             if let note = effortZeroNote {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.effortColor)
-                    Text(note)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 2)
-                .accessibilityElement(children: .combine)
+                NoopInsightRow(verbatim: note, icon: "info")
+                    .padding(.horizontal, 4)
             }
 
         }
@@ -2362,8 +2378,7 @@ struct TodayView: View {
                     category: "Synthesis",
                     status: status,
                     detail: detail,
-                    statusColor: StrandPalette.textPrimary,
-                    tint: StrandPalette.chargeColor
+                    statusColor: StrandPalette.textPrimary
                 )
                 .contentShape(Rectangle())
             }
@@ -2371,28 +2386,26 @@ struct TodayView: View {
             .accessibilityLabel("Synthesis. \(status)")
             .accessibilityHint("Collapse")
         } else {
-            // Collapsed: a one-liner with the category overline, the status headline and a down-chevron.
+            // Collapsed: the v2 insight line — the status headline with a caret that opens the full read.
             Button {
                 withAnimation(StrandMotion.interactive) { synthesisExpanded = true }
             } label: {
-                NoopCard(tint: StrandPalette.chargeColor) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Synthesis").strandOverline()
-                            Text(status)
-                                .font(StrandFont.headline)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
-                        }
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(alignment: .top, spacing: 12) {
+                    PhIcon("sparkle", size: 18)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .padding(.top, 1)
+                    Text(status)
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    PhIcon("caret-down", size: 14)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.top, 3)
                 }
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Synthesis. \(status)")
@@ -2408,14 +2421,7 @@ struct TodayView: View {
         Button {
             showChargeBreakdown = true
         } label: {
-            Text(word)
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(readinessColor(readiness.level))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule(style: .continuous).fill(readinessColor(readiness.level).opacity(0.12)))
-                .overlay(Capsule(style: .continuous).stroke(readinessColor(readiness.level).opacity(0.32), lineWidth: 1))
+            NoopPill(verbatim: word, compact: true)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -2434,25 +2440,19 @@ struct TodayView: View {
     private var yourCardsSection: some View {
         if selectedDayOffset == 0 && !enabledDashboardCards.isEmpty {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                // Section header: the "Your cards" label + a right-aligned BLUE "CUSTOMISE" action link (the
-                // WHOOP "My Dashboard" ✎ affordance). Opens a local sheet, no new nav destination.
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Your cards").strandOverline()
-                    Spacer(minLength: 8)
-                    Button {
-                        customizationDestination = .yourCards
-                    } label: {
-                        Label(String(localized: "Edit").uppercased(), systemImage: "slider.horizontal.3")   // #492/#563: unified "EDIT"
-                            .font(StrandFont.overline)
-                            .tracking(StrandFont.overlineTracking)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(StrandPalette.accent)
-                    .accessibilityLabel("Customise your cards")
-                    .help("Choose which cards show and reorder them")
+                // Section title with its Edit action (opens the shared customize sheet on the cards page).
+                NoopSectionTitle("Your cards", topPadding: 6) {
+                    Button { customizationDestination = .yourCards } label: { Text("Edit").todayTapTarget() }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Customise your cards")
+                        .help("Choose which cards show and reorder them")
                 }
-                ForEach(enabledDashboardCards) { card in
-                    dashboardCardRow(card)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: NoopMetrics.gap, alignment: .top),
+                                    GridItem(.flexible(), spacing: NoopMetrics.gap, alignment: .top)],
+                          spacing: NoopMetrics.gap) {
+                    ForEach(enabledDashboardCards) { card in
+                        dashboardCardRow(card)
+                    }
                 }
             }
         }
@@ -2492,9 +2492,9 @@ struct TodayView: View {
             // READ-ONLY, like `stages`: the Stress tab keeps the interactive timeline and this mirrors
             // only the display. `DaytimeLoadLine` is the tab's OWN line, so the host cannot drift into
             // a second drawing of the same day.
-            NoopCard(tint: StressRamp.calm) {
+            NoopCard {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Stress through the day").strandOverline()
+                    NoopCardHeader("Stress through the day", icon: "wave-sine")
                     if hostedStressHours.contains(where: { $0.level != nil }) {
                         DaytimeLoadLine(hours: hostedStressHours)
                     } else {
@@ -2521,14 +2521,7 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 StagesVsTypicalCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Stages vs typical", overline: "Last night")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Stages vs typical", overline: "Last night")
             }
         case .nightDetail:
             // Renders from the shared SleepModel built in loadAll() (same inputs as the Sleep tab). Until the
@@ -2536,14 +2529,7 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 NightDetailCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Night detail", overline: "Metrics")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Night detail", overline: "Metrics")
             }
         case .sleepDebt:
             // Renders from the shared SleepModel built in loadAll() (same inputs as the Sleep tab). Until the
@@ -2551,14 +2537,7 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 SleepDebtLedgerCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Sleep-debt ledger", overline: "Last 14 nights")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Sleep-debt ledger", overline: "Last 14 nights")
             }
         case .stages:
             // The READ-ONLY latest-night stage card — same shared SleepModel (same night + intervals as the
@@ -2567,14 +2546,7 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 StagesCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Stages", overline: "Last night")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Stages", overline: "Last night")
             }
         case .hoursVsNeeded:
             // The single hours-vs-need % metric, rendered from the shared SleepModel built in loadAll().
@@ -2583,14 +2555,7 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 HoursVsNeededCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Hours vs Needed", overline: "Sleep")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Hours vs Needed", overline: "Sleep")
             }
         case .consistency:
             // The single sleep-consistency % metric, rendered from the shared SleepModel built in loadAll().
@@ -2599,15 +2564,21 @@ struct TodayView: View {
             if let m = hostedSleepModel {
                 ConsistencyCard(model: m)
             } else {
-                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                    SectionHeader("Consistency", overline: "Sleep")
-                    Text("Not enough nights yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-                        .background(NoopPanelSurface(tint: StrandPalette.restColor, cornerRadius: 12))
-                }
+                hostedSleepPlaceholder("Consistency", overline: "Sleep")
             }
+        }
+    }
+
+    /// The graceful placeholder a hosted Sleep card shows until the shared SleepModel lands (or when there
+    /// is no usable latest night): the card's own section title over a neutral v2 card.
+    private func hostedSleepPlaceholder(_ title: LocalizedStringKey, overline: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader(title, overline: overline)
+            Text("Not enough nights yet.")
+                .font(StrandFont.subhead)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+                .noopPanel()
         }
     }
 
@@ -2617,63 +2588,40 @@ struct TodayView: View {
     /// exact and the original three cards reach the SAME screens as before.
     @ViewBuilder
     private func dashboardCardRow(_ card: DashboardCard) -> some View {
-        let tint = dashboardTint(card)
         switch card {
         case .stepsAverage30:
-            RollingStepsAverageCard(day: selectedDayKey)
+            TodayRollingStepsMiniCard(day: selectedDayKey)
         case .stress:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card), route: .stress)
         case .fitnessAge, .vo2max, .vitality, .steps, .calories:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card), route: .health)
         case .hrv, .restingHr, .respiratory, .bloodOxygen, .skinTemp:
             // The overnight vitals share the Health detail screen (the vital-signs surface).
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card), route: .health)
         case .sleep:
             // #110: the value is `totalSleepMin` — WHOOP's imported TST, which can legitimately differ
             // from the Sleep tab's on-device re-staged night. Label the row with its source + which night
             // so a WHOOP figure (or an older night) is never silently shown as "last night" with no
             // provenance; fall back to the card's static description when there's no banked sleep.
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title,
+            pinnedCardRow(icon: card.phIcon, title: card.title,
                           subtitle: sleepSourceSubtitle(displayDay) ?? card.subtitle,
                           value: dashboardValue(card), route: .sleep)
         case .hydration:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card), route: .hydration)
         case .coupled:
             // The Coupled view row (#43) carries NO metric value, it is a tap-through to the full
             // coupled day screen. An empty value renders just the icon + title + subtitle + chevron.
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card), route: .coupled)
         case .coach:
             // #1862: a SHEET, not a push — Coach is a thing you dip into and dismiss, and pushing it
             // would take you off Today, which is the discoverability problem this card exists to solve.
-            pinnedCardActionRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+            pinnedCardActionRow(icon: card.phIcon, title: card.title, subtitle: card.subtitle,
                                 value: dashboardValue(card)) { showCoachLauncher = true }
-        }
-    }
-
-    /// A dashboard card's WHOOP-token tint (icon + accent). Score cards take their domain colour; vitals
-    /// take their biometric hue; everything else takes the blue accent. No gold (WHOOP), tokens only.
-    private func dashboardTint(_ card: DashboardCard) -> Color {
-        switch card {
-        case .stress:      return StrandPalette.effortColor
-        case .fitnessAge:  return StrandPalette.chargeColor
-        case .vo2max:      return StrandPalette.chargeColor
-        case .vitality:    return StrandPalette.restColor
-        case .hrv:         return StrandPalette.metricPurple
-        case .restingHr:   return StrandPalette.metricRose
-        case .respiratory: return StrandPalette.accent
-        case .bloodOxygen: return StrandPalette.metricCyan
-        case .skinTemp:    return StrandPalette.metricAmber
-        case .sleep:       return StrandPalette.restColor
-        case .steps, .stepsAverage30: return StrandPalette.metricCyan
-        case .calories:    return StrandPalette.metricAmber
-        case .hydration:   return StrandPalette.metricCyan
-        case .coupled:     return StrandPalette.chargeColor
-        case .coach:       return StrandPalette.accent
         }
     }
 
@@ -2792,15 +2740,14 @@ struct TodayView: View {
         }
     }
 
-    /// One WHOOP "My Dashboard" metric row: a thin-line tinted icon, an UPPERCASE tracked label over a grey
-    /// baseline caption, the big white value, and a chevron, the whole row navigates to `route`. Flat
-    /// WHOOP styling (FrostedCardSurface, no glow), tokens only. Pushed by VALUE — the first hop off the
+    /// One "Your cards" tile (the v2 mini card: icon + title, the value, a caption); the whole tile
+    /// navigates to `route`. Neutral grey-black, no glow, tokens only. Pushed by VALUE — the first hop off the
     /// Today root must ride the tab's `NavigationPath` so a re-tap of the Today tab can pop it (#198;
     /// see TabRoute.swift).
-    private func pinnedCardRow(icon: String, tint: Color, title: String, subtitle: String,
+    private func pinnedCardRow(icon: String, title: String, subtitle: String,
                                value: String, route: TabRoute) -> some View {
         NavigationLink(value: route) {
-            pinnedCardRowBody(icon: icon, tint: tint, title: title, subtitle: subtitle, value: value)
+            pinnedCardRowBody(icon: icon, title: title, subtitle: subtitle, value: value)
         }
         .buttonStyle(.plain)
     }
@@ -2810,46 +2757,24 @@ struct TodayView: View {
     /// Coach is the one dashboard card that opens a SHEET rather than a screen, so it cannot ride
     /// `NavigationLink`. Both wrappers render `pinnedCardRowBody`, so the two kinds of row cannot drift
     /// apart visually — which duplicating the HStack for one caller would have guaranteed eventually.
-    private func pinnedCardActionRow(icon: String, tint: Color, title: String, subtitle: String,
+    private func pinnedCardActionRow(icon: String, title: String, subtitle: String,
                                      value: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            pinnedCardRowBody(icon: icon, tint: tint, title: title, subtitle: subtitle, value: value)
+            pinnedCardRowBody(icon: icon, title: title, subtitle: subtitle, value: value)
         }
         .buttonStyle(.plain)
     }
 
+    /// The v2 mini card the dashboard rows render as (the Liquid Today's `.card.mini`). A placeholder
+    /// value (— / Calibrating) reads dimmed so it doesn't masquerade as a number.
     @ViewBuilder
-    private func pinnedCardRowBody(icon: String, tint: Color, title: String, subtitle: String,
+    private func pinnedCardRowBody(icon: String, title: String, subtitle: String,
                                    value: String) -> some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(tint.opacity(0.14))
-                .frame(width: 34, height: 34)
-                .overlay(Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title.uppercased())
-                    .font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            // A real number reads white; a placeholder (, / Calibrating) reads dimmed so it doesn't
-            // masquerade as a value.
-            let isPlaceholder = (value == "—" || value == Self.calibratingPlaceholder)
-            Text(value).font(StrandFont.rounded(18, weight: .semibold))
-                .foregroundStyle(isPlaceholder ? StrandPalette.textTertiary : StrandPalette.textPrimary)
-            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(StrandPalette.textTertiary)
-        }
-        .padding(.horizontal, 13).padding(.vertical, 11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(FrostedCardSurface(cornerRadius: NoopMetrics.cardRadius))
-        .contentShape(Rectangle())
+        let isPlaceholder = (value == "—" || value == Self.calibratingPlaceholder)
+        TodayMiniCard(title: title, icon: icon,
+                      value: value.isEmpty ? nil : value,
+                      caption: subtitle)
+            .opacity(isPlaceholder ? 0.85 : 1)
     }
 
     // MARK: Component 2, explained score note (calibrating / carried / needs-strap)
@@ -2863,20 +2788,19 @@ struct TodayView: View {
         if let title = state.title, let detail = state.detail {
             let symbol: String = {
                 switch state {
-                case .calibrating:      return "gauge.with.dots.needle.bottom.50percent"
-                case .carriedLastNight: return "clock.arrow.circlepath"
-                case .needsStrap:       return "exclamationmark.circle"
-                case .scored:           return "info.circle"
+                case .calibrating:      return "gauge"
+                case .carriedLastNight: return "clock-counter-clockwise"
+                case .needsStrap:       return "warning-circle"
+                case .scored:           return "info"
                 }
             }()
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: symbol)
-                    .font(StrandFont.footnote)
+                PhIcon(symbol, size: 13)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(StrandFont.footnote.weight(.semibold))
+                        .font(StrandFont.book(11, relativeTo: .footnote))
                         .foregroundStyle(StrandPalette.textSecondary)
                     Text(detail)
                         .font(StrandFont.footnote)
@@ -2927,9 +2851,8 @@ struct TodayView: View {
         #endif
     }
 
-    /// Screen-4 "metric card": HRV / Resting HR / Respiratory as a stack of labelled metric rows
-    /// inside one frosted card, the three vitals that feed recovery. HRV reads teal (its biometric
-    /// hue), Resting HR burnt-orange, Respiratory gold. Values come straight from the selected day's
+    /// The Recovery vitals card: HRV / Resting HR / breathing rate as one v2 metric row (`.mrow`), the three
+    /// vitals that feed recovery, each opening its own trend. Values come straight from the selected day's
     /// `DailyMetric` (respiratory falls back to the loaded sparkline tail, as the tile does).
     ///
     /// When today isn't scored yet (the post-rollover state, #543), the recovery side carries over the
@@ -2963,8 +2886,8 @@ struct TodayView: View {
         let carriedFromResp: DailyMetric? = (d?.respRateBpm == nil && vd?.respRateBpm != nil) ? vd : nil
         let sources: [DailyMetric] = [carriedFromHrv, carriedFromRhr, carriedFromResp].compactMap { $0 }
         let provenance: DailyMetric? = sources.min(by: { $0.day < $1.day })
-        NoopCard(tint: StrandPalette.chargeColor) {
-            VStack(spacing: 0) {
+        NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
                 // DEBUG promo harness: pin HRV / Resting HR to the active frame's values. No-op otherwise.
                 #if DEBUG
                 let demoHrv = DemoDayHarness.active.map { "\($0.hrvMs)" }
@@ -2973,28 +2896,24 @@ struct TodayView: View {
                 let demoHrv: String? = nil
                 let demoRhr: String? = nil
                 #endif
-                metricRow(icon: "waveform.path.ecg", label: "HRV",
-                          value: demoHrv ?? (hrv.map { "\(Int($0.rounded()))" } ?? "—"), unit: "ms",
-                          tint: StrandPalette.metricCyan, route: .metric("hrv"))
-                Divider().overlay(StrandPalette.hairline)
-                metricRow(icon: "heart.fill", label: "Resting HR",
-                          value: demoRhr ?? (rhr.map { "\($0)" } ?? "—"), unit: "bpm",
-                          tint: StrandPalette.metricRose, route: .metric("rhr"))
-                Divider().overlay(StrandPalette.hairline)
-                metricRow(icon: "lungs.fill", label: "Respiratory",
-                          // Today's own respiratory, else the carried night's; a non-carrying today keeps the
-                          // sparkline-tail fallback so a sparse-but-recent value still reads.
-                          value: resp.map { String(format: "%.1f", locale: AppLanguage.activeLocale, $0) }
-                              ?? (vd == nil ? latestString("resp_rate", decimals: 1) : "—"),
-                          unit: "rpm",
-                          tint: StrandPalette.accent, route: .metric("resp_rate"))
+                NoopMetricRow {
+                    vitalMetric(value: demoHrv ?? hrv.map { "\(Int($0.rounded()))" }, unit: "ms",
+                                label: String(localized: "Heart rate variability"), route: .metric("hrv"))
+                    vitalMetric(value: demoRhr ?? rhr.map { "\($0)" }, unit: "bpm",
+                                label: String(localized: "Resting heart rate"), route: .metric("rhr"))
+                    // Today's own respiratory, else the carried night's; a non-carrying today keeps the
+                    // sparkline-tail fallback so a sparse-but-recent value still reads.
+                    let respText = resp.map { String(format: "%.1f", locale: AppLanguage.activeLocale, $0) }
+                        ?? (vd == nil ? latestString("resp_rate", decimals: 1) : "—")
+                    vitalMetric(value: respText == "—" ? nil : respText, unit: "rpm",
+                                label: String(localized: "Breaths per minute"), route: .metric("resp_rate"))
+                }
                 // ONE provenance footnote when a shown vital is a carried prior-day read (not today's),
                 // stamped with THAT row's date via the shared caption (which relabels a weeks-old carry to
                 // "Latest sleep", #779), so a prior read is never silently passed off as today.
                 if let prior = provenance {
                     HStack(spacing: 4) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 10, weight: .semibold))
+                        PhIcon("clock-counter-clockwise", size: 11)
                             .foregroundStyle(StrandPalette.textTertiary)
                             .accessibilityHidden(true)
                         Text(carriedCaption(prior))
@@ -3002,7 +2921,7 @@ struct TodayView: View {
                             .foregroundStyle(StrandPalette.textTertiary)
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, 10)
+                    .padding(.top, 14)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("These vitals are from \(carriedCaption(prior))")
                 }
@@ -3010,62 +2929,15 @@ struct TodayView: View {
         }
     }
 
-    /// One README "metric row": a metric-hue line icon, a secondary label, and a right-aligned bold
-    /// value with a small unit. Rows are divided by a hairline. Shared by the Today vitals card.
-    @ViewBuilder
-    /// A vitals row, optionally pushing its own metric trend (#706/#684).
-    ///
-    /// `route: nil` renders exactly what shipped before - no link, no chevron - so the three other callers
-    /// are untouched and a row that goes nowhere never claims otherwise. `LiquidPressStyle` is not
-    /// decoration: a bare `NavigationLink` applies the default link chrome and would tint the whole row,
-    /// which is why `cardLink` carries it too.
-    private func metricRow(icon: String, label: LocalizedStringKey, value: String, unit: String,
-                           tint: Color, route: TabRoute? = nil) -> some View {
-        Group {
-            if let route {
-                NavigationLink(value: route) { metricRowBody(icon, label, value, unit, tint, linked: true) }
-                    .buttonStyle(LiquidPressStyle())
-            } else {
-                metricRowBody(icon, label, value, unit, tint, linked: false)
-            }
+    /// One vital in the card's metric row, pushing its own metric trend (#706/#684). `nil` reads as the
+    /// dash with no unit. `LiquidPressStyle` is not decoration: a bare `NavigationLink` applies the default
+    /// link chrome and would tint the value.
+    private func vitalMetric(value: String?, unit: String, label: String, route: TabRoute) -> some View {
+        NavigationLink(value: route) {
+            NoopMetric(value: value ?? "—", unit: value == nil ? nil : unit, labelText: label)
+                .contentShape(Rectangle())
         }
-    }
-
-    private func metricRowBody(_ icon: String, _ label: LocalizedStringKey, _ value: String,
-                               _ unit: String, _ tint: Color, linked: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 22)
-                .accessibilityHidden(true)
-            // LocalizedStringKey so the vitals labels read from the catalog; `.textCase` uppercases the
-            // translated word in the current locale rather than baking an English "HRV"/"RESTING HR" in.
-            Text(label)
-                .font(StrandFont.footnote.weight(.semibold))
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer(minLength: 8)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value)
-                    .font(StrandFont.number(24))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                Text(unit)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            // Only when the row goes somewhere: a row that cannot navigate must not imply it can.
-            if linked {
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.vertical, 13)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(value) \(unit)")
+        .buttonStyle(LiquidPressStyle())
     }
 
     // MARK: Synthesis card, today's read, or the carried last-scored read (#543)
@@ -3290,7 +3162,7 @@ struct TodayView: View {
             //
             // A1: the body is the ring plus a contentShape so the whole disc is hittable, and the ring
             // carries NO in-ring cue. `.plain` is load-bearing: a bare NavigationLink applies the default
-            // link chrome and would tint the ring, the same reason `metricRow` carries a button style.
+            // link chrome and would tint the ring, the same reason `vitalMetric` carries a button style.
             // A column supplies EITHER a route (Effort, Rest) or a breakdown (Charge, whose richer
             // explanation is a sheet rather than a destination), never both. `onOpenBreakdown` drives the
             // ring AND the chevron, because for that score both lead to the same sheet and two arguments
@@ -3326,8 +3198,7 @@ struct TodayView: View {
                     // opacity(0) keeps its layout slot (a conditional would remove it), and the HStack stays
                     // plain leading-to-trailing content with no alignment-guide math, so LTR and RTL mirror
                     // identically. Hidden from VoiceOver: it is a spacer, not content.
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
+                    PhIcon("caret-right", size: 9)
                         .opacity(0)
                         .accessibilityHidden(true)
                     // The CHARGE/EFFORT/REST hero label is localized: the catalog key is the natural-case
@@ -3337,8 +3208,7 @@ struct TodayView: View {
                         .textCase(.uppercase)
                         .font(StrandFont.overline)
                         .tracking(StrandFont.overlineTracking)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
+                    PhIcon("caret-right", size: 9)
                         .opacity(0.6)
                 }
                 .foregroundStyle(StrandPalette.textSecondary)
@@ -3405,14 +3275,14 @@ struct TodayView: View {
     private func chargeRing(score: Double?, d: DailyMetric?, diameter: CGFloat) -> some View {
         if let s = score {
             GlowRing(fraction: s / 100, value: s, format: { "\(Int($0.rounded()))" },
-                     color: StrandPalette.recoveryColor(s), diameter: diameter, lineWidth: diameter * 0.10)
+                     color: StrandPalette.recoveryColor(s), diameter: diameter, lineWidth: diameter * 0.04)
         } else if recoveryCalibration == nil, let carried = lastScoredCharge {
             // #802: a CARRIED last-night Charge draws as a real (dimmed) ring, matching the Rest ring, rather
             // than a bare number on a faint track, which read as broken next to Rest's filled ring. Same
             // diameter, so the #762 self-sizing hero row is untouched; the dim + the row-level "Last night"
             // caption already beneath the rings mark it as carried, not today's fresh score.
             GlowRing(fraction: carried.value / 100, value: carried.value, format: { "\(Int($0.rounded()))" },
-                     color: StrandPalette.recoveryColor(carried.value), diameter: diameter, lineWidth: diameter * 0.10)
+                     color: StrandPalette.recoveryColor(carried.value), diameter: diameter, lineWidth: diameter * 0.04)
                 .opacity(0.8)
         } else {
             emptyHeroRing(diameter: diameter) { ringEmptyOverlay(d: d, diameter: diameter) }
@@ -3426,7 +3296,7 @@ struct TodayView: View {
         if effortStrain(d) != nil, let gv = effortGaugeValue(d) {
             GlowRing(fraction: gv / effortGaugeMax, value: gv,
                      format: { effortScale == .whoop ? String(format: "%.1f", locale: AppLanguage.activeLocale, $0) : "\(Int($0.rounded()))" },
-                     color: StrandPalette.effortColor, diameter: diameter, lineWidth: diameter * 0.10)
+                     color: StrandPalette.effortColor, diameter: diameter, lineWidth: diameter * 0.04)
         } else {
             emptyHeroRing(diameter: diameter) { ringNoData(diameter: diameter) }
         }
@@ -3449,7 +3319,7 @@ struct TodayView: View {
         // the column's caption, rather than shown by withholding the number. Past days are final.
         if let s = restScore {
             GlowRing(fraction: s / 100, value: s, format: { "\(Int($0.rounded()))" },
-                     color: StrandPalette.restColor, diameter: diameter, lineWidth: diameter * 0.10)
+                     color: StrandPalette.restColor, diameter: diameter, lineWidth: diameter * 0.04)
         } else if displayDay?.recovery != nil {
             // #898: an aggregate-import user (a daily HRV/RHR import, no in-bed session) gets a Charge from
             // WatchRecovery but NO sleep_performance, so Rest read a bare "No data" next to a lit Charge ,
@@ -3480,7 +3350,7 @@ struct TodayView: View {
     private func emptyHeroRing<Overlay: View>(diameter: CGFloat, @ViewBuilder overlay: () -> Overlay) -> some View {
         ZStack {
             Circle().stroke(StrandPalette.textPrimary.opacity(0.10),
-                            style: StrokeStyle(lineWidth: diameter * 0.10, lineCap: .round))
+                            style: StrokeStyle(lineWidth: diameter * 0.04, lineCap: .round))
             overlay()
         }
         .frame(width: diameter, height: diameter)
@@ -3577,12 +3447,12 @@ struct TodayView: View {
         if hrPoints.count > 1 {
             let v = hrPoints.map(\.value)
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                SectionHeader("Heart Rate", overline: "\(selectedDayOverline)")
+                NoopSectionTitle("Heart rate", topPadding: 6)
                 ChartCard(
                     title: "Beats per minute",
                     subtitle: selectedDayOffset == 0 ? String(localized: "5-minute average · since midnight") : String(localized: "5-minute average · selected day"),
                     trailing: v.last.map { String(localized: "\(Int($0.rounded())) bpm") },
-                    tint: StrandPalette.metricRose
+                    tint: nil
                 ) {
                     OverviewHRChart(
                         points: hrPoints,
@@ -3590,7 +3460,8 @@ struct TodayView: View {
                         workouts: workoutSpans,
                         recovery: recoveryMarker,
                         effort: effortMarker,
-                        gradient: Gradient(colors: [StrandPalette.metricRose.opacity(0.55), StrandPalette.metricRose]),
+                        // The v2 chart pair: the strain-blue fill rising into the lavender line.
+                        gradient: Gradient(colors: [StrandPalette.effortColor, StrandPalette.metricCyan]),
                         valueRange: hrRange(v),
                         xRange: hrAxis,
                         height: NoopMetrics.chartHeight,
@@ -3634,14 +3505,14 @@ struct TodayView: View {
             // as the graph freezing). We don't silently swap in another day's curve here; the honest empty
             // state is the parity-matched fix. Mirrors the Android HeartRateTrendCard empty branch.
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                SectionHeader("Heart Rate", overline: "\(selectedDayOverline)")
+                NoopSectionTitle("Heart rate", topPadding: 6)
                 ChartCard(
                     title: "Beats per minute",
                     subtitle: selectedDayOffset == 0
                         ? String(localized: "Calibrating, no heart rate banked yet today")
                         : String(localized: "No heart rate for this day"),
                     trailing: nil,
-                    tint: StrandPalette.metricRose
+                    tint: nil
                 ) {
                     Text(selectedDayOffset == 0
                         ? String(localized: "Your curve fills in as the strap offloads its history.")
@@ -3661,10 +3532,7 @@ struct TodayView: View {
     /// (macOS has drag-pan + double-tap here, no pinch).
     @ViewBuilder private var hrZoomHint: some View {
         HStack(spacing: NoopMetrics.space2) {
-            Image(systemName: hrZoomDomain == nil
-                  ? "arrow.up.left.and.arrow.down.right"
-                  : "arrow.down.right.and.arrow.up.left")
-                .font(StrandFont.footnote.weight(.semibold))
+            PhIcon(hrZoomDomain == nil ? "arrows-out" : "arrows-in", size: 13)
                 .accessibilityHidden(true)
             #if os(macOS)
             Text(hrZoomDomain == nil
@@ -3678,8 +3546,8 @@ struct TodayView: View {
             Spacer()
             if hrZoomDomain != nil {
                 Button("Reset") { resetHrZoom() }
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.accent)
+                    .font(StrandFont.book(11))
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .buttonStyle(.plain)
             }
         }
@@ -3788,18 +3656,14 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             // The section header keeps its "14-day trend" trailing label; an Edit control sits beside it
             // to open the local layout editor (#251). No new nav destination, a sheet over Today.
-            HStack(alignment: .firstTextBaseline) {
-                SectionHeader("Key Metrics", overline: "\(selectedDayOverline)", trailing: String(localized: "14-day trend"))
-                Button {
-                    customizationDestination = .keyMetrics
-                } label: {
-                    Label(String(localized: "Edit").uppercased(), systemImage: "slider.horizontal.3")   // #492/#563: uppercase to match
-                        .font(StrandFont.footnote)
+            NoopSectionTitle("Key metrics", topPadding: 6) {
+                HStack(spacing: 10) {
+                    Text("14-day trend")
+                    Button { customizationDestination = .keyMetrics } label: { Text("Edit").todayTapTarget() }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit Key Metrics")
+                        .help("Choose which Key Metrics show and reorder them")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(StrandPalette.accent)
-                .accessibilityLabel("Edit Key Metrics")
-                .help("Choose which Key Metrics show and reorder them")
             }
             // Render the enabled tiles in the saved order; an empty layout still shows the default set.
             // S5: cap the grid to the first `metricsCollapsedCap` tiles behind a "Show all metrics" expander.
@@ -3814,13 +3678,22 @@ struct TodayView: View {
                     // and holds up as text scales because it clears the tallest tile layout.
                     keyMetricTile(metric)
                         .frame(maxWidth: .infinity)
-                        .frame(height: NoopMetrics.keyMetricTileHeight)
+                        .frame(height: keyMetricRowHeight)
                 }
             }
             if metricsHasOverflow {
                 metricsExpander
             }
         }
+    }
+
+    /// The pinned Key-metric tile height. A tile drawing its sparkline needs about 140 pt (padding, title,
+    /// value, the 22 pt line and the caption); at the 122 pt base it overflowed its cell, shrank its value
+    /// and sat out of line with its row-mate. Every tile takes the taller height once any line is drawn,
+    /// so the rows stay even.
+    private var keyMetricRowHeight: CGFloat {
+        sparks.values.contains { $0.count > 1 } ? max(NoopMetrics.keyMetricTileHeight, 140)
+                                                 : NoopMetrics.keyMetricTileHeight
     }
 
     /// S5: the Key-Metric tiles actually rendered: all of them when expanded, else the first
@@ -3852,10 +3725,9 @@ struct TodayView: View {
                         .font(StrandFont.captionNumber)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
-                Image(systemName: metricsExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .bold))
+                PhIcon(metricsExpanded ? "caret-up" : "caret-down", size: 12)
             }
-            .foregroundStyle(StrandPalette.accent)
+            .foregroundStyle(StrandPalette.textTertiary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
@@ -3928,7 +3800,7 @@ struct TodayView: View {
                 accent: d?.recovery.map { StrandPalette.recoveryColor($0) }
                     ?? carried.map { StrandPalette.recoveryColor($0.value) } ?? StrandPalette.textPrimary,
                 sparkline: sparks["recovery"],
-                sparkColor: StrandPalette.accent
+                sparkColor: StrandPalette.metricCyan
             )
         case .effort:
             // Unscored TODAY → a short "building" hint instead of the "of N" axis caption, so a
@@ -3943,7 +3815,7 @@ struct TodayView: View {
                                        : (buildingHint(.effort) ?? String(localized: "of \(UnitFormatter.effortScaleMax(effortScale))")),
                 accent: effort.map { StrandPalette.effortTint(fraction: $0 / StrainScorer.maxStrain) } ?? StrandPalette.textPrimary,
                 sparkline: sparks["strain"],
-                sparkColor: StrandPalette.strain066,
+                sparkColor: StrandPalette.metricCyan,
                 // Inline ⓘ in the tile header (not a corner overlay) so it never sits over the value (#495).
                 accessory: { scoreInfoButton(.effort) }
             )
@@ -3968,7 +3840,7 @@ struct TodayView: View {
                 accent: restScore.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
                 // The Rest composite (0–100) trend, not raw sleep minutes, tracks the score above (#614).
                 sparkline: sparks["sleep_performance"],
-                sparkColor: StrandPalette.metricPurple,
+                sparkColor: StrandPalette.metricCyan,
                 // Inline ⓘ in the tile header (not a corner overlay) so it never sits over the value (#495).
                 accessory: { scoreInfoButton(.rest) }
             )
@@ -3983,7 +3855,7 @@ struct TodayView: View {
                 caption: hrv.caption,
                 accent: hrv.value == "—" ? StrandPalette.textPrimary : StrandPalette.metricPurple,
                 sparkline: sparks["hrv"],
-                sparkColor: StrandPalette.metricPurple
+                sparkColor: StrandPalette.metricCyan
             )
         case .restingHr:
             let rhr = carriedVital(unit: "bpm", today: d?.restingHr.map(Double.init),
@@ -3994,7 +3866,7 @@ struct TodayView: View {
                 caption: rhr.caption,
                 accent: rhr.value == "—" ? StrandPalette.textPrimary : StrandPalette.metricRose,
                 sparkline: sparks["rhr"],
-                sparkColor: StrandPalette.metricRose
+                sparkColor: StrandPalette.metricCyan
             )
         case .bloodOxygen:
             // PER-FIELD carry (perField: lastSpo2Day): the whole-row `lastScoredRecoveryDay` carry lands on a
@@ -4048,9 +3920,9 @@ struct TodayView: View {
                 // was empty), use the plain "rpm" caption, not carriedVital's empty "After tonight's sleep"
                 // state, so the caption matches the shown number (H10 mustn't mislabel a real value).
                 caption: (respValue != "—" && respCarry.value == "—") ? "rpm" : respCarry.caption,
-                accent: respValue == "—" ? StrandPalette.textPrimary : StrandPalette.accent,
+                accent: StrandPalette.textPrimary,
                 sparkline: sparks["resp_rate"],
-                sparkColor: StrandPalette.accent
+                sparkColor: StrandPalette.metricCyan
             )
         case .steps:
             // Prefer a REAL step count: the strap's own @57 counter (DailyMetric.steps, WHOOP 5/MG),
@@ -4109,9 +3981,9 @@ struct TodayView: View {
                 label: "Weight",
                 value: weightTile(aLatest?.weightKg).value,
                 caption: weightTile(aLatest?.weightKg).caption,
-                accent: StrandPalette.accent,
+                accent: StrandPalette.textPrimary,
                 sparkline: sparks["weight"],
-                sparkColor: StrandPalette.accent
+                sparkColor: StrandPalette.metricCyan
             )
         case .calories:
             StatTile(
@@ -4120,7 +3992,7 @@ struct TodayView: View {
                 caption: String(localized: "active"),
                 accent: StrandPalette.metricAmber,
                 sparkline: sparks["active_kcal"],
-                sparkColor: StrandPalette.metricAmber
+                sparkColor: StrandPalette.metricCyan
             )
         case .skinTemp:
             // Added 2026-08-24 (queue 11c follow-up): first Key Metrics appearance for Skin Temp — was
@@ -4134,7 +4006,7 @@ struct TodayView: View {
                 caption: skinTempValue == nil ? Self.needsStrapCaption : "",
                 accent: skinTempValue == nil ? StrandPalette.textPrimary : StrandPalette.metricAmber,
                 sparkline: sparks["skin_temp"],
-                sparkColor: StrandPalette.metricAmber
+                sparkColor: StrandPalette.metricCyan
             )
         }
     }
@@ -4161,28 +4033,50 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 // "14 days" describes the window, like Android's today_workouts_14_days. The old
                 // "\(count) total" counted every workout ever recorded while showing at most six.
-                SectionHeader("Latest Workouts", overline: "Activity",
-                              trailing: String(localized: "14 days"))
-                LazyVGrid(columns: grid, alignment: .leading, spacing: NoopMetrics.gap) {
+                NoopSectionTitle("Latest workouts", captionKey: "14 days", topPadding: 6)
+                NoopList {
                     ForEach(Array(recent.prefix(6).enumerated()), id: \.offset) { _, w in
                         Button {
                             workoutDetail = WorkoutDetailTarget(row: w)
                         } label: {
-                            StatTile(
-                                label: "\(WorkoutSource.displaySport(w.sport))",
-                                value: workoutDuration(w),
-                                caption: workoutCaption(w),
-                                accent: StrandPalette.effortTint(fraction: (w.strain ?? 0) / StrainScorer.maxStrain),
-                                delta: w.energyKcal.map { "\(Int($0.rounded())) kcal" },
-                                deltaColor: StrandPalette.metricAmber
-                            )
+                            NoopRow(title: Text(verbatim: SportName.display(w.sport)),
+                                    caption: Text(verbatim: [workoutCaption(w), w.energyKcal.map { "\(Int($0.rounded())) kcal" }]
+                                        .compactMap { $0 }.joined(separator: " · ")),
+                                    icon: TodayV2Icons.sport(w.sport)) {
+                                workoutTrailing(w)
+                            }
                         }
                         // The Workouts list's own rows use this, not .plain: it is the iOS twin of
-                        // Android's liquidPress, so the tile settles inward on press on both platforms.
+                        // Android's liquidPress, so the row settles inward on press on both platforms.
                         .buttonStyle(LiquidPressStyle())
                     }
                 }
             }
+        }
+    }
+
+    /// A workout row's right side, as the frame's `.li`: the session's Effort over a small EFFORT label on
+    /// the user's scale, or its duration when the row carries no Effort (an import without strain). The
+    /// caption's time range already says how long a scored session ran.
+    @ViewBuilder
+    private func workoutTrailing(_ w: WorkoutRow) -> some View {
+        if let strain = w.strain {
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(verbatim: UnitFormatter.effortDisplay(strain, scale: effortScale))
+                    .font(StrandFont.book(17))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                // The app's own word for the score ("Belastung"), set in caps, so the row and the hero
+                // name it the same way in every language.
+                Text("Effort")
+                    .textCase(.uppercase)
+                    .font(StrandFont.light(10))
+                    .tracking(0.8)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+        } else {
+            Text(verbatim: workoutDuration(w))
+                .font(StrandFont.book(17))
+                .foregroundStyle(StrandPalette.textPrimary)
         }
     }
 
@@ -4191,7 +4085,7 @@ struct TodayView: View {
     @ViewBuilder
     private var sourcesSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Data Sources", overline: "Provenance")
+            NoopSectionTitle("Data sources", topPadding: 6)
             // S5: collapsed to a single "Synced from: …" summary line by default; tapping expands the full
             // per-source rows + strap battery/sync inline. Nothing is removed, the detail is one tap away.
             if sourcesExpanded {
@@ -4202,10 +4096,8 @@ struct TodayView: View {
                             withAnimation(StrandMotion.interactive) { sourcesExpanded = false }
                         } label: {
                             HStack {
-                                Text("Synced from").strandOverline()
-                                Spacer()
-                                Image(systemName: "chevron.up")
-                                    .font(.system(size: 11, weight: .bold))
+                                NoopCardHeader("Synced from", icon: "database")
+                                PhIcon("caret-up", size: 14)
                                     .foregroundStyle(StrandPalette.textTertiary)
                             }
                             .contentShape(Rectangle())
@@ -4215,7 +4107,7 @@ struct TodayView: View {
                         Divider().overlay(StrandPalette.hairline)
                         sourceRow(
                             badge: Self.whoopBrandName,
-                            tint: StrandPalette.accent,
+                            tint: StrandPalette.textPrimary,
                             present: !repo.days.isEmpty,
                             detail: localizedCountPair(localizedDayCount(repo.days.count),
                                                        localizedSleepCount(repo.sleeps.count))
@@ -4283,8 +4175,7 @@ struct TodayView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                     Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
+                    PhIcon("caret-right", size: 14)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -4337,11 +4228,14 @@ struct TodayView: View {
         Button {
             guideSection = section
         } label: {
-            Image(systemName: "info.circle")
-                .font(.system(size: 13, weight: .regular))
+            // The 8 pt tap margin is laid out as zero (the negative padding), so the ⓘ does not make its
+            // tile's header 13 pt taller than its row-mate's: in the fixed-height Key metrics grid that
+            // squeezed the value smaller and pushed the tile out of line with its neighbour.
+            PhIcon("info", size: 14)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .padding(8)
                 .contentShape(Rectangle())
+                .padding(-8)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("How \(section.displayName) is calculated")
@@ -4355,11 +4249,11 @@ struct TodayView: View {
         Button {
             showStepsCalibration = true
         } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 12, weight: .regular))
+            PhIcon("sliders-horizontal", size: 13)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .padding(8)
                 .contentShape(Rectangle())
+                .padding(-8)   // same zero-height tap margin as the score ⓘ above
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Calibrate steps estimate")
@@ -4367,21 +4261,22 @@ struct TodayView: View {
     }
 
     /// #316 / @63, the small still/walk/run glyph on a REAL (measured) Steps tile. Maps the decoded
-    /// activity-class enum (0=still, 1=walk, 2=run) to an SF Symbol, tinted with the tile's own metric
-    /// colour so it reads as part of the tile rather than an alert. Mirrors the Android DirectionsWalk/Run
-    /// + AccessibilityNew icon set + semantics exactly (cross-platform parity). Subtle and optional-feeling:
+    /// activity-class enum (0=still, 1=walk, 2=run) to a Phosphor figure in the tile's quiet ink, so it
+    /// reads as part of the tile rather than an alert. Mirrors the Android DirectionsWalk/Run +
+    /// AccessibilityNew icon set + semantics exactly (cross-platform parity). Subtle and optional-feeling:
     /// a day with no known class shows nothing (the caller only invokes this for a non-nil 0/1/2).
     private func stepActivityIcon(_ activityClass: Int) -> some View {
         let symbol: String
         let label: String
         switch activityClass {
-        case 1:  symbol = "figure.walk"; label = String(localized: "Walking")
-        case 2:  symbol = "figure.run";  label = String(localized: "Running")
-        default: symbol = "figure.stand"; label = String(localized: "Still")   // 0 = still
+        case 1:  symbol = "person-simple-walk"; label = String(localized: "Walking")
+        case 2:  symbol = "person-simple-run";  label = String(localized: "Running")
+        default: symbol = "person";             label = String(localized: "Still")   // 0 = still
         }
-        return Image(systemName: symbol)
-            .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(StrandPalette.metricCyan)
+        return PhIcon(symbol, size: 14)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .padding(8)
+            .accessibilityElement()
             .accessibilityLabel(label)
             .help(label)
     }
@@ -5372,11 +5267,16 @@ struct TodayView: View {
 
     /// Thousands-grouped integer string (steps / calories).
     private func intString(_ v: Double) -> String {
+        Self.intGroupingFormatter.string(from: NSNumber(value: v)) ?? "\(Int(v.rounded()))"
+    }
+
+    /// Shared rather than built per call: `intString` runs for several tiles on every body pass.
+    private static let intGroupingFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.maximumFractionDigits = 0
-        return f.string(from: NSNumber(value: v)) ?? "\(Int(v.rounded()))"
-    }
+        return f
+    }()
 
     // MARK: - Date parsing (yyyy-MM-dd, en_US_POSIX, LOCAL zone)
     //
@@ -5517,7 +5417,7 @@ enum SyncChipState: Equatable {
 }
 
 /// The compact 36pt recording-status light in the iOS top bar, a colour-coded dot (green recording,
-/// amber last-synced, red not recording, accent for experimental 5.0 history). Taps to Devices. Owns
+/// amber last-synced, red not recording, ink for experimental 5.0 history). Taps to Devices. Owns
 /// the `LiveState` observation so a live-HR tick refreshes only this dot.
 private struct RecordingStatusLight: View {
     @EnvironmentObject private var live: LiveState
@@ -5534,15 +5434,15 @@ private struct RecordingStatusLight: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var motion = NoopMotionState.shared
 
-    /// Colour for the light: green recording, amber last-synced, red not recording, accent for
-    /// experimental history. Mirrors the prior `TodayView.recordingHue` semantics verbatim.
+    /// Colour for the light: green recording, amber last-synced, red not recording, ink for
+    /// experimental history. Mirrors the prior `TodayView.recordingHue` semantics.
     private func hue(_ state: RecordingState) -> Color {
         switch state {
         case .recording:           return StrandPalette.statusPositive
         case .lastSynced:          return StrandPalette.statusWarning
-        case .notRecording:        return Color(red: 0.98, green: 0.27, blue: 0.23)
-        case .historyExperimental: return StrandPalette.accent
-        case .connectedNoData:     return StrandPalette.accent
+        case .notRecording:        return StrandPalette.statusCritical
+        case .historyExperimental: return StrandPalette.textPrimary
+        case .connectedNoData:     return StrandPalette.textPrimary
         }
     }
 
@@ -5558,17 +5458,18 @@ private struct RecordingStatusLight: View {
         // recording hue underneath; an expanding accent ring says "handing over history now".
         let syncing = live.backfilling && selectedDayOffset == 0
         Button(action: onTap) {
-            Circle().fill(StrandPalette.surfaceInset)
-                .frame(width: 36, height: 36)
+            Circle().fill(NoopVisualStyle.inset)
+                .overlay(Circle().strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                .frame(width: 42, height: 42)
                 .overlay {
                     if syncing {
-                        // Expanding, fading accent ring behind a steady accent dot — a "pulling data" beat.
+                        // Expanding, fading ring behind a steady ink dot — a "pulling data" beat.
                         Circle()
-                            .stroke(StrandPalette.accent, lineWidth: 2)
+                            .stroke(StrandPalette.textPrimary, lineWidth: 2)
                             .frame(width: 10, height: 10)
                             .scaleEffect(pulsing ? 2.6 : 1.0)
                             .opacity(pulsing ? 0.0 : 0.9)
-                        Circle().fill(StrandPalette.accent).frame(width: 10, height: 10)
+                        Circle().fill(StrandPalette.textPrimary).frame(width: 10, height: 10)
                     } else {
                         Circle()
                             .fill(state.map(hue) ?? StrandPalette.textTertiary.opacity(0.4))
@@ -5648,7 +5549,7 @@ private struct StrapSyncRow: View {
                 HStack(alignment: .top, spacing: 10) {
                     SourceBadge("Strap sync",
                                 tint: live.lastSyncError != nil ? StrandPalette.statusWarning
-                                    : live.lastSyncedAt != nil ? StrandPalette.accent
+                                    : live.lastSyncedAt != nil ? StrandPalette.textPrimary
                                     : StrandPalette.textTertiary)
                     Spacer()
                     if let error = live.lastSyncError {
@@ -5687,15 +5588,15 @@ private struct StrapBatteryRow: View {
         }
     }
 
-    /// Level-banded battery glyph; the bolt variant when the strap reports charging.
+    /// Level-banded Phosphor battery glyph; the charging variant when the strap reports charging.
     private func symbol(_ pct: Double) -> String {
-        if live.charging == true { return "battery.100.bolt" }
+        if live.charging == true { return "battery-charging" }
         switch pct {
-        case ..<13: return "battery.0"
-        case ..<38: return "battery.25"
-        case ..<63: return "battery.50"
-        case ..<88: return "battery.75"
-        default:    return "battery.100"
+        case ..<13: return "battery-empty"
+        case ..<38: return "battery-low"
+        case ..<63: return "battery-medium"
+        case ..<88: return "battery-high"
+        default:    return "battery-full"
         }
     }
 
@@ -5723,8 +5624,7 @@ private struct StrapBatteryRow: View {
                 SourceBadge("Strap battery", tint: tint(pct))
                 Spacer()
                 HStack(spacing: 5) {
-                    Image(systemName: symbol(pct))
-                        .font(.system(size: 11, weight: .medium))
+                    PhIcon(symbol(pct), size: 14)
                         .foregroundStyle(tint(pct))
                     Text("\(Int(pct.rounded()))%")
                         .font(StrandFont.captionNumber)

@@ -2,20 +2,21 @@ import SwiftUI
 import StrandDesign
 import WhoopStore
 
-// The workout sheet: every exercise and every set of the session, on one scrollable page.
+// The workout sheet: the running stage on the effort glow, the exercise being worked with every set, and
+// the rest of the session one tap away.
 //
 // WHY A SHEET AND NOT A WIZARD. The first version showed one set at a time and walked the plan in
 // order. In a real gym that fails twice over: you cannot see what is coming, and you cannot move on
-// when a machine is occupied. So every set is a row, any pending row can be started, and finished
-// rows stay on screen with what you lifted.
+// when a machine is occupied. So every exercise stays listed, any of them opens to its sets, any pending
+// set can be started, and finished sets stay with what you lifted.
 //
-// COLOUR CARRIES STATE, so you can find your place at a glance from arm's length:
-//   green   the set you are working now
-//   amber   the rest that follows it
-//   done    a completed set, with a check; numbers nobody typed stay grey
+// ONE PLACE FOR THE STAGE. The hero at the top carries what is running — the warm-up, the set being
+// worked, or the rest and how much of it is left — with the one action that moves it on. The set rows
+// below carry their own state: the set being worked is the raised row, a done set has an ink tick, and
+// numbers nobody typed stay grey.
 //
-// The session itself lives in `LiftSessionController`, ABOVE this view. Swiping this sheet away
-// minimises it to the bottom bar; the clock, the strap gesture and the buzzes all keep running,
+// The session itself lives in `LiftSessionController`, ABOVE this view. Swiping this sheet away (or
+// Hide) minimises it to the bottom bar; the clock, the strap gesture and the buzzes all keep running,
 // because a workout outlives the screen you happen to be looking at.
 
 struct LiftSessionView: View {
@@ -24,6 +25,11 @@ struct LiftSessionView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var session: LiftSessionController
     @Environment(\.dismiss) private var dismiss
+
+    #if DEBUG
+    /// Screenshot harness only: open with the finish sheet up.
+    var demoFinishing = false
+    #endif
 
     /// Called once the session has been written, so the hub can reload.
     let onFinished: () async -> Void
@@ -41,6 +47,13 @@ struct LiftSessionView: View {
     @State private var addingExercise = false
     /// The card to bring into view once an exercise has been added — the new one, at the end.
     @State private var scrollTarget: Int?
+    /// Exercises opened from the list below the running one, by plan index.
+    @State private var expanded: Set<Int> = []
+    /// The exercises not started yet are folded into one row until it is opened.
+    @State private var showsUpcoming = false
+    /// What was lifted last time for each exercise, by set number — the same values handed to the
+    /// controller's grey-number chain, kept here for the "Last time" line and the top-set comparison.
+    @State private var lastTime: [String: [Int: LiftSetCarry]] = [:]
 
     private enum UnfinishedChoice: Hashable { case complete, discard }
     private enum ProgramChoice: Hashable { case update, keep }
@@ -68,25 +81,33 @@ struct LiftSessionView: View {
 
     private var engine: LiftSessionEngine? { session.engine }
 
+    /// Scroll anchor of the stage hero.
+    private static let heroID = "lift-session-hero"
+
     var body: some View {
         Group {
             if let engine {
                 VStack(spacing: 0) {
+                    sessionHeader(engine)
                     sheet(engine)
-                    // The control bar never scrolls away: at the rack the clock and the one action have to
-                    // be where your thumb already is.
-                    controlBar(engine)
+                    // The dock never scrolls away: the session's progress and Finish stay where the thumb is.
+                    dock(engine)
                 }
             } else {
-                ComingSoon(what: "No session running", symbol: "dumbbell")
+                VStack {
+                    NoopInsightRow("No session running", icon: "barbell").ltCard()
+                    Spacer()
+                }
+                .padding(20)
+                .padding(.top, 24)
             }
         }
         #if os(iOS)
-        .presentationDragIndicator(.visible)
+        .noopSheetPresentation(largeFirst: true)
         #else
         .frame(width: 560, height: 800)
+        .background(NoopSheetBackground())
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .dismissesKeyboardOnTap($focused)
         // Re-read whenever the session's exercises change, so an exercise added mid-session that was
@@ -99,6 +120,53 @@ struct LiftSessionView: View {
             draft = draft.filter { $0.key == now }
         }
         .sheet(isPresented: $showingFinish) { finishSheet }
+        #if DEBUG
+        .task {
+            guard demoFinishing else { return }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            showingFinish = true
+        }
+        #endif
+    }
+
+    // MARK: - Header
+
+    /// Hide · "Push A · 38:12" · heart rate. Hide minimises to the bar, exactly like swiping the sheet down.
+    private func sessionHeader(_ engine: LiftSessionEngine) -> some View {
+        ZStack {
+            HStack(spacing: 0) {
+                Text(verbatim: session.programName ?? String(localized: "Session"))
+                    .lineLimit(1)
+                Text(verbatim: " · ")
+                LiftRunningClock { $0 - engine.startTs }
+                    .fixedSize()
+            }
+            .font(StrandFont.book(17, relativeTo: .headline))
+            .foregroundStyle(StrandPalette.textPrimary)
+            .padding(.horizontal, 92)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            HStack {
+                Button { dismiss() } label: {
+                    HStack(spacing: 6) {
+                        PhIcon("caret-down", size: 18).opacity(0.7)
+                        Text("Hide")
+                    }
+                    .font(StrandFont.light(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Minimise the session"))
+                Spacer(minLength: 8)
+                // Display only, beside the clock that never scrolls away: a glance mid-set is the whole use
+                // (`LiftHeartRate`). Always shown, dash included.
+                LiftHeartRatePill()
+            }
+        }
+        .padding(.horizontal, NoopMetrics.screenHPadding)
+        .padding(.top, 28)
+        .padding(.bottom, 16)
     }
 
     // MARK: - The scrollable sheet
@@ -106,25 +174,29 @@ struct LiftSessionView: View {
     private func sheet(_ engine: LiftSessionEngine) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    header(engine)
-                    ForEach(Array(engine.plan.enumerated()), id: \.offset) { index, item in
-                        exerciseCard(engine, index: index, item: item)
+                VStack(alignment: .leading, spacing: 12) {
+                    stageHero(engine).id(Self.heroID)
+                    ForEach(cardIndices(engine), id: \.self) { index in
+                        exerciseCard(engine, index: index, item: engine.plan[index],
+                                     collapsible: !focusIndices(engine).contains(index))
                     }
+                    otherExercises(engine)
                     addExerciseRow(engine)
-                    Color.clear.frame(height: 8)
                 }
-                .padding(.horizontal, NoopMetrics.screenPadding)
-                .padding(.top, 18)
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 24)
             }
+            #if os(iOS) && DEBUG
+            .modifier(DemoScrollAnchor())
+            #endif
             .onChange(of: engine.currentSlot) { slot in
-                // Follow the session down the sheet, but only when it moves on its own — scrolling
-                // back to read an earlier exercise must not be yanked away from.
-                guard let slot else { return }
-                withAnimation { proxy.scrollTo(slot.exerciseIndex, anchor: .top) }
+                // A new stage is read off the hero: bring it back into view when the session moves on.
+                guard slot != nil else { return }
+                withAnimation { proxy.scrollTo(Self.heroID, anchor: .top) }
             }
             .onChange(of: scrollTarget) { target in
                 guard let target else { return }
+                expanded.insert(target)
                 withAnimation { proxy.scrollTo(target, anchor: .top) }
                 scrollTarget = nil
             }
@@ -138,162 +210,338 @@ struct LiftSessionView: View {
         }
     }
 
+    /// The exercises open as full cards: the one being worked (and, during a rest, the one the next set
+    /// belongs to), then any the lifter opened, in plan order.
+    private func focusIndices(_ engine: LiftSessionEngine) -> [Int] {
+        var out: [Int] = []
+        if let current = engine.currentSlot?.exerciseIndex { out.append(current) }
+        if case .working = engine.stage {} else if let next = engine.upcomingSlot?.exerciseIndex, !out.contains(next) {
+            out.append(next)
+        }
+        if out.isEmpty, !engine.plan.isEmpty { out.append(0) }
+        return out
+    }
+
+    private func cardIndices(_ engine: LiftSessionEngine) -> [Int] {
+        let focus = focusIndices(engine)
+        return focus + engine.plan.indices.filter { expanded.contains($0) && !focus.contains($0) }
+    }
+
     /// Add an exercise the program does not have — at the END of the sheet, after everything planned,
     /// because that is where it goes: the program's lines keep their order, and the new one is tapped to
     /// start whenever the lifter gets to it (Utku, 21 Sep 2026). Finishing asks whether the program keeps
-    /// it; until then it changes this session only, like ⊕/⊖.
+    /// it; until then it changes this session only, like adding or removing a set.
     private func addExerciseRow(_ engine: LiftSessionEngine) -> some View {
-        let canAdd = engine.plan.count < LiftSessionEngine.maxExercises
-        return Button {
+        LTActionButton("Add exercise", icon: "plus", height: 44, fontSize: 14) {
             addingExercise = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                Text("Add exercise").font(StrandFont.body)
-            }
-            .foregroundStyle(canAdd ? StrandPalette.effortColor : StrandPalette.textTertiary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous)
-                    .strokeBorder(StrandPalette.textTertiary.opacity(0.35),
-                                  style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .disabled(!canAdd)
+        .disabled(engine.plan.count >= LiftSessionEngine.maxExercises)
     }
 
-    private func header(_ engine: LiftSessionEngine) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(session.programName ?? String(localized: "Session"))
-                .font(StrandFont.title1)
-                .foregroundStyle(StrandPalette.textPrimary)
-            Text(String(localized: "\(engine.completedWorkingSets) of \(engine.plannedWorkingSets) sets done"))
-                .font(StrandFont.caption)
-                .foregroundStyle(StrandPalette.textSecondary)
+    // MARK: - The stage hero
+
+    /// What is running now, on the effort glow: the warm-up clock, the set being worked, or the rest
+    /// counting down — with what comes next and the action that moves the session on.
+    private func stageHero(_ engine: LiftSessionEngine) -> some View {
+        let now = LiftSessionController.unixNow
+        return NoopHeroCard(glow: .strain, padding: 20) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    stageBadge(engine)
+                    Spacer(minLength: 8)
+                    if let pill = stagePill(engine) {
+                        NoopPill(verbatim: pill, compact: true)
+                    }
+                }
+                HStack(alignment: .lastTextBaseline, spacing: 12) {
+                    stageClock(engine)
+                        .font(StrandFont.dot(84))
+                        .tracking(StrandFont.dotTracking(84))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if let caption = clockCaption(engine) {
+                        Text(verbatim: caption)
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(NoopMetric.heroLabel)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .padding(.bottom, 8)
+                    }
+                }
+                .padding(.top, 22)
+                .accessibilityElement(children: .combine)
+                if case .resting(_, let endsAt) = engine.stage {
+                    LiftRestTrack(endsAt: endsAt, total: max(1, endsAt - engine.stageStartedAt))
+                        .padding(.top, 20)
+                }
+                // The set coming up, through the same resolution the minimised bar and the Lock Screen read
+                // (`LiftSessionController.nextLine`), so the three never word it differently.
+                HStack(spacing: 8) {
+                    Text(verbatim: nextLine(engine))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if case .resting = engine.stage {
+                        Spacer(minLength: 0)
+                        LiftRestBuzzNote().foregroundStyle(NoopMetric.heroLabel)
+                    }
+                }
+                .font(StrandFont.light(12, relativeTo: .caption))
+                .padding(.top, 10)
+                HStack(spacing: 8) {
+                    Button { session.undo() } label: {
+                        HStack(spacing: 6) {
+                            PhIcon("arrow-counter-clockwise", size: 14)
+                            Text("Undo")
+                        }
+                    }
+                    .buttonStyle(LiftGlassButtonStyle())
+                    .disabled(!engine.canUndo)
+                    Button { session.advance() } label: {
+                        Text(actionLabel(engine))
+                    }
+                    .buttonStyle(LiftGlassButtonStyle(primary: actionIsPrimary(engine, now: now)))
+                    .disabled(engine.isFinished)
+                }
+                .padding(.top, 18)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func stageBadge(_ engine: LiftSessionEngine) -> some View {
+        switch engine.stage {
+        // "Rest period", never "Rest": the catalog's "Rest" key is NOOP's SLEEP metric, so the bare word
+        // renders as "Erholung" (recovery) in German.
+        case .resting: NoopIconBadge("Rest period", icon: "timer")
+        case .working: NoopIconBadge("This set", icon: "barbell")
+        case .warmup, .finished: NoopIconBadge("Warm-up", icon: "fire")
+        }
+    }
+
+    /// "After set 2" while resting, "Set 3 of 4" while working.
+    private func stagePill(_ engine: LiftSessionEngine) -> String? {
+        switch engine.stage {
+        case .resting(let slot, _):
+            return String(localized: "After set \(slot.setIndex)")
+        case .working(let slot):
+            let of = engine.planItem(for: slot)?.targetSets ?? slot.setIndex
+            return String(localized: "Set \(slot.setIndex) of \(of)")
+        case .warmup, .finished:
+            return nil
+        }
+    }
+
+    /// Rest counts DOWN (that is the number you act on); the set and the warm-up count up.
+    private func stageClock(_ engine: LiftSessionEngine) -> LiftRunningClock {
+        switch engine.stage {
+        case .resting: return LiftRunningClock { engine.restRemaining(now: $0) ?? 0 }
+        default: return LiftRunningClock { $0 - engine.stageStartedAt }
+        }
+    }
+
+    /// "of 2:00" beside a rest; the set's numbers beside a set being worked.
+    private func clockCaption(_ engine: LiftSessionEngine) -> String? {
+        switch engine.stage {
+        case .resting(_, let endsAt):
+            return String(localized: "of \(ActiveWorkoutClock.clock(max(0, endsAt - engine.stageStartedAt)))")
+        case .working(let slot):
+            return session.setNumbers(for: slot, system: unitSystem)
+        case .warmup, .finished:
+            return nil
+        }
+    }
+
+    /// The next set, and its numbers when it has any.
+    private func nextLine(_ engine: LiftSessionEngine) -> String {
+        let line = LiftSessionController.nextLine(engine)
+        guard let upcoming = engine.upcomingSlot,
+              let numbers = session.setNumbers(for: upcoming, system: unitSystem) else { return line }
+        return "\(line) · \(numbers)"
+    }
+
+    /// The ink pill for the action the stage is waiting for; a rest still running offers it quietly, as
+    /// skipping the rest is the exception.
+    private func actionIsPrimary(_ engine: LiftSessionEngine, now: Int) -> Bool {
+        if case .resting(_, let endsAt) = engine.stage { return endsAt <= now }
+        return !engine.isFinished
     }
 
     // MARK: - One exercise, with all its sets
 
-    private func exerciseCard(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem) -> some View {
-        NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
+    private func exerciseCard(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem,
+                              collapsible: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                NoopIconTile("barbell", size: 38)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.exercise)
-                        .font(StrandFont.headline)
+                        .font(StrandFont.book(16, relativeTo: .headline))
                         .foregroundStyle(StrandPalette.textPrimary)
-                    Text(LiftMuscleSummary.line(primary: item.primaryMuscle,
-                                                secondaries: item.secondaryMuscles))
-                        .font(StrandFont.caption)
+                        .lineLimit(2)
+                    Text(verbatim: lastTimeLine(item) ?? LiftMuscleSummary.line(primary: item.primaryMuscle,
+                                                                                secondaries: item.secondaryMuscles))
+                        .font(StrandFont.light(12, relativeTo: .caption))
                         .foregroundStyle(StrandPalette.textTertiary)
+                        .lineLimit(1)
                 }
-                if let note = item.note, !note.isEmpty {
+                Spacer(minLength: 8)
+                exerciseMenu(engine, index: index, item: item, collapsible: collapsible)
+            }
+            if let note = item.note, !note.isEmpty {
+                HStack(alignment: .top, spacing: 10) {
+                    PhIcon("note", size: 16).foregroundStyle(StrandPalette.textSecondary)
                     Text(note)
-                        .font(StrandFont.footnote)
+                        .font(StrandFont.light(13, relativeTo: .footnote))
                         .foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         // Belt and braces with the entry cap: the sets are what this screen is for,
                         // and a note must never be able to push them off it.
                         .lineLimit(4)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(StrandPalette.metricAmber.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
+                .padding(.top, 14)
+            }
 
+            VStack(spacing: 0) {
                 columnHeadings
-
                 ForEach(engine.slots(forExercise: index), id: \.self) { slot in
                     setRow(engine, slot: slot)
-                    // The rest belongs BETWEEN two sets, because that is where it happens.
-                    if isRestingAfter(engine, slot: slot) { restBand(engine) }
                 }
-
-                setCountRow(engine, index: index, item: item)
             }
+            .padding(.top, 16)
+
+            setCountRow(engine, index: index, item: item)
+                .padding(.top, 14)
         }
+        .ltCard()
         .id(index)
     }
 
-    /// Add one more set, or drop the last planned one — at the END of the exercise, because that is
-    /// where the question comes up: you have done what was written down and have one more in you, or
-    /// you have not. Until this existed the sheet drew exactly `1...targetSets` and the extra set was
-    /// performed and then lost.
-    ///
-    /// The geometry mirrors a set row: the minus sits in the tick column, under the checks it undoes.
-    ///
-    /// **Both buttons change this session only.** Whether the program keeps the new count is asked
-    /// when the session is finished: a program is a plan for next time, and one extra set on a good
-    /// day is not always a new plan.
-    private func setCountRow(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem) -> some View {
-        let canAdd = item.targetSets < LiftSessionEngine.maxSetsPerExercise
-        let canRemove = engine.canRemoveSet(fromExercise: index)
-
-        return HStack(spacing: 8) {
+    /// The card's ⋯: set count changes, and folding an opened card back into the list.
+    private func exerciseMenu(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem,
+                              collapsible: Bool) -> some View {
+        Menu {
             Button {
                 session.addSet(toExercise: index)
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("Add set").font(StrandFont.caption)
-                }
-                .foregroundStyle(canAdd ? StrandPalette.effortColor : StrandPalette.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                Label("Add set", systemImage: "plus")
             }
-            .buttonStyle(.plain)
-            .disabled(!canAdd)
-            .accessibilityLabel(String(localized: "Add a set to \(item.exercise)"))
-
+            .disabled(item.targetSets >= LiftSessionEngine.maxSetsPerExercise)
             Button {
                 session.removeSet(fromExercise: index)
             } label: {
-                Image(systemName: "minus.circle")
-                    .font(.system(size: 17, weight: .semibold))
-                    // Dimmed rather than gone: the pair reads as one control, and a minus that
-                    // disappears once the last set is done looks like a feature that broke.
-                    .foregroundStyle(canRemove ? StrandPalette.textSecondary
-                                               : StrandPalette.textTertiary.opacity(0.4))
-                    .frame(width: Self.tickColumnWidth)
-                    .contentShape(Rectangle())
+                Label("Remove the last set", systemImage: "minus")
             }
-            .buttonStyle(.plain)
-            .disabled(!canRemove)
-            .accessibilityLabel(String(localized: "Remove the last set from \(item.exercise)"))
+            .disabled(!engine.canRemoveSet(fromExercise: index))
+            if collapsible {
+                Button {
+                    expanded.remove(index)
+                } label: {
+                    Label("Fold away", systemImage: "chevron.up")
+                }
+            }
+        } label: {
+            PhIcon("dots-three", size: 18)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .opacity(0.5)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
         }
-        .padding(.top, 2)
-        .padding(.horizontal, 8)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel(String(localized: "More for \(item.exercise)"))
+    }
+
+    /// "Last time 80 kg · 5, 5, 5, 4": the heaviest weight of the last session's working sets and the
+    /// reps of each, from the same values the grey numbers read.
+    private func lastTimeLine(_ item: LiftPlanItem) -> String? {
+        guard let sets = lastTime[item.exercise], !sets.isEmpty else { return nil }
+        let ordered = sets.keys.sorted().compactMap { sets[$0] }
+        let reps = ordered.compactMap(\.reps).map(String.init).joined(separator: ", ")
+        let top = ordered.compactMap(\.weightKg).max()
+        let parts = [top.map { LiftFormat.weight($0, system: unitSystem) }, reps.isEmpty ? nil : reps]
+            .compactMap { $0 }
+        guard !parts.isEmpty else { return nil }
+        return String(localized: "Last time \(parts.joined(separator: " · "))")
+    }
+
+    /// Add one more set — at the END of the exercise, because that is where the question comes up: you
+    /// have done what was written down and have one more in you. Until this existed the sheet drew exactly
+    /// `1...targetSets` and the extra set was performed and then lost. Dropping the last planned set is in
+    /// the card's ⋯.
+    ///
+    /// **This changes this session only.** Whether the program keeps the new count is asked when the
+    /// session is finished: a program is a plan for next time, and one extra set on a good day is not
+    /// always a new plan.
+    private func setCountRow(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                session.addSet(toExercise: index)
+            } label: {
+                NoopChip("Add set", icon: "plus")
+            }
+            .buttonStyle(LTPressStyle())
+            .disabled(item.targetSets >= LiftSessionEngine.maxSetsPerExercise)
+            .opacity(item.targetSets >= LiftSessionEngine.maxSetsPerExercise ? 0.38 : 1)
+            .accessibilityLabel(String(localized: "Add a set to \(item.exercise)"))
+            Spacer(minLength: 8)
+            if let compare = topSetComparison(engine, index: index, item: item) {
+                Text(verbatim: compare)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+        }
+    }
+
+    /// "Top set +2.5 kg vs last time" — the heaviest working set done today against last session's.
+    private func topSetComparison(_ engine: LiftSessionEngine, index: Int, item: LiftPlanItem) -> String? {
+        let today = engine.sets
+            .filter { $0.exerciseIndex == index && !$0.isWarmup }
+            .compactMap(\.weightKg).max()
+        guard let today, let before = lastTime[item.exercise]?.values.compactMap(\.weightKg).max() else {
+            return nil
+        }
+        let delta = LiftFormat.display(fromKilograms: today, system: unitSystem)
+            - LiftFormat.display(fromKilograms: before, system: unitSystem)
+        if abs(delta) < 0.05 { return String(localized: "Top set matches last time") }
+        let signed = (delta > 0 ? "+" : "−") + LiftFormat.trim(abs(delta)) + " " + LiftFormat.weightUnit(unitSystem)
+        return String(localized: "Top set \(signed) vs last time")
     }
 
     /// Width of the set-number column, shared by the heading and every row so the number sits
     /// directly under its label.
     ///
-    /// 34, not 26. `strandOverline` renders ALL-CAPS with +1.4 tracking, and at 26 the heading wrapped
-    /// mid-word — a real session photographed it reading "SE / T" over two lines. The headings are
-    /// also `lineLimit(1)` with a scale floor: this row is four short labels across a phone width in
-    /// ten languages, and a wrapped heading breaks the column alignment for every row beneath it.
-    static let setColumnWidth: CGFloat = 34
+    /// 40, and the headings are `lineLimit(1)` with a scale floor: a real session once photographed a
+    /// narrower column wrapping its heading mid-word ("SE / T"). This row is four short labels across a
+    /// phone width in ten languages, and a wrapped heading breaks the column alignment for every row
+    /// beneath it.
+    static let setColumnWidth: CGFloat = 40
 
     /// Width of the trailing tick column. Mirrored by a clear spacer in the heading row so the four
     /// labels sit over the four things they name.
-    private static let tickColumnWidth: CGFloat = 30
+    private static let tickColumnWidth: CGFloat = 40
 
     private var columnHeadings: some View {
-        HStack(spacing: 8) {
-            Text("Set").strandOverline()
-                .frame(width: Self.setColumnWidth, alignment: .center)
-            Text(weightHeading).strandOverline().frame(maxWidth: .infinity, alignment: .leading)
-            Text("Reps").strandOverline().frame(maxWidth: .infinity, alignment: .leading)
-            Text("RPE").strandOverline().frame(maxWidth: .infinity, alignment: .leading)
-            Color.clear.frame(width: Self.tickColumnWidth)
+        HStack(spacing: 0) {
+            Text("Set").frame(width: Self.setColumnWidth)
+            Text(weightHeading).frame(maxWidth: .infinity)
+            Text("Reps").frame(maxWidth: .infinity)
+            Text("RPE").frame(maxWidth: .infinity)
+            Color.clear.frame(width: Self.tickColumnWidth, height: 1)
         }
+        .font(StrandFont.book(10.5, relativeTo: .caption2))
+        .tracking(0.84)
+        .textCase(.uppercase)
+        .foregroundStyle(StrandPalette.textTertiary)
         .lineLimit(1)
         .minimumScaleFactor(0.8)
+        .padding(.horizontal, 6)
+        .frame(height: 26)
     }
 
     private var weightHeading: LocalizedStringKey {
@@ -304,9 +552,18 @@ struct LiftSessionView: View {
 
     private func setRow(_ engine: LiftSessionEngine, slot: LiftSlot) -> some View {
         let recorded = engine.recordedSet(for: slot)
-        let isWorking = engine.stage == .working(slot)
+        // The set being worked — or, before it starts, the one coming up — is the raised row.
+        let isWorking: Bool = {
+            switch engine.stage {
+            case .working(let s): return s == slot
+            case .resting, .warmup: return engine.upcomingSlot == slot
+            case .finished: return false
+            }
+        }()
+        let ink = isWorking ? StrandPalette.textPrimary
+            : (recorded != nil ? StrandPalette.textSecondary : StrandPalette.textTertiary)
 
-        return HStack(spacing: 8) {
+        return HStack(spacing: 0) {
             // The set number IS the warm-up toggle. Warm-ups are excluded from volume and from the
             // per-muscle counts, so being unable to mark one silently inflates the single figure the
             // whole feature rests on — it has to be reachable in one tap, without leaving the row.
@@ -314,12 +571,11 @@ struct LiftSessionView: View {
                 toggleWarmup(slot)
             } label: {
                 Text(isWarmup(slot) ? String(localized: "W") : "\(slot.setIndex)")
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(isWarmup(slot)
-                                     ? StrandPalette.metricAmber
-                                     : (isWorking ? StrandPalette.textPrimary
-                                                  : StrandPalette.textSecondary))
-                    .frame(width: Self.setColumnWidth, alignment: .center)
+                    .font(isWarmup(slot) ? StrandFont.medium(13, relativeTo: .footnote)
+                                         : StrandFont.value(13, relativeTo: .footnote))
+                    .foregroundStyle(isWorking || isWarmup(slot) ? StrandPalette.textPrimary
+                                                                 : StrandPalette.textTertiary)
+                    .frame(width: Self.setColumnWidth, height: 46)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -327,37 +583,39 @@ struct LiftSessionView: View {
                                 ? String(localized: "Warm-up set — tap to make it a working set")
                                 : String(localized: "Set \(slot.setIndex) — tap to mark it a warm-up"))
 
-            numberField(slot: slot, field: .weight(slot),
-                        text: weightBinding(slot),
-                        ghost: ghostWeight(slot))
-            numberField(slot: slot, field: .reps(slot),
-                        text: repsBinding(slot),
-                        ghost: ghostReps(slot))
-            numberField(slot: slot, field: .rpe(slot),
-                        text: rpeBinding(slot),
-                        ghost: ghostRpe(engine, slot: slot))
+            numberField(field: .weight(slot), text: weightBinding(slot), ghost: ghostWeight(slot),
+                        ink: ink, raised: isWorking)
+            numberField(field: .reps(slot), text: repsBinding(slot), ghost: ghostReps(slot),
+                        ink: ink, raised: isWorking)
+            numberField(field: .rpe(slot), text: rpeBinding(slot), ghost: ghostRpe(engine, slot: slot),
+                        ink: ink, raised: isWorking)
 
-            // The tick both REPORTS and ACTS: filled when the set is done, and tappable to start
-            // this set when it is not — which is how you jump to a different exercise.
+            // The tick both REPORTS and ACTS: an ink disc when the set is done, and tappable to start
+            // this set when it is not — which is how you jump to a different exercise. On a done set
+            // it re-opens the set for a redo.
             Button {
-                if recorded == nil { session.start(slot) } else { session.start(slot) }
+                session.start(slot)
             } label: {
-                Image(systemName: recorded == nil ? "circle" : "checkmark.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(recorded == nil
-                                     ? StrandPalette.textTertiary
-                                     : StrandPalette.statusPositive)
+                LiftCheckCircle(done: recorded != nil)
+                    .opacity(recorded == nil && !isWorking ? 0.6 : 1)
+                    .frame(width: Self.tickColumnWidth, height: 46)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(width: Self.tickColumnWidth)
             .accessibilityLabel(recorded == nil
                                 ? String(localized: "Start this set")
                                 : String(localized: "Redo this set"))
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
-        .background(rowBackground(isWorking: isWorking, done: recorded != nil),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 6)
+        .frame(height: 46)
+        .background {
+            if isWorking {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NoopVisualStyle.inset)
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+            }
+        }
     }
 
     /// Warm-up state lives in the controller, so a mark survives the sheet being minimised and
@@ -368,62 +626,144 @@ struct LiftSessionView: View {
         session.setWarmup(slot, !session.isWarmup(slot))
     }
 
-    /// Green = working now, faint = done, clear = still to come.
-    ///
-    /// Deliberately no amber case. Tinting the just-finished SET amber said the wrong thing: the set
-    /// is over, and what is running is the gap after it. The rest is drawn as its own band between
-    /// the two set rows instead — see `restBand`.
-    private func rowBackground(isWorking: Bool, done: Bool) -> Color {
-        if isWorking { return StrandPalette.statusPositive.opacity(0.20) }
-        if done { return StrandPalette.surfaceRaised.opacity(0.5) }
-        return .clear
-    }
-
-    private func isRestingAfter(_ engine: LiftSessionEngine, slot: LiftSlot) -> Bool {
-        if case .resting(let s, _) = engine.stage { return s == slot }
-        return false
-    }
-
-    /// The running rest, drawn as an amber band sitting BETWEEN the set that ended and the set that
-    /// follows — which is literally where a rest is.
-    ///
-    /// It replaces tinting the finished set's row amber. That read as "this set is amber" when the
-    /// set was already done, and from across a gym floor it was not obvious which gap was running.
-    /// A band in the gap is unambiguous at a glance, which is the whole requirement: you are looking
-    /// at this from a bench, not reading it.
-    ///
-    /// It carries the countdown as well as the colour. The control bar has the same number, but the
-    /// control bar is pinned to the bottom and this is where your eyes already are — and once the
-    /// sheet is scrolled to a later exercise, the band is the only thing that says which rest.
-    private func restBand(_ engine: LiftSessionEngine) -> some View {
-        HStack(spacing: 8) {
-            Text("Rest period").strandOverline()
-                .foregroundStyle(StrandPalette.metricAmber)
-            Spacer(minLength: 0)
-            LiftRunningClock { engine.restRemaining(now: $0) ?? 0 }
-                .font(StrandFont.captionNumber)
-                .foregroundStyle(StrandPalette.metricAmber)
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity)
-        .background(StrandPalette.metricAmber.opacity(0.22),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .padding(.horizontal, 8)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func numberField(slot: LiftSlot, field: FocusTarget,
-                             text: Binding<String>, ghost: String) -> some View {
-        TextField(ghost, text: text)
+    /// One number of a set: typed numbers in the row's ink, grey numbers as the prompt. The set being
+    /// worked raises its fields onto a tile, so the row you are on reads from arm's length.
+    private func numberField(field: FocusTarget, text: Binding<String>, ghost: String,
+                             ink: Color, raised: Bool) -> some View {
+        TextField("", text: text, prompt: Text(verbatim: ghost).foregroundColor(StrandPalette.textTertiary))
             .textFieldStyle(.plain)
-            .font(StrandFont.bodyNumber)
-            .foregroundStyle(StrandPalette.textPrimary)
+            .multilineTextAlignment(.center)
+            .font(StrandFont.value(15, relativeTo: .body))
+            .foregroundStyle(ink)
             .numericKeyboard()
             .focused($focused, equals: field)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 5)
+            .frame(width: raised ? 50 : nil)
+            .background {
+                if raised {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(NoopVisualStyle.raised)
+                }
+            }
+            .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - The rest of the session
+
+    /// Every exercise that is not open as a card, as one list row each: done ones with their tick, ones
+    /// part-way through with their count, and the ones not started folded into a single row until it is
+    /// opened. Tapping a row opens the exercise's card.
+    @ViewBuilder
+    private func otherExercises(_ engine: LiftSessionEngine) -> some View {
+        let open = Set(cardIndices(engine))
+        let rest = engine.plan.indices.filter { !open.contains($0) }
+        let started = rest.filter { i in engine.slots(forExercise: i).contains { engine.isCompleted($0) } }
+        let untouched = rest.filter { !started.contains($0) }
+        let folds = untouched.count >= 3 && !showsUpcoming
+        if !rest.isEmpty {
+            NoopList {
+                ForEach(started, id: \.self) { index in exerciseRow(engine, index: index) }
+                if folds {
+                    Button {
+                        withAnimation(StrandMotion.interactive) { showsUpcoming = true }
+                    } label: {
+                        NoopRow(title: Text(String(localized: "\(untouched.count) more exercises")),
+                                caption: Text(verbatim: untouched.map { engine.plan[$0].exercise }
+                                    .joined(separator: ", ")),
+                                icon: "list-checks") {
+                            PhIcon("caret-down", size: 18).opacity(0.5)
+                        }
+                    }
+                    .buttonStyle(LTPressStyle())
+                } else {
+                    ForEach(untouched, id: \.self) { index in exerciseRow(engine, index: index) }
+                }
+            }
+        }
+    }
+
+    private func exerciseRow(_ engine: LiftSessionEngine, index: Int) -> some View {
+        let item = engine.plan[index]
+        let slots = engine.slots(forExercise: index)
+        let done = slots.filter { engine.isCompleted($0) }
+        return Button {
+            withAnimation(StrandMotion.interactive) { _ = expanded.insert(index) }
+        } label: {
+            NoopRow(title: Text(item.exercise), caption: Text(verbatim: rowCaption(slots: slots, done: done)),
+                    icon: "barbell") {
+                HStack(spacing: 10) {
+                    if !slots.isEmpty, done.count == slots.count { LiftCheckCircle(done: true, size: 22) }
+                    PhIcon("caret-down", size: 18).opacity(0.5)
+                }
+            }
+        }
+        .buttonStyle(LTPressStyle())
+    }
+
+    /// "Done · 3 × 8 · 42.5 kg", "2 of 4 sets done", or the plan "4 × 5 · 80 kg".
+    private func rowCaption(slots: [LiftSlot], done: [LiftSlot]) -> String {
+        if !done.isEmpty, done.count < slots.count {
+            return String(localized: "\(done.count) of \(slots.count) sets done")
+        }
+        let values = slots.map { session.values(of: $0) }
+        let reps = Set(values.compactMap(\.reps))
+        let shape = reps.count == 1 ? "\(slots.count) × \(reps.first!)"
+                                    : String(localized: "\(slots.count) sets")
+        let top = values.compactMap(\.weightKg).max().map { LiftFormat.weight($0, system: unitSystem) }
+        let line = [shape, top].compactMap { $0 }.joined(separator: " · ")
+        return done.isEmpty ? line : String(localized: "Done · \(line)")
+    }
+
+    // MARK: - The dock
+
+    /// Sets done of planned, the volume so far, and Finish.
+    private func dock(_ engine: LiftSessionEngine) -> some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 0) {
+                Text(String(localized: "\(engine.completedWorkingSets) of \(engine.plannedWorkingSets) sets"))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let volume = volumeSoFar(engine) {
+                    Text(verbatim: " · \(volume)")
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(StrandFont.light(13, relativeTo: .footnote))
+            .lineLimit(1)
+            LTActionButton("Finish", icon: "flag-checkered", kind: .primary) {
+                unfinishedChoice = nil
+                programChoice = nil
+                setCountChanges = []
+                showingFinish = true
+            }
+        }
+        .padding(.horizontal, NoopMetrics.screenHPadding)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+        .background {
+            NoopVisualStyle.surface
+                .overlay(alignment: .top) { LTHairline() }
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay(alignment: .top) {
+            // The list fades into the dock rather than being cut by it.
+            LinearGradient(colors: [NoopVisualStyle.surface.opacity(0), NoopVisualStyle.surface],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 40)
+                .offset(y: -40)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// "1,820 kg": weight × reps over the working sets done so far with both numbers typed — the same
+    /// arithmetic as the saved session's volume, never a physiological claim.
+    private func volumeSoFar(_ engine: LiftSessionEngine) -> String? {
+        let kg = engine.sets.reduce(0.0) { sum, set in
+            guard !set.isWarmup, let w = set.weightKg, let r = set.reps else { return sum }
+            return sum + w * Double(r)
+        }
+        guard kg > 0 else { return nil }
+        let shown = LiftFormat.display(fromKilograms: kg, system: unitSystem)
+        return "\(shown.formatted(.number.precision(.fractionLength(0)))) \(LiftFormat.weightUnit(unitSystem))"
     }
 
     // MARK: - Ghost values
@@ -530,104 +870,14 @@ struct LiftSessionView: View {
                           rpe: row.rpe, isWarmup: row.isWarmup)
     }
 
-    // MARK: - The control bar
-
-    private func controlBar(_ engine: LiftSessionEngine) -> some View {
-        VStack(spacing: NoopMetrics.rowSpacing) {
-            HStack(spacing: 14) {
-                clock(String(localized: "Session"), tint: StrandPalette.textPrimary) { $0 - engine.startTs }
-                stageClock(engine)
-                heartRate()
-                Spacer(minLength: 0)
-                Button { session.undo() } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(engine.canUndo ? StrandPalette.textSecondary : StrandPalette.textTertiary)
-                .disabled(!engine.canUndo)
-                .accessibilityLabel("Undo")
-            }
-
-            HStack(spacing: NoopMetrics.rowSpacing) {
-                Button { session.advance() } label: {
-                    Text(actionLabel(engine)).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.noopPrimary)
-
-                Button {
-                    unfinishedChoice = nil
-                    programChoice = nil
-                    setCountChanges = []
-                    showingFinish = true
-                } label: {
-                    Text("Finish")
-                }
-                .buttonStyle(NoopButtonStyle(.secondary))
-            }
-        }
-        .padding(.horizontal, NoopMetrics.screenPadding)
-        .padding(.top, 10)
-        .padding(.bottom, 14)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle().fill(StrandPalette.textTertiary.opacity(0.15)).frame(height: 0.5)
-        }
-    }
-
-    /// Live heart rate, beside the clocks that are already pinned above the action button.
-    ///
-    /// It belongs here and not in the scrolling sheet: this strip is the part that never scrolls
-    /// away, and a glance mid-set is the whole use — you are holding a bar, not browsing. Asked for
-    /// after a real session. Always shown, dash included, and display only (`LiftHeartRate`).
-    private func heartRate() -> some View {
-        labelled(String(localized: "HR")) { LiftHeartRate(style: .plain) }
-    }
-
-    /// A running clock under its label. `seconds` turns the current unix second into what it reads.
-    private func clock(_ label: String, tint: Color, seconds: @escaping (Int) -> Int) -> some View {
-        labelled(label) {
-            LiftRunningClock(seconds: seconds)
-                .font(StrandFont.bodyNumber)
-                .foregroundStyle(tint)
-        }
-    }
-
-    private func labelled<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label).strandOverline()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            value()
-        }
-    }
-
-    @ViewBuilder
-    private func stageClock(_ engine: LiftSessionEngine) -> some View {
-        switch engine.stage {
-        case .working:
-            clock(String(localized: "This set"), tint: StrandPalette.statusPositive) {
-                $0 - engine.stageStartedAt
-            }
-        case .resting:
-            // "Rest period", never "Rest": the catalog's "Rest" key is NOOP's SLEEP metric, so this
-            // label rendered as "Erholung" (recovery) in German — the exact collision CLAUDE.md and
-            // the handover brief both warn about. Reintroduced by the workout-sheet rewrite.
-            clock(String(localized: "Rest period"), tint: StrandPalette.metricAmber) {
-                engine.restRemaining(now: $0) ?? 0
-            }
-        case .warmup, .finished:
-            clock(String(localized: "Warm-up"), tint: StrandPalette.textSecondary) {
-                $0 - engine.stageStartedAt
-            }
-        }
-    }
 
     private func actionLabel(_ engine: LiftSessionEngine) -> LocalizedStringKey {
         switch engine.stage {
         case .warmup:   return "Start first set"
         case .working:  return "Set done"
-        case .resting:  return engine.allCompleted ? "All sets done" : "Start next set"
+        case .resting(_, let endsAt):
+            if engine.allCompleted { return "All sets done" }
+            return endsAt > LiftSessionController.unixNow ? "Skip rest" : "Start next set"
         case .finished: return "Saving…"
         }
     }
@@ -639,73 +889,74 @@ struct LiftSessionView: View {
         let asksAboutProgram = !setCountChanges.isEmpty || !addedExercises.isEmpty
         let answered = (unfinished == 0 || unfinishedChoice != nil)
             && (!asksAboutProgram || programChoice != nil)
-        return ScreenScaffold(title: "Finish session",
-                              subtitle: "One number for the whole session, so a leg day can be compared with a run.") {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                NoopCard {
-                    VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                        Text("How hard was the whole session? (1–10)").strandOverline()
-                        TextField("7", text: $sessionRpeText)
-                            .textFieldStyle(.plain)
-                            .font(StrandFont.bodyNumber)
-                            .foregroundStyle(StrandPalette.textPrimary)
-                            .numericKeyboard()
-                            .focused($focused, equals: .sessionRpe)
-                        Text("This is session RPE. Multiplied by the session's length it gives session load — the one figure that compares across completely different training.")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                if unfinished > 0 { unfinishedCard(count: unfinished) }
-                if asksAboutProgram { programCard }
+        return LiftSheetScaffold("Finish session",
+                                 subtitle: "One number for the whole session, so a leg day can be compared with a run.",
+                                 onCancel: { showingFinish = false }) {
+            sessionRpeCard
+            if unfinished > 0 { unfinishedCard(count: unfinished) }
+            if asksAboutProgram { programCard }
 
-                // One way to save. Session RPE above is optional, so an empty field is simply no rating;
-                // a separate "Skip" saved exactly the same way and read as a second choice.
-                Button("Save session") { Task { await save() } }
-                    .buttonStyle(.noopPrimary)
-                    .disabled(saving || !answered)
-                    .opacity(saving || !answered ? NoopButtonMetrics.disabledOpacity : 1)
-                if !answered {
-                    Text("Choose an option above to save.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                }
+            // One way to save. Session RPE above is optional, so an empty field is simply no rating;
+            // a separate "Skip" saved exactly the same way and read as a second choice.
+            LTActionButton("Save session", kind: .primary) { Task { await save() } }
+                .disabled(saving || !answered)
+                .padding(.top, 10)
+            if !answered {
+                Text("Choose an option above to save.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .frame(maxWidth: .infinity)
+            }
 
-                // A way OUT that records nothing. Until this existed, the only route off this screen
-                // saved. A session started by a mis-tap, or to try something out, had to be saved and
-                // then lived in the history and in that day's Effort for good.
-                Button(role: .destructive) {
-                    confirmingDiscard = true
-                } label: {
-                    Label("Discard session", systemImage: "trash")
-                        .frame(maxWidth: .infinity)
+            // A way OUT that records nothing. Until this existed, the only route off this screen
+            // saved. A session started by a mis-tap, or to try something out, had to be saved and
+            // then lived in the history and in that day's Effort for good.
+            Button(role: .destructive) {
+                confirmingDiscard = true
+            } label: {
+                LiftDestructiveLabel("Discard session")
+            }
+            .buttonStyle(.plain)
+            .disabled(saving)
+            .confirmationDialog("Discard this session?",
+                                isPresented: $confirmingDiscard, titleVisibility: .visible) {
+                Button("Discard", role: .destructive) {
+                    session.discard()
+                    showingFinish = false
                 }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.statusCritical)
-                .padding(.top, 4)
-                .disabled(saving)
-                .confirmationDialog("Discard this session?",
-                                    isPresented: $confirmingDiscard, titleVisibility: .visible) {
-                    Button("Discard", role: .destructive) {
-                        session.discard()
-                        showingFinish = false
-                    }
-                    Button("Keep going", role: .cancel) { }
-                } message: {
-                    Text("\(engine?.completedWorkingSets ?? 0) recorded sets will be thrown away. Nothing is saved and no workout is created.")
-                }
+                Button("Keep going", role: .cancel) { }
+            } message: {
+                Text("\(engine?.completedWorkingSets ?? 0) recorded sets will be thrown away. Nothing is saved and no workout is created.")
             }
         }
-        #if os(iOS)
-        .presentationDragIndicator(.visible)
-        #else
-        .frame(width: 460, height: 420)
+        #if os(macOS)
+        .frame(width: 460, height: 520)
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .task { await loadSetCountChanges() }
+    }
+
+    /// Session RPE, typed as one number.
+    private var sessionRpeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NoopCardHeader("How hard was the whole session? (1–10)", icon: "barbell", caption: nil)
+            TextField("7", text: $sessionRpeText)
+                .textFieldStyle(.plain)
+                .font(StrandFont.value(28, relativeTo: .title))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .numericKeyboard()
+                .focused($focused, equals: .sessionRpe)
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(NoopVisualStyle.inset))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+            Text("This is session RPE. Multiplied by the session's length it gives session load — the one figure that compares across completely different training.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .ltCard()
     }
 
     /// Sets never started. One choice covers all of them, because what matters at the end of a session
@@ -713,33 +964,29 @@ struct LiftSessionView: View {
     /// to zeros that every figure leaves out and Edit sets can still fill in. A set that was done is never
     /// asked about — it is complete (`LiftSessionController.setsToSave`).
     private func unfinishedCard(count: Int) -> some View {
-        NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                Text("Unfinished sets").strandOverline()
-                Text("Sets not started: \(count)")
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Picker("Unfinished sets", selection: $unfinishedChoice) {
-                    Text("Complete them").tag(UnfinishedChoice?.some(.complete))
-                    Text("Discard them").tag(UnfinishedChoice?.some(.discard))
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                Text("Completing saves them with the grey numbers shown. Discarding keeps them out of every figure; they stay under Edit sets as zeros you can fill in later.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                // Said before Save rather than after: `save` files nothing when no set counts.
-                if unfinishedChoice == .discard,
-                   !LiftSessionController.anyPerformed(session.setsToSave(completingUnfinished: false)) {
-                    Text("Every set would be a zero, so discarding saves no session and no workout.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.statusWarning)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            NoopCardHeader("Unfinished sets", icon: "list-checks", caption: nil)
+            Text("Sets not started: \(count)")
+                .font(StrandFont.light(15, relativeTo: .body))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            SegmentedPillControl([UnfinishedChoice?.some(.complete), .some(.discard)],
+                                 selection: $unfinishedChoice, fillsAvailableWidth: true) { choice in
+                choice == .complete ? String(localized: "Complete them") : String(localized: "Discard them")
+            }
+            .accessibilityLabel(Text("Unfinished sets"))
+            Text("Completing saves them with the grey numbers shown. Discarding keeps them out of every figure; they stay under Edit sets as zeros you can fill in later.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            // Said before Save rather than after: `save` files nothing when no set counts.
+            if unfinishedChoice == .discard,
+               !LiftSessionController.anyPerformed(session.setsToSave(completingUnfinished: false)) {
+                NoopInsightRow("Every set would be a zero, so discarding saves no session and no workout.",
+                               icon: "warning")
             }
         }
+        .ltCard()
     }
 
     /// Exercises added during the session, which the program does not have yet.
@@ -747,35 +994,33 @@ struct LiftSessionView: View {
         session.engine?.plan.filter(\.addedInSession) ?? []
     }
 
-    /// Set counts changed with ⊕/⊖, and exercises added, during the session. The program keeps them only
-    /// if asked to — one answer for all of them, listed so the lifter sees what "update" would write.
+    /// Set counts changed during the session, and exercises added. The program keeps them only if asked
+    /// to — one answer for all of them, listed so the lifter sees what "update" would write.
     private var programCard: some View {
         let added = addedExercises
-        return NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                Text("Program").strandOverline()
-                Text(programQuestion(countsChanged: !setCountChanges.isEmpty, exercisesAdded: !added.isEmpty))
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                ForEach(setCountChanges, id: \.itemId) { change in
-                    Text("\(change.exercise): \(change.from) → \(change.to) sets")
-                        .font(StrandFont.bodyNumber)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                }
-                ForEach(Array(added.enumerated()), id: \.offset) { _, line in
-                    Text("New: \(line.exercise) · sets: \(line.targetSets)")
-                        .font(StrandFont.bodyNumber)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                }
-                Picker("Program", selection: $programChoice) {
-                    Text("Update program").tag(ProgramChoice?.some(.update))
-                    Text("Keep as it was").tag(ProgramChoice?.some(.keep))
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+        return VStack(alignment: .leading, spacing: 12) {
+            NoopCardHeader("Program", icon: "list-checks", caption: nil)
+            Text(programQuestion(countsChanged: !setCountChanges.isEmpty, exercisesAdded: !added.isEmpty))
+                .font(StrandFont.light(15, relativeTo: .body))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(setCountChanges, id: \.itemId) { change in
+                Text("\(change.exercise): \(change.from) → \(change.to) sets")
+                    .font(StrandFont.light(13, relativeTo: .footnote))
+                    .foregroundStyle(StrandPalette.textSecondary)
             }
+            ForEach(Array(added.enumerated()), id: \.offset) { _, line in
+                Text("New: \(line.exercise) · sets: \(line.targetSets)")
+                    .font(StrandFont.light(13, relativeTo: .footnote))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            SegmentedPillControl([ProgramChoice?.some(.update), .some(.keep)],
+                                 selection: $programChoice, fillsAvailableWidth: true) { choice in
+                choice == .update ? String(localized: "Update program") : String(localized: "Keep as it was")
+            }
+            .accessibilityLabel(Text("Program"))
         }
+        .ltCard()
     }
 
     /// The program question, worded for what actually changed.
@@ -807,6 +1052,7 @@ struct LiftSessionView: View {
             }
             out[exercise] = bySet
         }
+        lastTime = out
         session.setLastSession(out)
     }
 

@@ -48,20 +48,12 @@ struct StressCheckInCard: View {
 
     var body: some View {
         if let nudge = center.pending {
-            StrandCard(tint: StrandPalette.restColor) {
-                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                    HStack(spacing: NoopMetrics.space2) {
-                        Image(systemName: "wind")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(StrandPalette.restBright)
-                            .accessibilityHidden(true)
-                        Text("Stress check-in").strandOverline()
-                        Spacer()
-                        StatePill("Passive", tone: .neutral, showsDot: true)
-                    }
+            NoopCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    NoopCardHeader("Stress check-in", icon: "wind") { Text("Passive") }
 
                     Text("Your HRV dipped while you were still. Want a minute to breathe?")
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.book(15, relativeTo: .body))
                         .foregroundStyle(StrandPalette.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -72,18 +64,22 @@ struct StressCheckInCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    HStack(spacing: NoopMetrics.rowSpacing) {
-                        NoopButton("Breathe now", systemImage: "wind", kind: .primary) {
-                            center.dismiss()
-                            onBreatheNow()
-                        }
+                    Button {
+                        center.dismiss()
+                        onBreatheNow()
+                    } label: {
+                        HStack(spacing: 8) { PhIcon("wind", size: 17); Text("Breathe now") }
+                    }
+                    .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
 
-                        NoopButton("Not now", kind: .secondary) { center.dismiss() }
-
-                        NoopButton("Turn off", kind: .tertiary) {
+                    HStack(spacing: 10) {
+                        Button("Not now") { center.dismiss() }
+                            .buttonStyle(NoopButtonStyle(.secondary, fullWidth: true))
+                        Button("Turn off") {
                             BiofeedbackPrefs.checkInEnabled = false
                             center.dismiss()
                         }
+                        .buttonStyle(NoopButtonStyle(.tertiary, fullWidth: true))
                     }
 
                     Text("Relaxation guidance from your own numbers: not a health alert, and not a diagnosis. Trends matter more than any single number.")

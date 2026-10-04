@@ -19,6 +19,6 @@ struct WatchRootView: View {
         // watchOS page TabView shows the page-indicator dots by default; the iOS background-display-mode
         // customisation is unavailable here, so the plain page style is the right call.
         .tabViewStyle(.page)
-        .background(StrandPalette.surfaceBase.ignoresSafeArea())
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
     }
 }

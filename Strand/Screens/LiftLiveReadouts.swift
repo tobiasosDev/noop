@@ -37,6 +37,8 @@ struct LiftHeartRate: View {
         case compact
         /// The number alone in body size, under the sheet's "HR" label.
         case plain
+        /// The number with a small "bpm", for the v2 heart-rate pill in the session header.
+        case pill
     }
 
     let style: Style
@@ -48,9 +50,8 @@ struct LiftHeartRate: View {
         switch style {
         case .compact:
             HStack(spacing: 3) {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                value.font(StrandFont.captionNumber)
+                PhIcon("heart", weight: .fill, size: 10)
+                value.font(StrandFont.value(12, relativeTo: .caption))
             }
             .foregroundStyle(tint)
             .accessibilityLabel(model.bpm.map { String(localized: "Heart rate \($0)") }
@@ -59,6 +60,46 @@ struct LiftHeartRate: View {
             value
                 .font(StrandFont.bodyNumber)
                 .foregroundStyle(tint)
+        case .pill:
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                value.font(StrandFont.value(13))
+                    .foregroundStyle(model.bpm == nil ? StrandPalette.textTertiary : StrandPalette.textPrimary)
+                Text("bpm").font(StrandFont.book(10)).foregroundStyle(StrandPalette.textTertiary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.bpm.map { String(localized: "Heart rate \($0)") }
+                                ?? String(localized: "Heart rate"))
         }
+    }
+}
+
+/// The rest draining away: a track whose fill is the share of the rest still to run, redrawn by its own
+/// once-a-second timeline for the same reason as `LiftRunningClock` — the sheet around it stays still.
+struct LiftRestTrack: View {
+    /// Unix second the rest ends.
+    let endsAt: Int
+    /// Length of the whole rest, seconds.
+    let total: Int
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), by: 1)) {
+            context in
+            let left = max(0, endsAt - Int(context.date.timeIntervalSince1970))
+            let fraction = total > 0 ? min(1, Double(left) / Double(total)) : 0
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.10))
+                        .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                    if fraction > 0 {
+                        Capsule(style: .continuous)
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.55), Color.white],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(geo.size.height, geo.size.width * fraction))
+                    }
+                }
+            }
+        }
+        .frame(height: 10)
+        .accessibilityHidden(true)
     }
 }

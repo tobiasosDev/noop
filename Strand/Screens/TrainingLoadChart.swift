@@ -59,22 +59,37 @@ struct TrainingLoadChart: View {
         // Floor at 1 (matching the Android `fold(1.0)` twin): an all-rest window of zero loads would
         // otherwise make the y-domain `0...0`, which Swift Charts renders as a degenerate/empty scale.
         let maxY = max(rows.map { max($0.ctl, $0.atl) }.max() ?? 1, 1)
+        // v2: the two lines fill the plot height rather than hugging its top, so a 42-day window reads.
+        let minY = max(0, (rows.map { min($0.ctl, $0.atl) }.min() ?? 0) * 0.85)
+        let lo = min(minY, maxY - 1)
         Chart {
+            ForEach(ctlRows) { r in
+                AreaMark(x: .value("Day", r.date), yStart: .value("Floor", lo), yEnd: .value("CTL", r.ctl),
+                         series: .value("Series", "CTL area"))
+                    .foregroundStyle(LinearGradient(colors: [StrandPalette.effortColor.opacity(0.38),
+                                                             StrandPalette.effortColor.opacity(0)],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.catmullRom)
+            }
             ForEach(ctlRows) { r in
                 LineMark(x: .value("Day", r.date), y: .value("CTL", r.ctl),
                          series: .value("Series", "CTL"))
-                    .foregroundStyle(StrandPalette.gold)
+                    .foregroundStyle(StrandPalette.metricCyan)
+                    .lineStyle(StrokeStyle(lineWidth: 1.3))
                     .interpolationMethod(.catmullRom)
             }
             ForEach(atlRows) { r in
                 LineMark(x: .value("Day", r.date), y: .value("ATL", r.atl),
                          series: .value("Series", "ATL"))
-                    .foregroundStyle(StrandPalette.strain100)
+                    .foregroundStyle(StrandPalette.textPrimary.opacity(0.8))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 2.5]))
                     .interpolationMethod(.catmullRom)
             }
         }
-        .chartYScale(domain: 0...(maxY * 1.08))
-        .chartYAxis { AxisMarks(position: .leading) }
+        .chartYScale(domain: lo...(maxY * 1.08))
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
         .chartOverlay { proxy in
             GeometryReader { geo in
                 let plot = proxy.plotRectCompat(in: geo)
@@ -86,9 +101,9 @@ struct TrainingLoadChart: View {
                        let pyATL = proxy.position(forY: p.atl) {
                         let cx = px + plot.minX
                         CrosshairRule(x: cx, height: geo.size.height)
-                        HighlightDot(color: StrandPalette.gold)
+                        HighlightDot(color: StrandPalette.metricCyan)
                             .position(x: cx, y: pyCTL + plot.minY)
-                        HighlightDot(color: StrandPalette.strain100)
+                        HighlightDot(color: StrandPalette.textPrimary)
                             .position(x: cx, y: pyATL + plot.minY)
                         PositionedTooltip(
                             anchor: CGPoint(x: cx, y: min(pyCTL, pyATL) + plot.minY),

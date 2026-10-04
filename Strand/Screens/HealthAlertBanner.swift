@@ -10,19 +10,20 @@ struct HealthAlertBanner: View {
     var body: some View {
         if let alert = model.healthAlert {
             let copy = localizedHealthAlertCopy(alert)
-            // A frosted, warning-tinted alert card (not a flat coloured bar) — prominent but on-brand.
-            // The amber wash + a glyph in a soft amber chip read as an early-warning without a hard rule.
-            NoopCard(padding: 14, tint: StrandPalette.statusWarning) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(StrandPalette.statusWarning)
-                        .frame(width: 30, height: 30)
-                        .background(StrandPalette.statusWarning.opacity(0.16), in: Circle())
+            // A neutral v2 card whose only colour is the alert glyph (the alert accent is the one active
+            // state on the card): prominent, but never a coloured border or a tinted wash.
+            NoopCard {
+                HStack(alignment: .top, spacing: 14) {
+                    PhIcon("warning", size: 17)
+                        .foregroundStyle(NoopGlow.low.tint)
+                        .frame(width: 34, height: 34)
+                        .background(RoundedRectangle(cornerRadius: NoopVisualStyle.tileRadius, style: .continuous)
+                            .fill(NoopVisualStyle.raised))
                         .accessibilityHidden(true)
                     Text(copy)
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textPrimary)
+                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }

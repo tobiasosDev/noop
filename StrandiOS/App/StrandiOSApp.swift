@@ -38,7 +38,7 @@ struct StrandiOSApp: App {
     @StateObject private var liftSession: LiftSessionController
     @Environment(\.scenePhase) private var scenePhase
     /// Appearance preference (System/Light/Dark). Default follows the OS; the Settings picker writes it.
-    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.defaultMode.rawValue
     /// Chart data-colour style (Titanium / Classic throwback). Re-colours gauges + charts.
     @AppStorage(ChartStyle.storageKey) private var chartStyleRaw = ChartStyle.titanium.rawValue
     /// Chrome accent colour (mint / WHOOP blue / custom). Chrome only — never the data colour worlds.
@@ -474,6 +474,9 @@ private struct iOSRootView: View {
                         .background(StrandPalette.surfaceBase.ignoresSafeArea())
                         .navigationBarTitleDisplayMode(.inline)
                 }
+                // `--demo-tab <0…4>` draws the v2 floating tab bar with that item active, so a tab-root
+                // screen can be captured the way it looks inside the shell.
+                .overlay(alignment: .bottom) { DemoScreensV2.tabBarOverlay }
             )
         }
         #endif
@@ -606,7 +609,8 @@ enum DemoScreens {
         // + self-service pairing guidance, screenshot-able WITHOUT reproducing the bond refusal on real
         // hardware.
         case "bondrefused": return AnyView(BondRefusedDemoScreen())
-        default:         return nil
+        // v2 redesign: every other screen is registered per group in `DemoScreensV2`.
+        default:         return DemoScreensV2.lookup(args[i + 1].lowercased())
         }
     }
 }

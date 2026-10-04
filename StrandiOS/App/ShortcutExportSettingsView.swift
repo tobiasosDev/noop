@@ -10,32 +10,32 @@ struct ShortcutExportSettingsView: View {
     @AppStorage(ShortcutHealthExport.enabledKey) private var enabled = false
 
     var body: some View {
-        ScreenScaffold(title: "Shortcuts Export",
-                       subtitle: "Strap data into Apple Health without HealthKit, for sideloaded installs.") {
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Shortcuts Export")
+                .padding(.bottom, 6)
+            Text("Strap data into Apple Health without HealthKit, for sideloaded installs.")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
             exportCard
         }
+        // The screen draws its own v2 header.
+        .noopHidesSystemNavBar()
     }
 
     private var exportCard: some View {
-        StrandCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Image(systemName: "square.and.arrow.up.on.square.fill")
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Shortcuts file export")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
+        NoopCard {
+            VStack(alignment: .leading, spacing: 14) {
+                NoopCardHeader("Shortcuts file export", icon: "export")
                 Toggle(isOn: $enabled) {
                     Text("Export for Shortcuts (Apple Health)")
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.book(15, relativeTo: .body))
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
-                .toggleStyle(.switch)
-                .tint(StrandPalette.accent)
+                .toggleStyle(.noop)
                 Text("When this is on, NOOP rewrites a plain-text file (On My iPhone › NOOP › noop_sync.txt) each time you leave the app: one line per 15 minutes of heart rate, HRV and steps, read straight from your strap. Pair it with the Siri Shortcut that reads the file and logs everything into Apple Health (no HealthKit entitlement needed), so it works on sideloaded installs. The setup guide and the pre-built Shortcut live in the project wiki on GitHub.")
-                    .font(StrandFont.caption)
+                    .font(StrandFont.light(12.5, relativeTo: .caption))
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
