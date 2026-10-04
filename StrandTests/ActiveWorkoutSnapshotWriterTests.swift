@@ -3,7 +3,7 @@ import Foundation
 import WhoopProtocol
 @testable import Strand
 
-/// `ActiveWorkoutSnapshotWriter`: off-main writes, byte-identical to `ActiveWorkoutPersistence.store`, and a
+/// `ActiveWorkoutSnapshotWriter`: off-main writes with the same JSON payload as the synchronous store, and a
 /// clear that a write still in flight can never undo.
 final class ActiveWorkoutSnapshotWriterTests: XCTestCase {
 
@@ -29,7 +29,7 @@ final class ActiveWorkoutSnapshotWriterTests: XCTestCase {
             avgHr: 120, peakHr: 159, liveStrain: 6.5, pausedAtSec: nil, pausedDurationSec: 0)
     }
 
-    func testWritesTheSameBytesAsTheSynchronousStore() {
+    func testWritesTheSameJSONPayloadAsTheSynchronousStore() throws {
         let writer = ActiveWorkoutSnapshotWriter(defaults: defaults)
         let snap = snapshot(samples: 300)
         writer.store(snap)
@@ -38,8 +38,14 @@ final class ActiveWorkoutSnapshotWriterTests: XCTestCase {
         let reference = UserDefaults(suiteName: suiteName + "-ref")!
         defer { reference.removePersistentDomain(forName: suiteName + "-ref") }
         ActiveWorkoutPersistence.store(snap, into: reference)
-        XCTAssertEqual(defaults.data(forKey: ActiveWorkoutPersistence.defaultsKey),
-                       reference.data(forKey: ActiveWorkoutPersistence.defaultsKey))
+        // JSONEncoder does not guarantee object-key order across independent encodes. Compare the
+        // full payload with only object keys sorted: fields, nulls and sample order still must match.
+        let actualData = try XCTUnwrap(defaults.data(forKey: ActiveWorkoutPersistence.defaultsKey))
+        let referenceData = try XCTUnwrap(reference.data(forKey: ActiveWorkoutPersistence.defaultsKey))
+        let actualJSON = try JSONSerialization.jsonObject(with: actualData)
+        let referenceJSON = try JSONSerialization.jsonObject(with: referenceData)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: actualJSON, options: .sortedKeys),
+                       try JSONSerialization.data(withJSONObject: referenceJSON, options: .sortedKeys))
         XCTAssertEqual(ActiveWorkoutPersistence.load(from: defaults), snap)
     }
 

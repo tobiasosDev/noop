@@ -2758,8 +2758,8 @@ final class AppModel: ObservableObject {
 /// JSON-encodes the WHOLE sample array: an hour into a session that is 3,600 samples re-encoded on the main
 /// thread every second, and the cost keeps growing for as long as the workout runs. That is a main-thread
 /// hitch once a second during exactly the session a wearer is watching. The encode and the `UserDefaults`
-/// write now run on a serial utility queue; the bytes written are the ones `ActiveWorkoutPersistence.store`
-/// writes, under the same key.
+/// write now run on a serial utility queue, using the same snapshot codec and defaults key as
+/// `ActiveWorkoutPersistence.store`.
 ///
 /// Crash recovery keeps its meaning. Every snapshot is the complete session, so when samples arrive faster
 /// than the queue drains only the NEWEST pending snapshot is encoded: it contains every sample of the ones
