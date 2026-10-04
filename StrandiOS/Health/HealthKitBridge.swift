@@ -51,9 +51,8 @@ final class HealthKitBridge: ObservableObject {
     /// a query would write NULL over that day's stored value and wipe it. Coalescing is safe instead
     /// because it changes nothing about what a sync reads — it only declines to repeat one.
     ///
-    /// Skipping is lossless: `sync` re-reads AGGREGATES for a window, so a sync that already covered this
-    /// wake's days has ingested its samples. The anchor exists only to name the window (see
-    /// `fetchTouchedDayWindow`), which is why it is still advanced on a skip.
+    /// Coalesced wakes leave their anchors untouched: samples arriving after the recent reads must
+    /// remain visible to the next catch-up. The anchor only names the window to re-aggregate.
     ///
     /// The Android side has had this shape all along — `syncHealthConnectIfStale` gates its Health Connect
     /// import on a staleness interval. This brings iOS in line.
@@ -294,6 +293,7 @@ final class HealthKitBridge: ObservableObject {
     /// Long-lived observer queries, retained so HealthKit doesn't tear them down. Keyed by the sample
     /// type's identifier so a second `enableLiveDelivery()` call replaces rather than duplicates.
     private var observerQueries: [String: HKObserverQuery] = [:]
+    private var observerDeliveries = HealthObserverDeliveryQueue<HKSampleType>()
 
     /// Register one `HKObserverQuery` per scored read type and turn on hourly background delivery, so
     /// new Apple Watch data is ingested continuously. Each observer's update handler runs an anchored
@@ -336,16 +336,15 @@ final class HealthKitBridge: ObservableObject {
                 store.stop(existing)
                 observerQueries[key] = nil
             }
-            let observer = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, _ in
+            let observer = HKObserverQuery(sampleType: type, predicate: Self.notNoopAuthored) { [weak self] _, completion, error in
                 // HealthKit invokes this on a background queue. Hop to the main actor (the bridge is
                 // @MainActor and `sync` mutates published state), run the incremental catch-up, then
                 // ALWAYS call completion so HealthKit keeps delivering. We don't tie completion to sync
                 // success: a transient store error shouldn't make HealthKit think we never handled the
                 // update and back off — the next foreground catch-up will reconcile.
-                guard let self else { completion(); return }
+                guard error == nil, let self else { completion(); return }
                 Task { @MainActor in
-                    await self.syncFromObserver(type: type)
-                    completion()
+                    self.enqueueObserver(type: type, completion: completion)
                 }
             }
             store.execute(observer)
@@ -357,84 +356,100 @@ final class HealthKitBridge: ObservableObject {
         }
     }
 
-    /// Drive an incremental sync off an observer wake. We use an `HKAnchoredObjectQuery` per type to
-    /// learn the span of days touched since we last looked (persisting the anchor so the same samples
-    /// aren't walked twice and nothing between wakes is missed), then re-aggregate just that day window
-    /// via the existing `sync(days:)` path. Re-aggregating the window (rather than the deltas alone)
-    /// keeps every per-day average correct and idempotent — `sync` upserts are keyed by day.
-    private func syncFromObserver(type: HKSampleType) async {
-        guard auth == .authorized else { return }
-        // #1578: counted before any early return, so the ratio of wakes to syncs is honest. Coalescing
-        // cuts the work per wake, not the wakes — this is what shows whether the wake itself is the cost.
+    /// One drain owns all observer cursor reads. Duplicate deliveries share a queued type but retain
+    /// every completion; deliveries arriving during a read remain queued for the next batch.
+    private func enqueueObserver(type: HKSampleType, completion: @escaping () -> Void) {
         HealthSyncStats.recordWake()
-        let (touched, newAnchor) = await fetchTouchedDayWindow(type: type)
-        // No new samples since the last anchor (a spurious wake): nothing to ingest, so advancing the
-        // anchor now loses nothing and skips a redundant re-query next wake.
-        guard let touched else {
-            HealthSyncStats.recordEmptyWake()
-            if let newAnchor { persistAnchor(newAnchor, for: type) }
-            return
-        }
-        let cal = Calendar.current
-        let daysBack = cal.dateComponents([.day], from: cal.startOfDay(for: touched),
-                                          to: cal.startOfDay(for: Date())).day ?? 0
-        // Clamp to a sane window: at least today, and never re-walk more than a month from one wake.
-        let window = max(1, min(31, daysBack + 1))
-        // A sync completed moments ago and covered at least this wake's window, so a second full pass
-        // would burn ~15 HealthKit aggregate queries and a write-back to re-derive rows that sync just
-        // wrote. Stand down. This is what collapses the hourly burst of observers into one sync (seven of
-        // them since workouts joined the set, #2265 — a count worth not restating as a literal again).
-        // FOREGROUND catch-up deliberately does not consult this: an explicit resume should always read.
-        // `age >= 0` is not defensive noise. This is WALL-CLOCK time, and it can move backwards — an NTP
-        // correction, or a user changing the date. A negative age satisfies `< window`, so every wake would
-        // skip; and because `lastSync` is only written by a sync that RAN, the skipping would keep it stale
-        // and background Health ingestion would stay dead until a foreground catch-up (which ignores this
-        // gate) broke the loop. Cheap to exclude, so exclude it.
-        let sinceLastSync = lastSync.map { Date().timeIntervalSince($0) }
-        if let age = sinceLastSync, age >= 0, age < Self.observerCoalesceWindow,
-           window <= lastSyncDays {
-            HealthSyncStats.recordCoalesced()
-            // Deliberately do NOT advance the anchor here. Samples that landed AFTER that sync's reads but
-            // before this wake are not in the store yet, and advancing past them would leave them to be
-            // picked up only incidentally — by whatever later sync happens to re-read the same day. Leaving
-            // the anchor put means the next wake sees the same window and syncs it for certain. The cost is
-            // one more delta query on that wake, which is the cheap half; the ~15 aggregate reads and the
-            // write-back are what this is avoiding.
-            return
-        }
-        // Advance the anchor ONLY after the ingestion commits (@bhelm). If sync() bails (another sync holds
-        // `syncing`, or the store is unavailable), the anchor stays put so the next wake re-fetches this
-        // window and re-ingests — sync re-reads aggregates, so the replay is idempotent.
-        if await sync(days: window), let newAnchor {
-            persistAnchor(newAnchor, for: type)
+        guard observerDeliveries.enqueue(id: type.identifier, payload: type, completion: completion) else { return }
+        Task { @MainActor in
+            while let batch = observerDeliveries.nextBatch() {
+                await syncFromObservers(types: batch.map(\.payload))
+                for delivery in batch {
+                    for completion in delivery.completions { completion() }
+                }
+            }
         }
     }
 
-    /// Advance this type's stored anchor over any new samples and return the OLDEST sample date seen,
-    /// or nil when there were no new samples. Anchors are persisted in UserDefaults per type so live
-    /// deltas are neither re-ingested nor missed across launches. We don't consume the samples here —
-    /// `sync(days:)` re-reads the aggregate for the affected window — the anchor's only job is to tell
-    /// us how far back the change reached.
-    private func fetchTouchedDayWindow(type: HKSampleType) async -> (oldest: Date?, newAnchor: HKQueryAnchor?) {
-        let key = HealthKitBridge.anchorDefaultsKey(for: type)
-        let priorAnchor: HKQueryAnchor? = {
-            guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-            return try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
-        }()
-
-        return await withCheckedContinuation { (cont: CheckedContinuation<(Date?, HKQueryAnchor?), Never>) in
-            let q = HKAnchoredObjectQuery(
-                type: type, predicate: Self.notNoopAuthored,
-                anchor: priorAnchor, limit: HKObjectQueryNoLimit
-            ) { _, samples, _, newAnchor, _ in
-                // Return the advanced anchor but do NOT persist it here: the caller commits it only after
-                // the ensuing sync has actually stored the window (@bhelm). Persisting in this callback,
-                // before ingestion was known to run, advanced the cursor past samples a later-bailed
-                // sync() never stored — silently losing days for the background/watch-only path.
-                let oldest = (samples ?? []).map { $0.startDate }.min()
-                cont.resume(returning: (oldest, newAnchor))
+    /// Bounded delta reads determine a shared aggregate window. Cursor commits follow a successful
+    /// import, so a busy bridge, failed page or failed import leaves the update available for retry.
+    private func syncFromObservers(types: [HKSampleType]) async {
+        guard auth == .authorized, !syncing else { return }
+        let age = lastSync.map { Date().timeIntervalSince($0) }
+        // This check happens BEFORE fetching samples. Only a sync covering the entire observer window
+        // can safely defer every type without first learning the affected date range.
+        if let age, age >= 0, age < Self.observerCoalesceWindow, lastSyncDays >= 31 {
+            for _ in types { HealthSyncStats.recordCoalesced() }
+            return
+        }
+        var candidates: [(HKSampleType, HKQueryAnchor, Date)] = []
+        var window = 0
+        for type in types {
+            guard let result = await fetchTouchedDayWindow(type: type) else { continue }
+            let delta = result.window
+            guard delta.oldest != nil || delta.hasDeletions else {
+                HealthSyncStats.recordEmptyWake()
+                persistAnchor(delta.anchor, cutoff: result.cutoff, for: type)
+                continue
             }
-            store.execute(q)
+            // Deleted objects have no dates; reconcile the entire supported observer window.
+            let daysBack = delta.oldest.map {
+                Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: $0),
+                                                to: Calendar.current.startOfDay(for: Date())).day ?? 0
+            } ?? 30
+            window = max(window, delta.hasDeletions ? 31 : max(1, min(31, daysBack + 1)))
+            candidates.append((type, delta.anchor, result.cutoff))
+        }
+        guard window > 0 else { return }
+        if let age = lastSync.map({ Date().timeIntervalSince($0) }),
+           age >= 0, age < Self.observerCoalesceWindow, window <= lastSyncDays {
+            for _ in candidates { HealthSyncStats.recordCoalesced() }
+            return
+        }
+        if await sync(days: window) {
+            for (type, anchor, cutoff) in candidates { persistAnchor(anchor, cutoff: cutoff, for: type) }
+        }
+    }
+
+    /// Bootstrap only the observer's supported 31-day import window, then keep that predicate fixed
+    /// for the lifetime of its cursor. Moving the cutoff while retaining an anchor changes the query's
+    /// meaning; the cutoff and cursor therefore commit together. v1 cursors used an unbounded predicate
+    /// and are intentionally re-bootstrapped once. Explicit history import is unaffected.
+    private func fetchTouchedDayWindow(type: HKSampleType) async -> (window: HealthObserverPager.Window<HKQueryAnchor>, cutoff: Date)? {
+        let state = UserDefaults.standard.dictionary(forKey: Self.anchorDefaultsKey(for: type))
+        let savedAnchor = (state?["anchor"] as? Data).flatMap {
+            try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0)
+        }
+        let savedCutoff = state?["cutoff"] as? Date
+        let priorAnchor = savedCutoff == nil ? nil : savedAnchor
+        let cutoff = priorAnchor == nil ? HealthObserverPager.bootstrapCutoff(now: Date()) : savedCutoff!
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            Self.notNoopAuthored,
+            HKQuery.predicateForSamples(withStart: cutoff, end: nil, options: [])
+        ])
+        do {
+            let window = try await HealthObserverPager.scan(from: priorAnchor) { cursor, limit in
+                try await withCheckedThrowingContinuation { continuation in
+                    let query = HKAnchoredObjectQuery(type: type, predicate: predicate,
+                                                     anchor: cursor, limit: limit) {
+                        _, samples, deleted, anchor, error in
+                        if let error { continuation.resume(throwing: error); return }
+                        guard let anchor else {
+                            continuation.resume(throwing: CocoaError(.coderValueNotFound))
+                            return
+                        }
+                        continuation.resume(returning: HealthObserverPager.Page(
+                            oldest: samples?.lazy.map(\.startDate).min(),
+                            sampleCount: samples?.count ?? 0, deletedCount: deleted?.count ?? 0,
+                            anchor: anchor))
+                    }
+                    self.store.execute(query)
+                }
+            }
+            return (window, cutoff)
+        } catch {
+            lastError = String(localized: "Apple Health sync failed: \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -442,15 +457,15 @@ final class HealthKitBridge: ObservableObject {
     /// the window has committed (or when there was nothing to ingest), so a bailed sync leaves the prior
     /// anchor in place for the next observer wake to re-fetch. Skips a nil-archive rather than clobber a
     /// good cursor. (@bhelm)
-    private func persistAnchor(_ anchor: HKQueryAnchor, for type: HKSampleType) {
+    private func persistAnchor(_ anchor: HKQueryAnchor, cutoff: Date, for type: HKSampleType) {
         guard let data = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) else { return }
-        UserDefaults.standard.set(data, forKey: HealthKitBridge.anchorDefaultsKey(for: type))
+        UserDefaults.standard.set(["anchor": data, "cutoff": cutoff], forKey: HealthKitBridge.anchorDefaultsKey(for: type))
     }
 
     /// UserDefaults key for a type's persisted HealthKit anchor. Namespaced so it can't collide with
     /// other app defaults, and keyed by the stable HK identifier so it survives across launches.
     private static func anchorDefaultsKey(for type: HKSampleType) -> String {
-        "hkAnchor.v1.\(type.identifier)"
+        "hkAnchor.v2.\(type.identifier)"
     }
 
     // MARK: - Read → store
@@ -461,12 +476,9 @@ final class HealthKitBridge: ObservableObject {
     @discardableResult
     func sync(days: Int = 30) async -> Bool {
         guard auth == .authorized else { return false }
-        guard !syncing else {
-            // A full sync includes write-back. If new strap data is landing concurrently, guarantee one
-            // final write-only reconciliation after the current owner releases the bridge.
-            writeBackPending = true
-            return false
-        }
+        // Read notifications are not evidence of fresh strap data. Only writeBackAfterNewData() requests a
+        // follow-up export; observer wakes retain their cursor for the next read instead.
+        guard !syncing else { return false }
         syncing = true
         // #1578: time the whole pass — the ~15 aggregate reads, the upserts and the write-back. Recorded in
         // `defer` so an early or thrown exit still contributes; a pass that cost time and then failed is
@@ -907,6 +919,7 @@ final class HealthKitBridge: ObservableObject {
             // `try?` returns nil on throw — a failure is NOT recorded as swept, so it retries next run.
             if (try? await store.deleteObjects(of: type, predicate: pred)) != nil {
                 succeededThisRun.insert(typeId)
+                if id == .heartRate { hrWriteSnapshot = nil }
             }
         }
         // Sleep.
@@ -1108,53 +1121,55 @@ final class HealthKitBridge: ObservableObject {
     /// device switch restarts the backfill for the new strap instead of resuming mid-stream.
     private var hrWriteCursorKey: String { "hkHRWriteCursor.v1.\(noopDeviceId)" }
 
-    /// Write the strap's continuous heart rate as 1-minute mean samples — the same `hrBuckets` SQL
-    /// the charts read (measured-first, PPG fallback), so Health sees exactly what NOOP plots. Raw
-    /// ~1 Hz is deliberately downsampled: a fully-worn day is ~86k samples, which bloats the Health
-    /// store; 1/min matches Apple Watch's background cadence.
-    ///
-    /// Dedup: forward-only cursor plus a 48 h rewrite window. Each run deletes OUR OWN prior HR
-    /// samples in `[windowStart, now]` (source-scoped, date-range predicate — far cheaper than per-
-    /// sample external-UUID keys at this volume) and rewrites the window, so a strap offload that
-    /// backfills a recent night reconciles. Offloads older than 48 h behind the cursor are missed
-    /// until the cursor is cleared — accepted trade-off for not re-walking 14 days every sync.
+    /// Only successful exports enter this cache. Recreating the bridge performs a full reconciliation.
+    private var hrWriteSnapshot: [Int: HeartRateWritebackDelta.Value]?
+
+    /// Writes minute means and reconciles corrections within 48 hours of the successful cursor.
+    /// Unchanged minutes cause no HealthKit traffic; new/corrected minutes replace only their span.
+    /// The cache is process-local so a restart also repairs samples deleted externally from Health.
     private func writeHeartRate(whoopStore: WhoopStore, fromTs: Int, nowTs: Int) async throws {
         guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate),
-              store.authorizationStatus(for: type) == .sharingAuthorized else { return }
+              store.authorizationStatus(for: type) == .sharingAuthorized else {
+            hrWriteSnapshot = nil
+            return
+        }
         let cursor = UserDefaults.standard.integer(forKey: hrWriteCursorKey)
         let windowStart = cursor > 0 ? max(fromTs, cursor - 48 * 3600) : fromTs
-        let buckets = (try? await whoopStore.hrBuckets(deviceId: noopDeviceId, from: windowStart,
-                                                       to: nowTs, bucketSeconds: 60)) ?? []
-        guard !buckets.isEmpty else { return }
-
+        // Propagate read failures: a failed local read is never evidence that samples were removed.
+        let buckets = try await whoopStore.hrBuckets(deviceId: noopDeviceId, from: windowStart,
+                                                     to: nowTs, bucketSeconds: 60)
+        let snapshot = Dictionary(uniqueKeysWithValues: buckets.map {
+            ($0.ts, HeartRateWritebackDelta.Value(bpm: $0.bpm, endTs: max($0.ts, min($0.ts + 60, nowTs))))
+        })
+        // SQL groups into minute starts, including the minute overlapping the lower read boundary.
+        let window = (windowStart / 60 * 60)..<(nowTs + 60)
+        guard let changed = HeartRateWritebackDelta.changedRange(previous: hrWriteSnapshot,
+                                                                 current: snapshot, window: window) else {
+            if hrWriteSnapshot != nil { hrWriteSnapshot = snapshot }
+            return
+        }
+        let changedBuckets = buckets.filter { changed.contains($0.ts) }
+        // Invalidated BEFORE mutation: delete failure or a partial save must retry reconciliation.
+        hrWriteSnapshot = nil
         let pred = NSCompoundPredicate(andPredicateWithSubpredicates: [
             HKQuery.predicateForObjects(from: HKSource.default()),
-            HKQuery.predicateForSamples(withStart: Date(timeIntervalSince1970: TimeInterval(windowStart)),
-                                        end: Date(timeIntervalSince1970: TimeInterval(nowTs) + 60),
-                                        options: []),
+            // Explicit half-open bounds preserve the next unchanged bucket, including an instant
+            // sample whose start/end both equal the upper bound.
+            NSPredicate(format: "%K >= %@ AND %K < %@",
+                        HKPredicateKeyPathStartDate, Date(timeIntervalSince1970: TimeInterval(changed.lowerBound)) as NSDate,
+                        HKPredicateKeyPathStartDate, Date(timeIntervalSince1970: TimeInterval(changed.upperBound)) as NSDate),
         ])
-        _ = try? await store.deleteObjects(of: type, predicate: pred)
-
-        // Main-thread hitch: the bridge is @MainActor and this loop allocates one HealthKit object per
-        // minute bucket (~2,880 on a routine pass, ~20k on the first). Built off the main actor; the
-        // save below is already async.
         let samples = await Task.detached(priority: .utility) {
-            HealthKitBridge.heartRateSamples(buckets: buckets, type: type, nowTs: nowTs)
+            HealthKitBridge.heartRateSamples(buckets: changedBuckets, type: type, nowTs: nowTs)
         }.value
-        // First run backfills ~20k samples (14 d × 1440/day); chunk the saves so no single HealthKit
-        // transaction is oversized. Cursor only advances past what actually saved.
-        var lastSaved = cursor
-        var pending = samples[...]
-        var pendingTs = buckets.map(\.ts)[...]
-        while !pending.isEmpty {
-            let chunk = Array(pending.prefix(5000))
-            let chunkTs = Array(pendingTs.prefix(5000))
-            pending = pending.dropFirst(chunk.count)
-            pendingTs = pendingTs.dropFirst(chunk.count)
-            try await store.save(chunk)
-            lastSaved = max(lastSaved, chunkTs.last ?? lastSaved)
-            UserDefaults.standard.set(lastSaved, forKey: hrWriteCursorKey)
-        }
+        try await HeartRateWritebackDelta.replace(sampleCount: samples.count, delete: {
+            _ = try await self.store.deleteObjects(of: type, predicate: pred)
+        }, save: { range in
+            try await self.store.save(Array(samples[range]))
+        }, commit: {
+            UserDefaults.standard.set(max(cursor, buckets.last?.ts ?? cursor), forKey: self.hrWriteCursorKey)
+            self.hrWriteSnapshot = snapshot
+        })
     }
 
     /// One `HKQuantitySample` per 1-minute bucket, each spanning its bucket but clamped so a bucket at
