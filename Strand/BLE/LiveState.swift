@@ -686,14 +686,21 @@ public final class LiveState: ObservableObject {
     /// strip. Non-positive sentinels (a strap "no interval this beat" placeholder) are dropped from the
     /// rolling buffer. `recentLimit` caps the buffer; the oldest intervals fall off first.
     public func setRRIntervals(_ intervals: [Int], recentLimit: Int = 60) {
+        // `rr` is written on every packet even when it equals the last one: its `$rr` sinks are per-packet
+        // consumers (`AppModel.ingestHR`, the resonance sweep's beat bucket), and two packets carrying the
+        // same interval are two beats.
         rr = intervals
         rrSeq += 1
         let valid = intervals.filter { $0 > 0 }
         guard !valid.isEmpty else { return }
-        rrRecent.append(contentsOf: valid)
-        if rrRecent.count > recentLimit {
-            rrRecent.removeFirst(rrRecent.count - recentLimit)
+        // Built aside and assigned once: appending and then trimming the published array fired
+        // `objectWillChange` twice per packet once the buffer was full, at every LiveState observer.
+        var recent = rrRecent
+        recent.append(contentsOf: valid)
+        if recent.count > recentLimit {
+            recent.removeFirst(recent.count - recentLimit)
         }
+        rrRecent = recent
     }
 
     /// Blank the live heart rate and the latest R-R packet while the link stays up: the strap reported itself
@@ -812,8 +819,13 @@ public final class LiveState: ObservableObject {
         // ALL-TIME drained-rows tally, right here at the single log sink (no new BLE seam). The summary
         // is emitted unconditionally whenever rows landed (#150), so the cumulative counter accrues on
         // every session, not only while the Connection test mode is on. The contains() pre-check keeps
-        // the common per-line cost to one substring scan.
-        if line.contains("session persisted"), let rows = ConnectionReadout.drainedRowsFromSummary(line) {
+        // the common per-line cost to one substring scan. That scan is itself gated on a byte search
+        // (~3.4 µs per ordinary line and ~0.9 ms on the 48 KB "sleep SKIPPED" line, against well under a
+        // microsecond): the needle is ASCII with no canonical-equivalent spelling, so a line without its
+        // bytes is one `contains` answers false for.
+        var probe = line
+        if Self.utf8MayContain(&probe, Self.sessionPersistedShape), line.contains("session persisted"),
+           let rows = ConnectionReadout.drainedRowsFromSummary(line) {
             TestCentre.noteDrainedRows(rows)
         }
     }
@@ -1079,10 +1091,93 @@ public final class LiveState: ObservableObject {
 
     private static let hexRunRegex = try? NSRegularExpression(pattern: "[0-9a-fA-F]{16,}")
 
+    /// `redactPii`'s text rules, compiled ONCE. They used to go through
+    /// `replacingOccurrences(of:with:options: .regularExpression)`, which resolves the pattern to an
+    /// `NSRegularExpression` on every call: eight per line, for every strap-log line, on the main actor
+    /// (main-thread hitch). Same patterns, same options (`.caseInsensitive` only where the old call passed
+    /// it), same templates. With the byte gates below, an ordinary line went from ~23 µs to ~2 µs (release
+    /// build, Apple silicon). `RedactPiiPrecompiledTests` keeps the old function as an oracle.
+    nonisolated private static let macRegex = try? NSRegularExpression(
+        pattern: "([0-9A-Fa-f]{2}):[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:([0-9A-Fa-f]{2})")
+    nonisolated private static let serialRegex = try? NSRegularExpression(
+        pattern: "WHOOP (?=[0-9A-Za-z]{6,})[0-9A-Za-z]*[0-9][0-9A-Za-z]*")
+    nonisolated private static let peripheralIdRegex = try? NSRegularExpression(
+        pattern: "(?![0-9A-Fa-f]{8}-(?:0000-1000-8000-00805f9b34fb|8d6d-82b8-614a-1c8cb0f8dcc6))[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+        options: [.caseInsensitive])
+    nonisolated private static let whoopIdNoopRegex = try? NSRegularExpression(
+        pattern: "whoop-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}(-noop)")
+    nonisolated private static let whoopIdRegex = try? NSRegularExpression(pattern: "whoop-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}")
+    nonisolated private static let ouraIdNoopRegex = try? NSRegularExpression(
+        pattern: "oura-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}(-noop)")
+    nonisolated private static let ouraIdRegex = try? NSRegularExpression(pattern: "oura-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}")
+    nonisolated private static let deviceNameRegex = try? NSRegularExpression(
+        pattern: "[\\p{L}\\p{N}_.\\-]+(['\u{2019}]s\\s+(?i:whoop))")
+
+    /// One byte of a shape the log sink looks for before it runs a costlier test: that exact ASCII byte,
+    /// or any ASCII hex digit.
+    private enum ShapeByte: Sendable { case exact(UInt8), hex }
+
+    /// The shortest stretch of bytes each rule cannot match without, in UTF-8.
+    ///
+    /// Every rule gated on one of these matches ASCII only inside that stretch, the hex class included:
+    /// `RedactPiiPrecompiledTests` pins that its case-insensitive form admits no other character. An
+    /// ASCII character is one unit in UTF-8 and one in the UTF-16 the regex reads, so a line without the
+    /// stretch is a line the rule cannot touch, and skipping the regex leaves it exactly as running it
+    /// would. Most lines carry none of them, and the "sleep SKIPPED" line, which lists every day it
+    /// skipped (48 KB on a fresh install), took ~25 ms through the eight regexes, ~18 ms of it the name
+    /// rule on a line with no apostrophe. Gated, it takes ~0.4 ms.
+    nonisolated private static let piiHexRunShape = [ShapeByte](repeating: .hex, count: 16)
+    nonisolated private static let piiMacShape: [ShapeByte] = [.hex, .hex, .exact(0x3A), .hex, .hex, .exact(0x3A)]
+    nonisolated private static let piiPeripheralIdShape: [ShapeByte] =
+        [ShapeByte](repeating: .hex, count: 8) + [.exact(0x2D)] + [ShapeByte](repeating: .hex, count: 4) + [.exact(0x2D)]
+    nonisolated private static let piiSerialShape = Array("WHOOP ".utf8).map(ShapeByte.exact)
+    nonisolated private static let piiWhoopIdShape = Array("whoop-".utf8).map(ShapeByte.exact)
+    nonisolated private static let piiOuraIdShape = Array("oura-".utf8).map(ShapeByte.exact)
+    nonisolated private static let piiStraightApostropheShape: [ShapeByte] = [.exact(0x27)]
+    nonisolated private static let piiCurlyApostropheShape = Array("\u{2019}".utf8).map(ShapeByte.exact)
+    /// The Backfiller's session summary, which `append(log:)` folds into the drained-rows tally (#990).
+    nonisolated private static let sessionPersistedShape = Array("session persisted".utf8).map(ShapeByte.exact)
+
+    /// Whether any of `shapes` occurs in `s`. `withUTF8` makes a bridged string contiguous in place, once,
+    /// so the next check reads the same bytes for free; the text is unchanged.
+    nonisolated private static func utf8MayContain(_ s: inout String, _ shapes: [ShapeByte]...) -> Bool {
+        s.withUTF8 { bytes in shapes.contains { shape($0, occursIn: bytes) } }
+    }
+
+    nonisolated private static func shape(_ shape: [ShapeByte], occursIn bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+        let n = shape.count
+        guard n > 0 else { return true }
+        guard bytes.count >= n else { return false }
+        candidates: for start in 0...(bytes.count - n) {
+            for k in 0..<n {
+                let b = bytes[start + k]
+                switch shape[k] {
+                case .exact(let want):
+                    if b != want { continue candidates }
+                case .hex:
+                    if !((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66)) {
+                        continue candidates
+                    }
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    /// What `s.replacingOccurrences(of: <pattern>, with: template, options: .regularExpression)` returned,
+    /// from the rule's precompiled `regex`.
+    nonisolated private static func piiReplacing(_ s: String, _ regex: NSRegularExpression?,
+                                                 with template: String) -> String {
+        guard let regex else { return s }
+        return regex.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length),
+                                              withTemplate: template)
+    }
+
     nonisolated static func redactPii(_ s: String) -> String {
         var out = s
         // Hex first: the text rules below must not see (or mangle) a run we are about to mask.
-        if let re = Self.hexRunRegex {
+        if Self.utf8MayContain(&out, Self.piiHexRunShape), let re = Self.hexRunRegex {
             let ns = out as NSString
             let matches = re.matches(in: out, range: NSRange(location: 0, length: ns.length))
             if !matches.isEmpty {
@@ -1097,9 +1192,9 @@ public final class LiveState: ObservableObject {
                 out = rebuilt
             }
         }
-        out = out.replacingOccurrences(
-            of: "([0-9A-Fa-f]{2}):[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:([0-9A-Fa-f]{2})",
-            with: "$1:••:••:••:••:$2", options: .regularExpression)
+        if Self.utf8MayContain(&out, Self.piiMacShape) {
+            out = Self.piiReplacing(out, Self.macRegex, with: "$1:••:••:••:••:$2")
+        }
         // #1193 field capture: the old rule required a DIGIT straight after "WHOOP ", but real serials
         // start with letters as often as digits - "WHOOP MGB0779473" sat unredacted in a log attached to
         // an issue while "WHOOP 4C1594026" beside it was masked. The rule now accepts any alnum run of 6+
@@ -1109,12 +1204,13 @@ public final class LiveState: ObservableObject {
         // service 1150" is a real diagnostic line, and PUFFIN is six alnum characters. A serial always
         // carries a digit; a word does not. "WHOOP 4.0" stays untouched for a different reason - the dot
         // stops the run at one character, short of the six the lookahead demands.
-        out = out.replacingOccurrences(
-            of: "WHOOP (?=[0-9A-Za-z]{6,})[0-9A-Za-z]*[0-9][0-9A-Za-z]*", with: "WHOOP <serial>", options: .regularExpression)
+        if Self.utf8MayContain(&out, Self.piiSerialShape) {
+            out = Self.piiReplacing(out, Self.serialRegex, with: "WHOOP <serial>")
+        }
         // Mask a CoreBluetooth peripheral UUID, but NOT a standard-BLE / WHOOP-vendor service UUID.
-        out = out.replacingOccurrences(
-            of: "(?![0-9A-Fa-f]{8}-(?:0000-1000-8000-00805f9b34fb|8d6d-82b8-614a-1c8cb0f8dcc6))[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
-            with: "<device>", options: [.regularExpression, .caseInsensitive])
+        if Self.utf8MayContain(&out, Self.piiPeripheralIdShape) {
+            out = Self.piiReplacing(out, Self.peripheralIdRegex, with: "<device>")
+        }
         // #1303: an ADOPTED device id (`whoop-<SERIAL>`) is a device identifier in every line that prints
         // an id. Neither rule above catches it — the MAC rule wants MAC shape and the serial rule wants the
         // literal "WHOOP " then a DIGIT, while an adopted id is `whoop-` + a serial commonly starting with
@@ -1123,24 +1219,20 @@ public final class LiveState: ObservableObject {
         // what lets a reader tell derived rows from measured ones. Six-character minimum matches
         // `minSerialLength`, so `my-whoop` and `my-whoop-noop` are untouched. Kotlin twin in
         // `redactStrapLogPii`.
-        out = out.replacingOccurrences(
-            of: "whoop-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}(-noop)",
-            with: "whoop-$1…$2", options: .regularExpression)
-        out = out.replacingOccurrences(
-            of: "whoop-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}",
-            with: "whoop-$1…", options: .regularExpression)
+        if Self.utf8MayContain(&out, Self.piiWhoopIdShape) {
+            out = Self.piiReplacing(out, Self.whoopIdNoopRegex, with: "whoop-$1…$2")
+            out = Self.piiReplacing(out, Self.whoopIdRegex, with: "whoop-$1…")
+        }
         // #2092: an Oura device id (`oura-<serial>`) is the same #1303 gap for the OTHER brand — neither
         // rule above catches it, since the prefix isn't "whoop-". Exact same shape (3-character prefix +
         // `…`, matching `OuraSerialIdentity.logSafe`) and the same `-noop`-suffix-preserving pair, since
         // `DeviceRegistryStore.computedSuffix` is brand-agnostic — an Oura device gets a `oura-<serial>
         // -noop` sibling the same way a WHOOP strap does. Applied AFTER the WHOOP rules but that ordering
         // is not load-bearing: the two prefixes never overlap. Kotlin twin in `redactStrapLogPii`.
-        out = out.replacingOccurrences(
-            of: "oura-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}(-noop)",
-            with: "oura-$1…$2", options: .regularExpression)
-        out = out.replacingOccurrences(
-            of: "oura-([A-Za-z0-9]{3})[A-Za-z0-9-]{3,}",
-            with: "oura-$1…", options: .regularExpression)
+        if Self.utf8MayContain(&out, Self.piiOuraIdShape) {
+            out = Self.piiReplacing(out, Self.ouraIdNoopRegex, with: "oura-$1…$2")
+            out = Self.piiReplacing(out, Self.ouraIdRegex, with: "oura-$1…")
+        }
         // The account holder's NAME, as WHOOP writes it into the advertised local name. WHOOP names a
         // strap "<FirstName>'s Whoop" by default and the scan path logs that name on every discovery, so
         // the shareable log (#445) we ask people to attach to public issues carried a real person's name.
@@ -1154,9 +1246,9 @@ public final class LiveState: ObservableObject {
         // "Ryan". A multi-token rule cannot tell a name from the surrounding log text and would swallow
         // "Discovered" with it. A fully custom name with no possessive stays a known gap. Kotlin twin in
         // `redactStrapLogPii` as `PII_DEVICE_NAME_RE`.
-        out = out.replacingOccurrences(
-            of: "[\\p{L}\\p{N}_.\\-]+(['\u{2019}]s\\s+(?i:whoop))",
-            with: "<name>$1", options: .regularExpression)
+        if Self.utf8MayContain(&out, Self.piiStraightApostropheShape, Self.piiCurlyApostropheShape) {
+            out = Self.piiReplacing(out, Self.deviceNameRegex, with: "<name>$1")
+        }
         return out
     }
 
