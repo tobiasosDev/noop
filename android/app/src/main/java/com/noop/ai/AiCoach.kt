@@ -749,21 +749,7 @@ class AiCoach(
         customAuthHeader: CustomAiAuthHeader,
         modernParams: Boolean,
     ): Pair<Int, String> {
-        val body = JSONObject()
-            .put("model", model)
-            .put("messages", messages)
-        if (modernParams) {
-            // #1074: same 4096 cap as the standard path below. This modern-params leg fronts REASONING
-            // models, which count hidden thinking tokens against max_completion_tokens — so 900 starved
-            // them into truncated/empty replies even more readily. A cap, not a target.
-            body.put("max_completion_tokens", 4096)
-        } else {
-            body.put("temperature", 0.6)
-            // #1074: 900 truncated detailed coaching replies mid-sentence on cloud providers (the reporter
-            // hit it on a DeepSeek "pro" model). 4096 lets a full multi-section reply complete; it is a cap,
-            // not a target, so short answers are unaffected. Matches the Gemini leg's maxOutputTokens.
-            body.put("max_tokens", 4096)
-        }
+        val body = openAiCompatibleBody(provider, model, messages, modernParams = modernParams)
 
         val builder = Request.Builder()
             .url(url)
@@ -961,13 +947,7 @@ class AiCoach(
         messages.put(JSONObject().put("role", "system").put("content", systemPrompt))
         for (m in history) messages.put(JSONObject().put("role", m.role).put("content", m.text))
 
-        val body = JSONObject()
-            .put("model", model)
-            .put("messages", messages)
-            .put("temperature", 0.6)
-            .put("max_tokens", 4096)
-            .put("stream", true)
-            .toString()
+        val body = openAiCompatibleBody(provider, model, messages, stream = true).toString()
 
         val builder = Request.Builder().url(url).addHeader("Content-Type", "application/json")
             .post(body.toRequestBody(JSON))
@@ -1199,6 +1179,35 @@ class AiCoach(
     }
 
     companion object {
+        /** Shared by streaming, normal sends and parameter retries. No eligible ZDR endpoint means
+         * an OpenRouter error; the client never relaxes this routing policy. Swift: requestBody. */
+        internal fun openAiCompatibleBody(
+            provider: AiProvider,
+            model: String,
+            messages: JSONArray,
+            modernParams: Boolean = false,
+            stream: Boolean = false,
+        ): JSONObject {
+            val body = JSONObject()
+                .put("model", model)
+                .put("messages", messages)
+            if (modernParams) {
+                // #1074: same 4096 cap as the standard path below. This modern-params leg fronts REASONING
+                // models, which count hidden thinking tokens against max_completion_tokens — so 900 starved
+                // them into truncated/empty replies even more readily. A cap, not a target.
+                body.put("max_completion_tokens", 4096)
+            } else {
+                body.put("temperature", 0.6)
+                // #1074: 900 truncated detailed coaching replies mid-sentence on cloud providers (the reporter
+                // hit it on a DeepSeek "pro" model). 4096 lets a full multi-section reply complete; it is a cap,
+                // not a target, so short answers are unaffected. Matches the Gemini leg's maxOutputTokens.
+                body.put("max_tokens", 4096)
+            }
+            if (stream) body.put("stream", true)
+            if (provider == AiProvider.OPENROUTER) body.put("provider", JSONObject().put("zdr", true))
+            return body
+        }
+
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
         /**

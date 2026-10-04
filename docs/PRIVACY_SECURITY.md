@@ -96,6 +96,11 @@ on your terms:
   30-day averages and recent workouts) and sends it, with your question, directly to
   your chosen endpoint (e.g. `openrouter.ai`, `api.anthropic.com` or `api.openai.com`
   for the hosted providers). OpenRouter forwards the request to the selected model’s provider.
+  Every OpenRouter inference request enforces `provider.zdr: true`, including streaming and
+  parameter retries, so routing is restricted to Zero Data Retention endpoints. If none is
+  available, the request fails rather than falling back to a non-ZDR endpoint. This policy is
+  enforced on Apple and Android and does not require an account setting. See
+  [OpenRouter's ZDR routing documentation](https://openrouter.ai/docs/guides/routing/provider-selection#zero-data-retention-enforcement).
   If the Coach points at a local / self-hosted LLM, that endpoint is on
   your own machine and the request never leaves it.
 - **What is NOT sent.** No raw biometric streams, no Bluetooth data, no account or
