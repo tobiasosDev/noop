@@ -1,6 +1,7 @@
 package com.noop.ui
 
 import android.content.Context
+import com.noop.data.JournalQuestionIdentity
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -114,7 +115,7 @@ fun migrateLegacyJournalCatalog(custom: List<String>, hidden: List<String>): Lis
             out[idx] = out[idx].copy(hidden = true)   // a hidden custom question
         } else if (seen.add(key)) {
             out.add(JournalCatalogItem(canonical = t, kind = JournalKind.Bool,
-                group = STARTER_JOURNAL_GROUPS[t] ?: JournalGroup.Other,
+                group = STARTER_JOURNAL_GROUPS[JournalQuestionIdentity.canonical(t)] ?: JournalGroup.Other,
                 sortIndex = i, hidden = true, custom = false))
             i++
         }
@@ -149,7 +150,7 @@ fun resolveJournalItems(
             out.add(saved)
         } else {
             out.add(JournalCatalogItem(canonical = t, kind = JournalKind.Bool,
-                group = STARTER_JOURNAL_GROUPS[t] ?: JournalGroup.Other,
+                group = STARTER_JOURNAL_GROUPS[JournalQuestionIdentity.canonical(t)] ?: JournalGroup.Other,
                 sortIndex = fallbackIndex, hidden = false, custom = false))
             fallbackIndex++
         }
@@ -205,7 +206,7 @@ fun addCustomJournalItem(
  */
 fun removeJournalItem(items: List<JournalCatalogItem>, canonical: String): List<JournalCatalogItem> {
     val key = normJournalKey(canonical)
-    val existing = items.firstOrNull { normJournalKey(it.canonical) == key }
+    val existing = items.lastOrNull { normJournalKey(it.canonical) == key }
     return if (existing?.custom == true) {
         items.filterNot { normJournalKey(it.canonical) == key }
     } else {
@@ -215,13 +216,15 @@ fun removeJournalItem(items: List<JournalCatalogItem>, canonical: String): List<
 
 fun restoreJournalItem(items: List<JournalCatalogItem>, canonical: String): List<JournalCatalogItem> {
     val key = normJournalKey(canonical)
-    return items.map { if (normJournalKey(it.canonical) == key) it.copy(hidden = false) else it }
+    return if (items.any { normJournalKey(it.canonical) == key }) {
+        editJournalItem(items, canonical) { it.copy(hidden = false) }
+    } else items
 }
 
 /** The display label for a canonical key: the user's rename, or the verbatim canonical. */
 fun journalDisplayName(items: List<JournalCatalogItem>, canonical: String): String {
     val key = normJournalKey(canonical)
-    return items.firstOrNull { normJournalKey(it.canonical) == key }?.displayName ?: canonical.trim()
+    return items.lastOrNull { normJournalKey(it.canonical) == key }?.displayName ?: canonical.trim()
 }
 
 /** Upsert-and-edit one item by canonical, materialising a starter with its defaults if absent. */
@@ -231,14 +234,14 @@ private fun editJournalItem(
     mutate: (JournalCatalogItem) -> JournalCatalogItem,
 ): List<JournalCatalogItem> {
     val key = normJournalKey(canonical)
-    val idx = items.indexOfFirst { normJournalKey(it.canonical) == key }
+    val idx = items.indexOfLast { normJournalKey(it.canonical) == key }
     if (idx >= 0) {
-        return items.toMutableList().also { it[idx] = mutate(it[idx]) }
+        return items.filterNot { normJournalKey(it.canonical) == key } + mutate(items[idx])
     }
     val t = canonical.trim()
     val next = (items.maxOfOrNull { it.sortIndex } ?: -1) + 1
     val fresh = JournalCatalogItem(canonical = t,
-        group = STARTER_JOURNAL_GROUPS[t] ?: JournalGroup.Other,
+        group = STARTER_JOURNAL_GROUPS[JournalQuestionIdentity.canonical(t)] ?: JournalGroup.Other,
         sortIndex = next, hidden = false, custom = false)
     return items + mutate(fresh)
 }

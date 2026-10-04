@@ -34,6 +34,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.noop.data.JournalEntry
+import com.noop.data.JournalQuestionIdentity
+import com.noop.data.canonicalJournalEntries
 import java.time.LocalDate
 
 // MARK: - Native journal logging (pure helpers + the Insights logging card)
@@ -61,32 +63,9 @@ val STARTER_JOURNAL_QUESTIONS: List<String> = listOf(
     "Did you read before bed?",
 )
 
-/** Dedup/identity key for a question. Normalises ALL whitespace, leading/trailing AND internal
- *  runs collapse to a single space, then lowercases. A WHOOP export commonly leaves a trailing
- *  newline or non-breaking space on a journal cell; folding it here is what keeps an imported
- *  "Did you take magnesium?\n" from sitting beside the starter "Did you take magnesium?" as two
- *  separate rows (#224). The DISPLAYED string stays verbatim, only the match key is normalised, 
- *  so the stored behaviour key the effects engine joins on is untouched.
- *  Kept value-for-value in step with macOS `JournalCatalogStore.norm` (JournalCatalog.swift). */
-internal fun normJournalKey(s: String): String =
-    // Collapse every run of whitespace to a single space, then trim + lowercase. Uses Kotlin's
-    // `Char.isWhitespace()` (Unicode-aware, it includes non-breaking space U+00A0 etc.) rather than
-    // a regex: the previous `Regex("(?U)\\s+")` compiled on the desktop JVM but THREW
-    // PatternSyntaxException on Android's ICU engine (the `(?U)` inline flag is unsupported there),
-    // crashing the Insights screen for anyone with journal entries to merge (#224/#267). Matches the
-    // Swift `.whitespacesAndNewlines` normalisation value-for-value.
-    buildString {
-        var prevSpace = true // suppress leading whitespace
-        for (c in s) {
-            if (c.isWhitespace()) {
-                if (!prevSpace) append(' ')
-                prevSpace = true
-            } else {
-                append(c)
-                prevSpace = false
-            }
-        }
-    }.trim().lowercase()
+/** Explicit English/German equivalents share an identity; display labels keep their wording.
+ * Mirrors JournalCatalogStore.norm on Apple. */
+internal fun normJournalKey(s: String): String = JournalQuestionIdentity.key(s)
 
 /** Catalog = imported questions (exact strings → logged days join imported history), then starter
  *  defaults, then user customs. Case-insensitive dedupe, first casing wins, with `hidden` questions
@@ -117,8 +96,8 @@ internal fun mergeJournalEntries(
     native: List<JournalEntry>,
 ): List<JournalEntry> {
     val byKey = LinkedHashMap<Pair<String, String>, JournalEntry>()
-    for (e in imported) byKey[e.day to e.question] = e
-    for (e in native) byKey[e.day to e.question] = e
+    for (e in canonicalJournalEntries(imported)) byKey[e.day to e.question] = e
+    for (e in canonicalJournalEntries(native)) byKey[e.day to e.question] = e
     return byKey.values.sortedWith(compareBy({ it.day }, { it.question }))
 }
 
@@ -345,6 +324,7 @@ private fun JournalGroupBlock(
                         color = if (item.hidden) Palette.textTertiary else Palette.textPrimary,
                         modifier = Modifier.weight(1f),
                     )
+                    val answerKey = JournalQuestionIdentity.canonical(item.canonical)
                     when {
                         item.hidden -> JournalChip("Restore", selected = false) { onRestoreQuestion(item.canonical) }
                         editing -> JournalItemEditControls(
@@ -356,17 +336,17 @@ private fun JournalGroupBlock(
                         )
                         item.kind.isNumeric -> JournalNumericField(
                             item = item,
-                            value = numericAnswers[item.canonical],
+                            value = numericAnswers[answerKey],
                             onCommit = { onNumeric(item.canonical, it) },
                             onClear = { onClear(item.canonical) },
                         )
                         else -> {
-                            JournalChip("Yes", selected = answers[item.canonical] == true) {
-                                if (answers[item.canonical] == true) onClear(item.canonical) else onAnswer(item.canonical, true)
+                            JournalChip("Yes", selected = answers[answerKey] == true) {
+                                if (answers[answerKey] == true) onClear(item.canonical) else onAnswer(item.canonical, true)
                             }
                             Spacer(Modifier.width(6.dp))
-                            JournalChip("No", selected = answers[item.canonical] == false) {
-                                if (answers[item.canonical] == false) onClear(item.canonical) else onAnswer(item.canonical, false)
+                            JournalChip("No", selected = answers[answerKey] == false) {
+                                if (answers[answerKey] == false) onClear(item.canonical) else onAnswer(item.canonical, false)
                             }
                         }
                     }

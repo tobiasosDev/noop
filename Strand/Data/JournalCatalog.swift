@@ -1,9 +1,9 @@
 import Foundation
+import WhoopStore
 
 /// The user's custom journal questions plus the starter behaviour catalog. Question strings are
-/// opaque exact-match labels to BehaviorInsights, so imported question strings (merged in at load
-/// time, ahead of these) always take precedence, adopting the export's exact wording is what
-/// joins a logged day and an imported day into one behaviour. UserDefaults-backed (single user).
+/// resolved through JournalQuestionIdentity for analysis; imported wording takes precedence for
+/// display. UserDefaults-backed (single user).
 ///
 /// v2 (#322 / task #53): a journal item can now be renamed (display-only, the stored key stays put
 /// so imported WHOOP history still lines up), typed as numeric (a value + unit, not just yes/no),
@@ -111,7 +111,7 @@ final class JournalCatalogStore: ObservableObject {
                 out[idx].hidden = true   // a hidden custom question
             } else if seen.insert(key).inserted {
                 out.append(JournalCatalogItem(canonical: t, displayName: nil, kind: .bool,
-                                              group: Self.starterGroups[t] ?? .other,
+                                              group: Self.starterGroups[JournalQuestionIdentity.canonical(t)] ?? .other,
                                               sortIndex: i, hidden: true, custom: false))
                 i += 1
             }
@@ -149,19 +149,10 @@ final class JournalCatalogStore: ObservableObject {
 
     private func nextSortIndex() -> Int { (items.map(\.sortIndex).max() ?? -1) + 1 }
 
-    /// Dedup/identity key for a question. Normalises ALL whitespace, leading/trailing AND internal
-    /// runs collapse to a single space (not just ASCII space/tab), then lowercases. A WHOOP export
-    /// commonly leaves a trailing newline or non-breaking space on a journal cell, which a bare
-    /// `.whitespaces` trim leaves in place: that's what let "Did you take magnesium?\n" (imported)
-    /// sit beside the starter "Did you take magnesium?" as two rows (#224). Collapsing here folds
-    /// them onto one key. The DISPLAYED string is still the original verbatim text, only the match
-    /// key is normalised, so the stored behaviour key (which the effects engine joins on) is intact.
-    /// Kept value-for-value in step with Android `normJournalKey` (JournalLog.kt).
+    /// Shared identity for explicit English/German equivalents and case/whitespace variants.
+    /// Display labels and persisted catalog customisations keep their original wording.
     nonisolated static func norm(_ s: String) -> String {
-        s.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-            .lowercased()
+        JournalQuestionIdentity.key(s)
     }
 
     /// imported > starter > custom; case-insensitive dedupe, first casing wins, with `hidden`
@@ -206,7 +197,7 @@ final class JournalCatalogStore: ObservableObject {
                 out.append(saved)
             } else {
                 out.append(JournalCatalogItem(canonical: t, displayName: nil, kind: .bool,
-                                              group: Self.starterGroups[t] ?? .other,
+                                              group: Self.starterGroups[JournalQuestionIdentity.canonical(t)] ?? .other,
                                               sortIndex: fallbackIndex, hidden: false, custom: false))
                 fallbackIndex += 1
             }
@@ -225,7 +216,7 @@ final class JournalCatalogStore: ObservableObject {
     /// The saved item for a canonical key, if the user has customised it.
     func item(for canonical: String) -> JournalCatalogItem? {
         let key = Self.norm(canonical)
-        return items.first { Self.norm($0.canonical) == key }
+        return items.last { Self.norm($0.canonical) == key }
     }
 
     /// Upsert the saved item for `canonical`, applying `mutate` to a fresh-or-existing item. Used by
@@ -233,12 +224,15 @@ final class JournalCatalogStore: ObservableObject {
     /// into `items` with its defaults, then edited. NEVER changes `canonical`.
     private func edit(_ canonical: String, mutate: (inout JournalCatalogItem) -> Void) {
         let key = Self.norm(canonical)
-        if let idx = items.firstIndex(where: { Self.norm($0.canonical) == key }) {
-            mutate(&items[idx])
+        if let idx = items.lastIndex(where: { Self.norm($0.canonical) == key }) {
+            var saved = items[idx]
+            mutate(&saved)
+            items.removeAll { Self.norm($0.canonical) == key }
+            items.append(saved)
         } else {
             let t = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
             var fresh = JournalCatalogItem(canonical: t, displayName: nil, kind: .bool,
-                                           group: Self.starterGroups[t] ?? .other,
+                                           group: Self.starterGroups[JournalQuestionIdentity.canonical(t)] ?? .other,
                                            sortIndex: nextSortIndex(), hidden: false, custom: false)
             mutate(&fresh)
             items.append(fresh)
@@ -272,8 +266,7 @@ final class JournalCatalogStore: ObservableObject {
 
     /// True when `q` is a user-added custom question (not a starter/imported one).
     func isCustom(_ q: String) -> Bool {
-        let key = Self.norm(q)
-        return items.contains { Self.norm($0.canonical) == key && $0.custom }
+        item(for: q)?.custom == true
     }
 
     /// Add a custom question of the given type and group (defaults: yes/no, Other).
@@ -301,8 +294,8 @@ final class JournalCatalogStore: ObservableObject {
     /// Un-hide a previously hidden starter/imported question.
     func restore(_ q: String) {
         let key = Self.norm(q)
-        if let idx = items.firstIndex(where: { Self.norm($0.canonical) == key }) {
-            items[idx].hidden = false
+        if items.contains(where: { Self.norm($0.canonical) == key }) {
+            edit(q) { $0.hidden = false }
         }
     }
 }

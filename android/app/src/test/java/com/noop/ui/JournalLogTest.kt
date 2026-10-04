@@ -101,4 +101,29 @@ class JournalLogTest {
         // Month boundary.
         assertEquals("2025-12-31", journalDayKey(1, LocalDate.of(2026, 1, 1)))
     }
+    @Test
+    fun languageVariantsJoinHistoryAndNativeAnswerWins() {
+        val imported = listOf(e("my-whoop", "2026-10-01", "Dein Bett geteilt?", true),
+            e("my-whoop", "2026-10-02", "Did you share your bed?", true))
+        val native = listOf(e("noop-journal", "2026-10-02", "Dein Bett geteilt?", false))
+        val merged = mergeJournalEntries(imported, native)
+        assertEquals(listOf("Did you share your bed?", "Did you share your bed?"), merged.map { it.question })
+        assertEquals(listOf(true, false), merged.map { it.answeredYes })
+    }
+
+    @Test
+    fun canonicalAnswerWinsOverLegacyAliasRegardlessOfOrder() {
+        val alias = e("noop-journal", "2026-10-01", "Magnesium eingenommen?", false).copy(notes = "legacy")
+        val canonical = alias.copy(question = "Did you take magnesium?", answeredYes = true, notes = "native", numericValue = 200.0)
+        for (rows in listOf(listOf(alias, canonical), listOf(canonical, alias))) {
+            assertEquals(listOf(canonical), com.noop.data.canonicalJournalEntries(rows))
+        }
+        val nextDay = alias.copy(day = "2026-10-02")
+        val result = com.noop.data.canonicalJournalEntries(listOf(canonical, nextDay))
+        assertEquals(2, result.size)
+        assertEquals(canonical.question, result[1].question)
+        assertEquals(false, result[1].answeredYes)
+        assertEquals("legacy", result[1].notes)
+    }
+
 }

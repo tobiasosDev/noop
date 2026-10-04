@@ -1192,6 +1192,32 @@ interface WhoopDao : DeviceRegistryDao {
     @Query("DELETE FROM journal WHERE deviceId = :deviceId AND day = :day AND question = :question")
     suspend fun deleteJournalEntry(deviceId: String, day: String, question: String)
 
+    /** Clear all equivalent questions in the same source/day, retaining imported history. */
+    @Transaction
+    suspend fun deleteJournalAnswers(deviceId: String, day: String, question: String) {
+        deleteJournalAliases(deviceId, day, question)
+    }
+
+    /** Swift twin: `WhoopStore.deleteJournalAliases`; called inside the caller's transaction. */
+    suspend fun deleteJournalAliases(deviceId: String, day: String, question: String) {
+        val canonical = JournalQuestionIdentity.canonical(question)
+        for (row in journal(deviceId, day, day)) {
+            if (JournalQuestionIdentity.canonical(row.question) == canonical) {
+                deleteJournalEntry(deviceId, day, row.question)
+            }
+        }
+    }
+
+    /** Save editable answers under the shared identity and remove legacy language variants
+     * atomically. Each deletion remains scoped to that row's source and day. */
+    @Transaction
+    suspend fun saveJournalAnswers(rows: List<JournalEntry>) {
+        for (row in rows) {
+            deleteJournalAnswers(row.deviceId, row.day, row.question)
+            upsertJournal(listOf(row.copy(question = JournalQuestionIdentity.canonical(row.question))))
+        }
+    }
+
     /**
      * Delete a device's journal within a day range (#136). The WHOOP importer clears exactly the span
      * it re-writes before upserting, so the wake-day keying fix doesn't leave pre-fix onset-keyed rows

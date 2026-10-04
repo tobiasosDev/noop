@@ -2889,7 +2889,7 @@ final class Repository: ObservableObject {
         guard let store = await ensureStore() else { return [:] }
         let rows = (try? await store.journalEntries(deviceId: Self.journalDeviceId,
                                                     from: day, to: day)) ?? []
-        return Dictionary(rows.map { ($0.question, $0.answeredYes) },
+        return Dictionary(JournalEntry.canonicalEntries(rows).map { ($0.question, $0.answeredYes) },
                           uniquingKeysWith: { _, last in last })
     }
 
@@ -2900,7 +2900,7 @@ final class Repository: ObservableObject {
         let rows = (try? await store.journalEntries(deviceId: Self.journalDeviceId,
                                                     from: day, to: day)) ?? []
         var out: [String: Double] = [:]
-        for r in rows { if let v = r.numericValue { out[r.question] = v } }
+        for r in JournalEntry.canonicalEntries(rows) { if let v = r.numericValue { out[r.question] = v } }
         return out
     }
 
@@ -2919,16 +2919,16 @@ final class Repository: ObservableObject {
     /// explicit action and stays editable, unlike the immutable imported history.
     nonisolated static func mergeJournal(imported: [JournalEntry], native: [JournalEntry]) -> [JournalEntry] {
         var byKey: [String: JournalEntry] = [:]
-        for e in imported { byKey[e.day + "\u{1F}" + e.question] = e }
-        for e in native { byKey[e.day + "\u{1F}" + e.question] = e }
+        for e in JournalEntry.canonicalEntries(imported) { byKey[e.day + "\u{1F}" + e.question] = e }
+        for e in JournalEntry.canonicalEntries(native) { byKey[e.day + "\u{1F}" + e.question] = e }
         return byKey.values.sorted { ($0.day, $0.question) < ($1.day, $1.question) }
     }
 
     /// Write one native answer (day per the importer's wake-day convention).
     func saveJournalAnswer(day: String, question: String, answeredYes: Bool, notes: String? = nil) async {
         guard let store = await ensureStore() else { return }
-        _ = try? await store.upsertJournal(
-            [JournalEntry(day: day, question: question, answeredYes: answeredYes, notes: notes)],
+        _ = try? await store.saveJournalAnswer(
+            JournalEntry(day: day, question: question, answeredYes: answeredYes, notes: notes),
             deviceId: Self.journalDeviceId)
     }
 
@@ -2937,9 +2937,9 @@ final class Repository: ObservableObject {
     /// while the value is carried for dose-response. Day per the importer's wake-day convention.
     func saveJournalNumeric(day: String, question: String, value: Double, notes: String? = nil) async {
         guard let store = await ensureStore() else { return }
-        _ = try? await store.upsertJournal(
-            [JournalEntry(day: day, question: question, answeredYes: true, notes: notes,
-                          numericValue: value)],
+        _ = try? await store.saveJournalAnswer(
+            JournalEntry(day: day, question: question, answeredYes: true, notes: notes,
+                         numericValue: value),
             deviceId: Self.journalDeviceId)
     }
 

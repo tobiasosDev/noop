@@ -1115,7 +1115,12 @@ class WhoopRepository(
         dao.deleteMetricSeriesPoint(deviceId, day, key)
     suspend fun deleteMetricSeries(deviceId: String, key: String) =
         dao.deleteMetricSeries(deviceId, key)
-    suspend fun upsertJournal(rows: List<JournalEntry>) = dao.upsertJournal(rows)
+    suspend fun upsertJournal(rows: List<JournalEntry>) {
+        // Imported wording stays intact; only editable native answers adopt the shared identity.
+        val (native, imported) = rows.partition { it.deviceId == "noop-journal" }
+        if (imported.isNotEmpty()) dao.upsertJournal(imported)
+        if (native.isNotEmpty()) dao.saveJournalAnswers(native)
+    }
     suspend fun upsertWorkouts(rows: List<WorkoutRow>) = dao.upsertWorkouts(rows)
 
     /**
@@ -1818,7 +1823,7 @@ class WhoopRepository(
     /** Delete one native journal answer by natural key (only ever called with the "noop-journal"
      *  source id , imported rows are never touched). */
     suspend fun deleteJournalEntry(deviceId: String, day: String, question: String) =
-        dao.deleteJournalEntry(deviceId, day, question)
+        dao.deleteJournalAnswers(deviceId, day, question)
 
     /** Atomically replace a device's imported journal within a day range (#136) — the WHOOP importer
      *  clears the span it re-writes and upserts in ONE transaction, so the wake-day re-keying leaves no
