@@ -15,11 +15,9 @@ import Foundation
 // re-presents them in the coupled layout. The only new mapping is the OPTIMAL strain band, a pure
 // display-only read of today's recovery to a suggested strain range (never fed back into scoring).
 //
-// It renders in the LIQUID design language — the three scores are liquid vessels (recovery / strain on the
-// 0–21 axis / sleep performance), the optimal-strain band is a liquid tube, the cards are the frosted liquid
-// surface with UPPERCASE section overlines, and the day-of-sky backdrop carries behind — all routed through
-// StrandPalette so the Classic / Titanium appearance toggle carries automatically. The word "WHOOP" appears
-// in NO shipped UI string here (legal posture); the screen is called "Coupled view".
+// v2: recovery is the hero (a ring in the Charge glow), Day Strain sits on a 0–21 track against the
+// optimal band, and sleep performance reads slept against needed — all neutral cards under one glow. The
+// word "WHOOP" appears in NO shipped UI string here (legal posture); the screen is called "Coupled view".
 //
 // Tap-throughs, matching the sibling screens' deep-link/back behaviour: the hero ring opens the Charge
 // breakdown ("What shaped it", the same shared ChargeBreakdownSection content the Today ring opens, hosted
@@ -27,11 +25,6 @@ import Foundation
 
 struct CoupledView: View {
     @EnvironmentObject var repo: Repository
-
-    /// "Card transparency" (0–100, default 100): fades the coupled glance cards in lockstep with the
-    /// frosted cards; content stays readable. Mirrors Kotlin `NoopPrefs.cardOpacityPercent`.
-    @AppStorage(CardAppearancePrefs.opacityKey) private var cardOpacityPercent = CardAppearancePrefs.defaultPercent
-    private var cardOpacity: Double { max(0, min(1, Double(cardOpacityPercent) / 100)) }
 
     // Effort is stored 0–100; the coupled read is always the 0–21 Day-Strain axis regardless of the user's
     // #268 display toggle, so the gauge reads like the classic coupled home. Display-only conversion.
@@ -48,6 +41,15 @@ struct CoupledView: View {
 
     /// Today's all-source workout count materialized onto the same physiological cycle as the other cards.
     @State private var workoutsToday: Int = 0
+
+    init() {}
+
+    #if DEBUG
+    /// DEBUG screenshot harness: raise the Charge breakdown sheet as soon as the screen appears.
+    private var demoOpensBreakdown = false
+
+    init(demoOpensBreakdown: Bool) { self.demoOpensBreakdown = demoOpensBreakdown }
+    #endif
 
     /// The day the coupled read describes, today's resolved row (the same `resolveToday` #304/#144 boundary
     /// Today anchors on), never a second store read.
@@ -109,9 +111,9 @@ struct CoupledView: View {
     /// anchored on the last scored day ONLY when carrying), so the one-word pill matches the home screen's
     /// read. The carried anchor is gated on `isCarryingRecovery` (Today's `!todayScored` gate): on a normal
     /// scored day today's own key wins, so Coupled's pill can't diverge from Today's onto yesterday (#787).
-    private var readinessLevel: ReadinessEngine.Level {
+    private var readiness: ReadinessEngine.Readiness {
         let anchor = (isCarryingRecovery ? carriedRecoveryDay?.day : day?.day) ?? Repository.logicalDayKey(Date())
-        return ReadinessEngine.evaluate(days: repo.days, today: anchor).level
+        return ReadinessEngine.evaluate(days: repo.days, today: anchor)
     }
 
     var body: some View {
@@ -128,31 +130,49 @@ struct CoupledView: View {
     }
 
     private var scaffold: some View {
-        ScreenScaffold(title: "Day", subtitle: subtitleText,
-                       // The day-of-sky liquid backdrop, matching Today / Health / Sleep / Trends: a fixed,
-                       // full-bleed time-of-day sky behind the scroll content (does not scroll).
-                       topBackground: liquidScaffoldSky()) {
-            ViewThatFits(in: .horizontal) {
-                // Regular width (macOS / iPad): hero left, strain + sleep stacked right in a 2-column grid.
-                HStack(alignment: .top, spacing: NoopMetrics.gap) {
-                    heroCard
-                        .frame(maxWidth: .infinity)
-                    VStack(spacing: NoopMetrics.gap) {
-                        strainCard
-                        sleepCard
-                    }
-                    .frame(maxWidth: .infinity)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopScreenHeader("Day") {
+                    // The coupled read is always today; the pill names the day it describes.
+                    NoopPill("Today")
                 }
-                // Compact (iPhone): the three cards stack full-width.
-                VStack(spacing: NoopMetrics.gap) {
-                    heroCard
-                    strainCard
-                    sleepCard
-                }
+                heroCard
+                    .padding(.top, 18)
+                NoopSectionTitle("Day Strain · Effort", captionKey: "0-21 scale", topPadding: 30)
+                    .padding(.bottom, 12)
+                strainCard
+                NoopSectionTitle("Sleep performance", captionKey: "Last night", topPadding: 30)
+                    .padding(.bottom, 12)
+                sleepCard
+                breakdownRow_
+                    .padding(.top, 12)
+                footerCaption
+                    .padding(.top, 20)
             }
-            footerCaption
+            .padding(.horizontal, NoopMetrics.screenHPadding)
+            .padding(.top, 6)
+            .padding(.bottom, NoopMetrics.tabBarClearance)
+            #if os(macOS)
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity)
+            #endif
         }
+        #if os(iOS)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
+        // The v2 header above names the screen; the system title only labels the macOS window bar.
+        #if os(macOS)
+        .navigationTitle("Day")
+        #endif
+        .noopHidesSystemNavBar()
         .sheet(isPresented: $showChargeBreakdown) { chargeBreakdownSheet }
+        #if DEBUG
+        .onAppear { if demoOpensBreakdown { showChargeBreakdown = true } }
+        #endif
         // Loads the SAME learned habitual the Sleep tab hero threads into its main-night pick, so the
         // bed→wake span below resolves identically (#294). Re-runs on a sync/import refresh.
         .task(id: repo.refreshSeq) {
@@ -161,47 +181,58 @@ struct CoupledView: View {
         }
     }
 
-    // MARK: Header subtitle, "Today, d MMM"
+    // MARK: 1. HERO, the recovery ring, coupled read (tap = the Charge breakdown)
 
-    private var subtitleText: LocalizedStringKey {
-        let f = DateFormatter()
-        f.locale = AppLanguage.activeLocale
-        f.setLocalizedDateFormatFromTemplate("d MMM")
-        return LocalizedStringKey("Today, \(f.string(from: Date()))")
-    }
-
-    // MARK: 1. HERO, the recovery vessel, coupled read (tap = the Charge breakdown)
-
-    /// The recovery read as the signature liquid vessel (Today's HeroScoreCell idiom): a Charge-world
-    /// vessel filled to the recovery fraction, with the recovery % counting up over it and the RECOVERY
-    /// overline + readiness pill layered beneath. The whole hero is a button opening the Charge breakdown,
-    /// mirroring Today's Charge-ring tap (A1). The vessel's own tap splashes (number is hit-transparent).
+    /// The recovery read in the Charge glow: a ring filled clockwise from the top to the recovery %, the number in
+    /// dot matrix at its centre with "= Charge · readiness" under it, and one sentence. The whole hero
+    /// opens the Charge breakdown, mirroring Today's Charge tap (A1).
     private var heroCard: some View {
         Button {
             showChargeBreakdown = true
         } label: {
-            card {
-                VStack(spacing: 14) {
-                    SectionHeader("Recovery", overline: "Coupled read")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    ZStack {
-                        LiquidVessel(value: recovery.map { max(0, min(1, $0 / 100)) },
-                                     tint: StrandPalette.chargeColor, animated: recovery != nil)
-                            // A carried (not-yet-rescored) morning reads dimmed, the Today #802 idiom.
-                            .opacity(isCarryingRecovery ? 0.85 : 1)
-                            .frame(width: 200, height: 200)
-                            // The whole hero opens the Charge breakdown (the original tap contract), so the
-                            // vessel doesn't intercept the tap with its own splash — the Button owns it.
-                            .allowsHitTesting(false)
-                        heroCentre
-                            .allowsHitTesting(false)
+            NoopHeroCard(glow: NoopGlow.charge(recovery), padding: 0) {
+                VStack(spacing: 0) {
+                    HStack {
+                        NoopIconBadge("Recovery", icon: "lightning")
+                        Spacer(minLength: 8)
+                        NoopPill("Coupled read", compact: true)
                     }
-                    .frame(width: 200, height: 200)
+                    ZStack {
+                        G1bProgressRing(fraction: (recovery ?? 0) / 100,
+                                        tint: NoopGlow.charge(recovery).accent, diameter: 200)
+                            .opacity(isCarryingRecovery ? 0.85 : 1)
+                        VStack(spacing: 10) {
+                            NoopDotNumber(recovery.map { "\(Int($0.rounded()))" } ?? "–",
+                                          unit: recovery == nil ? nil : "%", size: 88, unitSize: 38)
+                                .fixedSize()
+                                .padding(.vertical, -5)
+                            if let line = heroSubline {
+                                Text(verbatim: line)
+                                    .font(StrandFont.footnote)
+                                    .foregroundStyle(Color.white.opacity(0.62))
+                            }
+                        }
+                    }
+                    .frame(width: 224, height: 224)
+                    .padding(.top, 18)
                     heroCaption
+                        .padding(.top, 8)
+                    if let sentence = heroSentence {
+                        Text(verbatim: sentence)
+                            .font(StrandFont.light(14))
+                            .foregroundStyle(Color.white.opacity(0.84))
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 16)
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
+                .padding(.top, 20)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 24)
             }
+            .contentShape(RoundedRectangle(cornerRadius: NoopVisualStyle.heroRadius, style: .continuous))
         }
         .buttonStyle(LiquidPressStyle())
         .accessibilityElement(children: .combine)
@@ -209,37 +240,35 @@ struct CoupledView: View {
         .accessibilityHint("See what shaped your Charge")
     }
 
-    /// The centre stack over the vessel: the recovery % counting up in white over the fluid, a RECOVERY
-    /// overline in the SAMPLED recovery colour, and the one-word readiness pill (Push / Maintain / Rest,
-    /// #205 read).
-    @ViewBuilder
-    private var heroCentre: some View {
-        let sampled = recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textTertiary
-        VStack(spacing: 4) {
-            if let r = recovery {
-                CountUpText(value: r,
-                            format: { "\(Int($0.rounded()))%" },
-                            font: StrandFont.number(48),
-                            color: .white)
-                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-            } else {
-                Text("—")
-                    .font(StrandFont.number(48))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-            }
-            Text("RECOVERY")
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(sampled)
-            if let word = TodayView.readinessWord(readinessLevel) {
-                readinessPill(word)
-                    .padding(.top, 2)
-            }
+    /// "= Charge 78 · Push" — the same number under its NOOP name, with the one-word readiness read.
+    private var heroSubline: String? {
+        guard let r = recovery else { return nil }
+        let charge = String(localized: "= Charge \(Int(r.rounded()))")
+        guard let word = TodayView.readinessWord(readiness.level) else { return charge }
+        return "\(charge) · \(word)"
+    }
+
+    /// "Green day. HRV 68 ms, resting HR 52 bpm." — the band and the two overnight vitals behind it. The
+    /// "good side of your baseline" clause is added only when the readiness engine flags BOTH signals as
+    /// good against the personal baseline, so the sentence never claims more than the scorer saw.
+    private var heroSentence: String? {
+        guard let r = recovery else { return nil }
+        // Named from the hero's own glow band, so the sentence and the ring colour above it agree.
+        let band: String
+        switch NoopGlow.charge(r) {
+        case .recovery: band = String(localized: "Green day.")
+        case .moderate: band = String(localized: "Yellow day.")
+        default: band = String(localized: "Red day.")
         }
-        .padding(.horizontal, 24)
+        let row = isCarryingRecovery ? carriedRecoveryDay : day
+        guard let hrv = row?.avgHrv, let rhr = row?.restingHr else { return band }
+        let signals = readiness.signals
+        let bothGood = signals.first { $0.key == "hrv" }?.flag == .good
+            && signals.first { $0.key == "rhr" }?.flag == .good
+        if bothGood {
+            return band + " " + String(localized: "HRV \(Int(hrv.rounded())) ms and resting HR \(rhr) bpm both sit on the good side of your baseline.")
+        }
+        return band + " " + String(localized: "HRV \(Int(hrv.rounded())) ms, resting HR \(rhr) bpm.")
     }
 
     /// The honest state line under the ring: the "Last night · <date>" stamp when carrying a prior score
@@ -250,11 +279,11 @@ struct CoupledView: View {
         if isCarryingRecovery, let prior = carriedRecoveryDay {
             Text(TodayView.carriedCaption(priorDayKey: prior.day, todayKey: todayKey))
                 .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
+                .foregroundStyle(Color.white.opacity(0.62))
         } else if recovery == nil, let banked = calibrationNights {
             Text(ChargeBreakdownFormat.calibrationProgress(banked: banked, seed: Baselines.minNightsSeed))
                 .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
+                .foregroundStyle(Color.white.opacity(0.62))
         }
     }
 
@@ -266,191 +295,189 @@ struct CoupledView: View {
         return String(localized: "Recovery, no data yet")
     }
 
-    /// The one-word readiness pill (Push / Maintain / Rest), tinted by the readiness level, matching the
-    /// Today hero pill chrome. Reuses TodayView's word + level colour so the read stays consistent.
-    private func readinessPill(_ word: String) -> some View {
-        let tint = readinessTint(readinessLevel)
-        return Text(word.uppercased())
-            .font(StrandFont.overline)
-            .tracking(StrandFont.overlineTracking)
-            .foregroundStyle(tint)
-            .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(Capsule(style: .continuous).fill(tint.opacity(0.12)))
-            .overlay(Capsule(style: .continuous).stroke(tint.opacity(0.32), lineWidth: 1))
-            .accessibilityLabel("Readiness: \(word)")
-    }
-
-    /// The readiness level's tint, the SAME mapping TodayView.readinessColor uses.
-    private func readinessTint(_ l: ReadinessEngine.Level) -> Color {
-        switch l {
-        case .primed:       return StrandPalette.accent
-        case .balanced:     return StrandPalette.statusPositive
-        case .strained:     return StrandPalette.statusWarning
-        case .rundown:      return StrandPalette.metricRose
-        case .insufficient: return StrandPalette.textTertiary
-        }
-    }
-
-    // MARK: 2. STRAIN ROW, the effort vessel + coupled stat stack
+    // MARK: 2. STRAIN, the day's strain on the 0–21 axis against the optimal band
 
     private var strainCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 14) {
-                SectionHeader("Day Strain", overline: "Effort", trailing: strainBandWord)
-                HStack(alignment: .center, spacing: 16) {
-                    // Left: the liquid vessel filled to the 0–21 Day-Strain fraction (Effort world), with the
-                    // strain value counting up over the fluid — the coupled read on the classic 0–21 axis.
-                    ZStack {
-                        LiquidVessel(value: dayStrain21.map { max(0, min(1, $0 / 21)) },
-                                     tint: StrandPalette.effortColor, animated: dayStrain21 != nil)
-                            .frame(width: 148, height: 148)
-                        Group {
-                            if let s = dayStrain21 {
-                                CountUpText(value: s,
-                                            format: { String(format: "%.1f", $0) },
-                                            font: StrandFont.number(34),
-                                            color: .white)
-                            } else {
-                                Text("—").font(StrandFont.number(34)).foregroundStyle(.white)
-                            }
-                        }
-                        .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                        .lineLimit(1).minimumScaleFactor(0.5)
-                        .allowsHitTesting(false)
+        let band = Self.optimalStrainRange(recovery: recovery)
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .bottom, spacing: 12) {
+                    NoopDotNumber(dayStrain21.map { String(format: "%.1f", locale: AppLanguage.activeLocale, $0) } ?? "–",
+                                  size: 50)
+                        .fixedSize()
+                        .padding(.bottom, -4)   // the kit's 0.9 line height for dot numbers
+                    Text("of 21")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.bottom, 6)
+                    Spacer(minLength: 8)
+                    if let s = strain100 {
+                        Text(verbatim: String(localized: "≈ Effort \(Int(s.rounded()))"))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .padding(.bottom, 6)
                     }
-                    .frame(width: 148, height: 148)
-
-                    // Right: the coupled stat stack, OPTIMAL range (with a liquid tube band), calories, workouts.
-                    VStack(alignment: .leading, spacing: 14) {
-                        optimalStat
-                        // heroStat renders `Text(title.uppercased())`, so `title` is a plain String and
-                        // a bare literal would NOT localize — pass the resolved localized value (the
-                        // catalog already carries Calories/Workouts) so German shows KALORIEN, not CALORIES.
-                        heroStat(String(localized: "Calories"),
-                                 caloriesText,
-                                 tint: StrandPalette.metricAmber)
-                        heroStat(String(localized: "Workouts"),
-                                 "\(workoutsToday)",
-                                 tint: StrandPalette.textPrimary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                strainTrack(band: band)
+                    .padding(.top, 30)
+                strainScaleLabels(band: band)
+                    .padding(.top, 14)
+                if let line = optimalLine(band: band) {
+                    Text(verbatim: line)
+                        .font(StrandFont.light(13))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 16)
+                }
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                    .padding(.top, 16)
+                NoopMetricRow {
+                    NoopMetric(value: day?.activeKcalEst.map { Int($0.rounded()).formatted(.number.locale(AppLanguage.activeLocale)) } ?? "—",
+                               unit: day?.activeKcalEst == nil ? nil : "kcal",
+                               labelText: String(localized: "Active calories"))
+                    NoopMetric(value: "\(workoutsToday)", labelText: String(localized: "Workouts"))
+                    NoopMetric(value: day?.steps.map { $0.formatted(.number.locale(AppLanguage.activeLocale)) } ?? "—",
+                               labelText: String(localized: "Steps"))
+                }
+                .padding(.top, 16)
             }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(strainAccessibilityLabel)
     }
 
-    /// The band word (LIGHT / MODERATE / STRENUOUS / HIGH) the classic StrainGauge drew from the fill
-    /// fraction, kept as the section-header trailing so the coupled read still names the effort band.
-    private var strainBandWord: String? {
-        guard let s = dayStrain21 else { return nil }
-        switch s {
-        case ..<6:   return String(localized: "Light")
-        case ..<10:  return String(localized: "Moderate")
-        case ..<14:  return String(localized: "Strenuous")
-        default:     return String(localized: "High")
+    /// The 0–21 track with the day's fill, and — when there is a recovery to read a band from — the
+    /// dashed OPTIMAL window around the band with its tag floating above it.
+    private func strainTrack(band: ClosedRange<Int>?) -> some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .topLeading) {
+                NoopTrack(fraction: (dayStrain21 ?? 0) / 21, height: 10)
+                if let band {
+                    let lo = w * CGFloat(band.lowerBound) / 21
+                    let hi = w * CGFloat(band.upperBound) / 21
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .frame(width: max(8, hi - lo), height: 22)
+                        .offset(x: lo, y: -6)
+                    NoopTag("OPTIMAL", size: 11)
+                        .fixedSize()
+                        .position(x: (lo + hi) / 2, y: -20)
+                }
+            }
         }
+        .frame(height: 10)
+        .accessibilityHidden(true)
     }
 
-    /// The OPTIMAL strain band stat, with a liquid tube visualising where the suggested band sits on the
-    /// 0–21 axis (Charge world). A calibrating / unscored day shows a dash and an empty tube.
-    private var optimalStat: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("OPTIMAL")
-                .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Text(Self.optimalStrainRangeText(recovery: recovery))
-                .font(StrandFont.number(20))
-                .foregroundStyle(StrandPalette.chargeColor)
-                .lineLimit(1).minimumScaleFactor(0.6)
-            LiquidTube(frac: optimalUpperFraction, tint: StrandPalette.chargeColor, height: 8, animated: false)
+    /// 0 · 7 · 14 · 21 under the track plus the band's edges, with the day's value in ink at its own
+    /// position. A scale number that would collide with the value label steps aside for it.
+    private func strainScaleLabels(band: ClosedRange<Int>?) -> some View {
+        var ticks = Set([0, 7, 14, 21])
+        if let band { ticks.formUnion([band.lowerBound, band.upperBound]) }
+        let shown = ticks.sorted().filter { v in dayStrain21.map { abs(Double(v) - $0) >= 1.6 } ?? true }
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .topLeading) {
+                ForEach(shown, id: \.self) { v in
+                    label("\(v)", at: Double(v) / 21, width: w, ink: false)
+                }
+                if let s = dayStrain21 {
+                    label(String(format: "%.1f", locale: AppLanguage.activeLocale, s), at: s / 21, width: w, ink: true)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 14)
     }
 
-    /// The optimal band's upper bound as a 0–1 fraction of the 0–21 axis, for the tube fill. 0 (empty) when
-    /// recovery is unknown so the tube never fabricates a band.
-    private var optimalUpperFraction: Double {
-        guard let band = Self.optimalStrainRange(recovery: recovery) else { return 0 }
-        return max(0, min(1, Double(band.upperBound) / 21))
+    private func label(_ text: String, at fraction: Double, width: CGFloat, ink: Bool) -> some View {
+        let anchor: CGFloat = fraction <= 0 ? 0 : (fraction >= 1 ? 1 : 0.5)
+        return Text(verbatim: text)
+            .font(ink ? StrandFont.book(11) : StrandFont.footnote)
+            .foregroundStyle(ink ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+            .fixedSize()
+            .alignmentGuide(.leading) { d in d.width * anchor - width * CGFloat(min(max(fraction, 0), 1)) }
     }
 
-    /// The heroStat idiom (WorkoutsView.swift:500–509): an UPPERCASE tracked overline over a big tinted
-    /// number. Reproduced here so the coupled stat stack reads identically to the Workouts hero stats.
-    private func heroStat(_ title: String, _ value: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title.uppercased())
-                .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Text(value).font(StrandFont.number(20))
-                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+    /// "Optimal for a 78 % recovery is 14 to 18. You are 2.7 short." — the approved band, and where the
+    /// day's strain sits against it.
+    private func optimalLine(band: ClosedRange<Int>?) -> String? {
+        guard let band, let r = recovery else { return nil }
+        let head = String(localized: "Optimal for a \(Int(r.rounded())) % recovery is \(Self.optimalStrainRangeText(recovery: r)).")
+        guard let s = dayStrain21 else { return head }
+        let fmt: (Double) -> String = { String(format: "%.1f", locale: AppLanguage.activeLocale, $0) }
+        if s < Double(band.lowerBound) {
+            return head + " " + String(localized: "You are \(fmt(Double(band.lowerBound) - s)) short.")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        if s > Double(band.upperBound) {
+            return head + " " + String(localized: "You are \(fmt(s - Double(band.upperBound))) over.")
+        }
+        return head + " " + String(localized: "You are inside it.")
     }
 
-    /// Active calories for the day from the stored whole-day estimate. Never fabricated, a day with no
-    /// estimate reads a dash.
-    private var caloriesText: String {
-        guard let k = day?.activeKcalEst else { return "—" }
-        return "\(Int(k.rounded())) kcal"
+    private var strainAccessibilityLabel: String {
+        guard let s = dayStrain21 else { return String(localized: "Day strain, no data yet") }
+        return String(localized: "Day strain \(String(format: "%.1f", s)) of 21")
     }
 
-    // MARK: 3. SLEEP ROW, the sleep-performance ring + hours-vs-need read (tap = Sleep)
+    // MARK: 3. SLEEP, performance + slept vs needed (tap = Sleep)
 
     private var sleepCard: some View {
         NavigationLink {
             SleepView()
         } label: {
-            card {
-                VStack(alignment: .leading, spacing: 14) {
-                    SectionHeader("Sleep performance", overline: "Last night", trailing: String(localized: "Rest"))
-                    HStack(alignment: .center, spacing: 16) {
-                        // Left: the SLEEP PERFORMANCE % as the liquid vessel (Rest world), with the score
-                        // counting up over the fluid. Empty vessel when there's no scored performance.
-                        ZStack {
-                            // heroCard opts its vessel out of hit testing so the Button owns the tap;
-                            // this ring keeps its splash instead and lets the NavigationLink run alongside.
-                            LiquidVessel(value: sleepPerformance.map { max(0, min(1, $0 / 100)) },
-                                         tint: StrandPalette.restColor, animated: false,
-                                         tapPassesThrough: true)
-                                .frame(width: 88, height: 88)
-                            if let p = sleepPerformance {
-                                CountUpText(value: p,
-                                            format: { "\(Int($0.rounded()))" },
-                                            font: StrandFont.number(24),
-                                            color: .white)
-                                    .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                                    .allowsHitTesting(false)
-                            }
+            NoopCard {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        NoopDotNumber(sleepPerformance.map { "\(Int($0.rounded()))" } ?? "–", size: 50)
+                            .fixedSize()
+                            .padding(.bottom, -4)   // the kit's 0.9 line height for dot numbers
+                        if sleepPerformance != nil {
+                            NoopDotNumber("%", size: 24)
+                                .fixedSize()
+                                .padding(.bottom, 4)
                         }
-                        .frame(width: 88, height: 88)
-
-                        // Right: the slept-vs-needed two-line read + last night's bed–wake span footnote.
-                        VStack(alignment: .leading, spacing: 4) {
-                            if let asleep = day?.totalSleepMin, asleep > 0 {
-                                Text("\(Self.hoursMinutes(asleep)) slept")
-                                    .font(StrandFont.headline)
-                                    .foregroundStyle(StrandPalette.textPrimary)
-                                Text("\(Self.hoursMinutes(sleepNeedForDay)) needed")
-                                    .font(StrandFont.subhead)
-                                    .foregroundStyle(StrandPalette.textSecondary)
-                            } else {
-                                Text("No sleep tracked last night")
-                                    .font(StrandFont.subhead)
-                                    .foregroundStyle(StrandPalette.textSecondary)
-                            }
-                            if let span = bedWakeSpanText {
-                                Text(span)
-                                    .font(StrandFont.footnote)
-                                    .foregroundStyle(StrandPalette.textTertiary)
-                            }
+                        Spacer(minLength: 8)
+                        if let p = sleepPerformance {
+                            // The same night under its NOOP name, as the hero's "= Charge" line does.
+                            Text(verbatim: String(localized: "Rest \(Int(p.rounded())) · \(sleepWord(p))"))
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textSecondary)
+                                .padding(.bottom, 6)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(StrandPalette.textTertiary)
                     }
+                    if let asleep = day?.totalSleepMin, asleep > 0 {
+                        let need = sleepNeedForDay
+                        let top = max(asleep, need, 1)
+                        sleepBar(String(localized: "Slept"), minutes: asleep, fraction: asleep / top, filled: true)
+                            .padding(.top, 18)
+                        sleepBar(String(localized: "Needed"), minutes: need, fraction: need / top, filled: false)
+                            .padding(.top, 12)
+                    } else {
+                        Text("No sleep tracked last night")
+                            .font(StrandFont.light(13))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .padding(.top, 16)
+                    }
+                    if let span = bedWakeSpanText {
+                        Text(verbatim: String(localized: "In bed \(span)"))
+                            .font(StrandFont.light(13))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .padding(.top, 16)
+                    }
+                    Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        .padding(.top, 16)
+                    NoopMetricRow {
+                        NoopMetric(value: sleepDebtMetric?.value ?? "—", unit: sleepDebtMetric?.unit,
+                                   labelText: String(localized: "Short of need"))
+                        NoopMetric(value: day?.efficiency.map { "\(Int($0.rounded()))" } ?? "—",
+                                   unit: day?.efficiency == nil ? nil : "%",
+                                   labelText: String(localized: "Efficiency"))
+                        NoopMetric(value: day?.disturbances.map { "\($0)" } ?? "—",
+                                   labelText: String(localized: "Disturbances"))
+                    }
+                    .padding(.top, 16)
                 }
                 .contentShape(Rectangle())
             }
@@ -459,6 +486,54 @@ struct CoupledView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(sleepAccessibilityLabel)
         .accessibilityHint("Open Sleep")
+    }
+
+    private func sleepBar(_ label: String, minutes: Double, fraction: Double, filled: Bool) -> some View {
+        HStack(spacing: 12) {
+            Text(verbatim: label)
+                .font(StrandFont.light(12))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(width: 62, alignment: .leading)
+            NoopTrack(fraction: fraction, height: 10,
+                      fill: filled ? [Color(hex: "#3C56D8"), Color(hex: "#6F87FF")]
+                                   : [Color(light: "#C8C7C3", dark: "#3A3A40"), Color(light: "#C8C7C3", dark: "#3A3A40")])
+            Text(verbatim: Self.hoursMinutes(minutes))
+                .font(StrandFont.value(13))
+                .foregroundStyle(filled ? StrandPalette.textPrimary : StrandPalette.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 52, alignment: .trailing)
+        }
+    }
+
+    /// The Sleep tab's Rest words, so the two screens name the same night the same way.
+    private func sleepWord(_ score: Double) -> String {
+        switch score {
+        case ..<50:  return String(localized: "Poor")
+        case ..<70:  return String(localized: "Fair")
+        case ..<85:  return String(localized: "Good")
+        default:     return String(localized: "Optimal")
+        }
+    }
+
+    /// How far last night fell short of the need (0 when it met it), nil when there is no night. Under an
+    /// hour it reads as a bare minute count with a "min" unit, as the metric row's other values carry units.
+    private var sleepDebtMetric: (value: String, unit: String?)? {
+        guard let asleep = day?.totalSleepMin, asleep > 0 else { return nil }
+        let short = Swift.max(0, sleepNeedForDay - asleep)
+        if short.rounded() < 60 { return ("\(Int(short.rounded()))", String(localized: "min")) }
+        return (Self.hoursMinutes(short), nil)
+    }
+
+    /// A row opening the Charge breakdown — the method and today's drivers in one sheet.
+    private var breakdownRow_: some View {
+        Button { showChargeBreakdown = true } label: {
+            NoopList {
+                NoopRow("How Charge is calculated", caption: "HRV, resting HR, breathing and sleep",
+                        icon: "calculator", chevron: true) { EmptyView() }
+            }
+        }
+        .buttonStyle(LiquidPressStyle())
     }
 
     private var sleepAccessibilityLabel: String {
@@ -506,11 +581,8 @@ struct CoupledView: View {
     // (a coupled read of NOOP's OWN scores, same data, different lens) without the branding word. The
     // matching Android caption is byte-identical.
     private var footerCaption: some View {
-        Text("A classic one-glance read of NOOP's own scores. Same data, different lens.")
-            .font(StrandFont.footnote)
-            .foregroundStyle(StrandPalette.textTertiary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 4)
+        NoopInsightRow("A classic one-glance read of NOOP's own scores. Same data, different lens.")
+            .padding(.horizontal, 4)
     }
 
     // MARK: Charge breakdown sheet (the hero tap target)
@@ -543,12 +615,13 @@ struct CoupledView: View {
     private var chargeBreakdownSheet: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    breakdownSheetHeader
                     // One chargeBreakdown() call per sheet body eval: drivers + confidence share the same
                     // baseline folds (see chargeBreakdown's PERF note).
                     let breakdown = chargeBreakdown()
                     if let breakdown, !breakdown.drivers.isEmpty {
-                        NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
+                        NoopCard {
                             ChargeBreakdownSection(
                                 drivers: breakdown.drivers,
                                 confidence: breakdown.confidence,
@@ -558,16 +631,17 @@ struct CoupledView: View {
                         if let banked = calibrationNights {
                             calibrationCard(banked: banked)
                         } else {
-                            NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
-                                VStack(alignment: .leading, spacing: NoopMetrics.space2) {
+                            NoopCard {
+                                VStack(alignment: .leading, spacing: 6) {
                                     Text("No Charge breakdown yet")
-                                        .font(StrandFont.headline)
+                                        .font(StrandFont.book(15))
                                         .foregroundStyle(StrandPalette.textPrimary)
                                     Text("Wear the strap overnight to score a night first.")
-                                        .font(StrandFont.subhead)
+                                        .font(StrandFont.light(14))
                                         .foregroundStyle(StrandPalette.textSecondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }
@@ -577,54 +651,57 @@ struct CoupledView: View {
                     NavigationLink {
                         ScoringGuideView(initialSection: .charge, onClose: { showChargeBreakdown = false })
                     } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "function")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(StrandPalette.chargeColor)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("How Charge is calculated")
-                                    .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
-                                Text("The method behind the score, not today's values.")
-                                    .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(StrandPalette.textTertiary)
+                        NoopList {
+                            NoopRow("How Charge is calculated",
+                                    caption: "The method behind the score, not today's values.",
+                                    icon: "calculator", chevron: true) { EmptyView() }
                         }
-                        .padding(14)
-                        .background(NoopPanelSurface(cornerRadius: 14))
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LiquidPressStyle())
                     .accessibilityLabel("How Charge is calculated. The method behind the score.")
                 }
-                .padding(NoopMetrics.screenPadding)
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.bottom, 28)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             #if os(iOS)
             // #697/#horizontal-swipe parity, see ScreenScaffold.
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             #endif
-            .background(StrandPalette.surfaceBase.ignoresSafeArea())
+            .background(NoopSheetBackground())
+            #if os(macOS)
             .navigationTitle("What shaped your Charge")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { showChargeBreakdown = false }
-                        .foregroundStyle(StrandPalette.accent)
-                }
-                #else
-                ToolbarItem {
-                    Button("Done") { showChargeBreakdown = false }
-                        .foregroundStyle(StrandPalette.accent)
-                }
-                #endif
+            .noopHidesSystemNavBar()
+        }
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #endif
+    }
+
+    /// The sheet's `.shd` header: the title centred, a single "Done" on the right (the sheet only
+    /// reads, so there is nothing to cancel).
+    private var breakdownSheetHeader: some View {
+        ZStack {
+            Text("What shaped your Charge")
+                .font(StrandFont.headline)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+            HStack {
+                Spacer()
+                Button("Done") { showChargeBreakdown = false }
+                    .buttonStyle(.plain)
+                    .font(StrandFont.medium(15))
+                    .foregroundStyle(StrandPalette.textPrimary)
             }
         }
+        #if os(iOS)
+        .padding(.top, 22)
+        #else
+        .padding(.top, 14)
+        #endif
+        .padding(.bottom, 4)
     }
 
     /// The calibrating countdown card, the same pure `ChargeBreakdownFormat` copy the Today sheet shows,
@@ -634,22 +711,20 @@ struct CoupledView: View {
         let countdown = ChargeBreakdownFormat.calibrationCountdown(nightsRemaining: remaining)
         let unlock = ChargeBreakdownFormat.calibrationUnlockCopy(scoreName: String(localized: "Charge"))
         let progress = ChargeBreakdownFormat.calibrationProgress(banked: banked, seed: Baselines.minNightsSeed)
-        return NoopCard(padding: 14, tint: StrandPalette.chargeColor) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(StrandPalette.chargeColor)
+        return NoopCard {
+            HStack(alignment: .top, spacing: 14) {
+                NoopIconTile("gauge")
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(countdown)
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(15))
                             .foregroundStyle(StrandPalette.textPrimary)
                         Spacer(minLength: 0)
                         ConfidenceTierChip(confidence: .calibrating)
                     }
                     Text(unlock)
-                        .font(StrandFont.subhead)
+                        .font(StrandFont.light(14))
                         .foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(progress)
@@ -672,16 +747,6 @@ struct CoupledView: View {
     }
 
     // MARK: Shared helpers
-
-    /// The frosted liquid card surface, byte-for-byte the LiquidTodayView.card style (rounded 22 + a
-    /// resting hairline over surfaceRaised), so the coupled glance cards read identically to Today and the
-    /// batch-1 liquid screens.
-    private func card<V: View>(@ViewBuilder _ content: () -> V) -> some View {
-        content()
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(NoopPanelSurface(cornerRadius: 22, surfaceOpacity: cardOpacity))
-    }
 
     private func clockString(_ ts: Int) -> String {
         Self.clockFmt.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))

@@ -50,6 +50,12 @@ struct IntervalTimerView: View {
     @State private var hapticTick: Int = 0
     #endif
 
+    #if DEBUG
+    /// Screenshot harness only: open mid-session (round 3 of 8, 40 s work / 20 s rest) so the running
+    /// state can be captured without waiting through two rounds.
+    var demoRunning = false
+    #endif
+
     // 1Hz tick.
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -76,35 +82,26 @@ struct IntervalTimerView: View {
         return workSeconds * rounds + restSeconds * max(0, rounds - 1)
     }
 
-    /// The active phase's reset token: WORK uses the Effort blue, REST the Rest blue-grey, DONE the
-    /// positive green. Tints the flat ring arc + the phase chip only (no glow).
-    private var phaseColor: Color {
-        switch phase {
-        case .work: return StrandPalette.effortColor
-        case .rest: return StrandPalette.restColor
-        case .done: return StrandPalette.statusPositive
-        }
-    }
-
     private var isFinished: Bool { phase == .done }
+
+    /// The strap's interval cues, the same stored switch as Settings › Haptics (default on).
+    @AppStorage(HapticPrefs.intervals) private var strapCues = true
 
     // MARK: Body
 
     var body: some View {
-        ScreenScaffold(title: "Interval Timer",
-                       subtitle: "Silent haptic HIIT: the strap buzzes the transitions") {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
-                let cards: [AnyView] = [
-                    AnyView(statusRow),
-                    AnyView(stageCard),
-                    AnyView(overviewCard),
-                    AnyView(configCard),
-                ]
-                ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
-                    card.staggeredAppear(index: index)
-                }
-            }
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Interval timer")
+                .padding(.bottom, 6)
+            titleBlock
+            stageHero.padding(.top, 6)
+            statusRow.padding(.top, 4)
+            sessionCard
+            controls.padding(.top, 6)
+            configSection
+            footnote
         }
+        .noopHidesSystemNavBar()
         .onReceive(ticker) { _ in tick() }
         .onChangeCompat(of: workSeconds) { _ in if !running { resetToStart() } }
         .onChangeCompat(of: restSeconds) { _ in if !running { resetToStart() } }
@@ -112,7 +109,21 @@ struct IntervalTimerView: View {
             if currentRound > rounds { currentRound = rounds }
             if !running { resetToStart() }
         }
-        .onAppear { if remaining == 0 { resetToStart() } }
+        .onAppear {
+            if remaining == 0 { resetToStart() }
+            #if DEBUG
+            if demoRunning {
+                running = true
+                workSeconds = 40
+                restSeconds = 20
+                rounds = 8
+                currentRound = 3
+                phase = .work
+                remaining = 24
+                elapsed = 136
+            }
+            #endif
+        }
         // Keep the screen awake while a session runs (no-op on macOS). One onChange covers
         // every running→false transition — manual pause, auto-finish, and reset — and the
         // onDisappear is a safety net so navigating away mid-run never leaves the idle timer
@@ -133,173 +144,227 @@ struct IntervalTimerView: View {
         #endif
     }
 
-    // MARK: Status row
-
-    private var statusRow: some View {
-        HStack(spacing: 10) {
-            if live.bonded {
-                StatePill("Buzz cues on", tone: .positive)
-            } else {
-                StatePill("Connect strap for buzz cues", tone: .warning)
-            }
-            Spacer()
-            if running {
-                StatePill("Running", tone: .accent, pulsing: true)
-            } else if isFinished {
-                StatePill("Complete", tone: .positive)
-            } else {
-                StatePill("Paused", tone: .neutral, showsDot: false)
-            }
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Interval timer")
+                .font(StrandFont.title1)
+                .tracking(-0.56)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Text("Silent haptic HIIT: the strap buzzes the transitions")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    // MARK: Stage card — the countdown hero on a flat opaque surface
+    // MARK: Hero — the phase dial
 
-    /// The running timer is the hero: a clean flat phase-progress ring (GlowRing-style — visible
-    /// track, solid arc, NO glow/bloom) with the countdown at its centre, on a flat opaque
-    /// surfaceRaised card. Design Reset: no scenic backdrop, no tinted frost, no gauge gradient —
-    /// the active phase's reset token tints only the arc + chip, the card stays WHOOP-grey.
-    private var stageCard: some View {
-        StrandCard(padding: 24) {
-            VStack(spacing: 18) {
-                // Phase chip + round chip line.
+    /// The running interval on the effort glow: the round, the phase dial with the countdown at its
+    /// centre, and one segment per round.
+    private var stageHero: some View {
+        NoopHeroCard(glow: .strain, padding: 22) {
+            VStack(spacing: 0) {
                 HStack {
-                    phaseChip
-                    Spacer()
-                    roundChip
+                    Text(isFinished ? String(localized: "Session done")
+                                    : String(localized: "Round \(min(currentRound, rounds)) / \(rounds)"))
+                        .font(StrandFont.book(12, relativeTo: .caption))
+                        .tracking(1.44)
+                        .textCase(.uppercase)
+                        .foregroundStyle(Color.white.opacity(0.8))
+                    Spacer(minLength: 8)
+                    if let then = thenCaption {
+                        Text(verbatim: then)
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(NoopMetric.heroLabel)
+                    }
                 }
-
-                // The flat hero progress ring with the countdown at its centre.
-                heroRing
-                    .frame(maxWidth: .infinity)
-                    .animation(.snappy, value: remaining)
-
-                controls
-
-                if !live.bonded {
-                    Label("Bond your strap on the Live screen to feel the transitions hands-free.",
-                          systemImage: "wave.3.right")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                phaseDial
+                    .frame(width: 250, height: 250)
+                    .padding(.top, 16)
+                roundsBar.padding(.top, 22)
+                HStack {
+                    Text(String(localized: "\(roundsDone) rounds done"))
+                        .foregroundStyle(NoopMetric.heroLabel)
+                    Spacer(minLength: 8)
+                    Text(String(localized: "\(roundsToGo) to go"))
+                        .foregroundStyle(Color.white)
                 }
+                .font(StrandFont.light(11, relativeTo: .caption))
+                .padding(.top, 10)
             }
+            .padding(.bottom, 2)
         }
     }
 
-    /// Flat phase-progress ring (GlowRing look — visible track + solid reset-token arc, no bloom)
-    /// with the countdown number + caption centred. The arc springs to the live fraction; no
-    /// separate bloom driver.
-    private var heroRing: some View {
-        let diameter: CGFloat = 240
-        let lineWidth: CGFloat = 18
-        let fraction = isFinished ? 1 : intervalProgress
-        return ZStack {
-            // Visible full-circle track, so the arc reads as a fraction of a circle (WHOOP-style).
-            Circle()
-                .stroke(StrandPalette.textPrimary.opacity(0.10),
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-            // Flat, crisp solid arc — no glow.
-            Circle()
-                .trim(from: 0, to: max(0.0001, CGFloat(min(max(fraction, 0), 1))))
-                .rotation(.degrees(-90))
-                .stroke(phaseColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .animation(.snappy, value: fraction)
-            // Centred countdown number + caption.
-            VStack(spacing: 4) {
-                Text(isFinished ? "✓" : "\(remaining)")
-                    .font(GlowRing.centerFont(diameter: diameter))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .contentTransition(.numericText())
-                Text(isFinished ? "SESSION DONE" : "SECONDS")
-                    .font(StrandFont.footnote)
-                    .tracking(1.5)
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            .padding(.horizontal, lineWidth + 4)
+    /// "Then 20 s rest" during work, "Then 40 s work" during rest, "Last round" on the final work block.
+    private var thenCaption: String? {
+        switch phase {
+        case .work: return currentRound >= rounds ? String(localized: "Last round")
+                                                  : String(localized: "Then \(restSeconds) s rest")
+        case .rest: return String(localized: "Then \(workSeconds) s work")
+        case .done: return nil
         }
-        .frame(width: diameter, height: diameter)
+    }
+
+    private var roundsDone: Int { isFinished ? rounds : max(0, currentRound - 1) }
+    private var roundsToGo: Int { isFinished ? 0 : max(0, rounds - currentRound) }
+
+    /// The phase dial: 40 ticks and a ring whose bright part is the phase still to run, a white knob where
+    /// it has got to, and the phase, the countdown and its length at the centre.
+    private var phaseDial: some View {
+        let f = isFinished ? 1 : intervalProgress
+        return ZStack {
+            Canvas { ctx, size in
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let scale = size.width / 250
+                for i in 0..<40 {
+                    let t = Double(i) / 40
+                    let a = Angle.degrees(-90 + 360 * t).radians
+                    let rIn = 104 * scale, rOut = (i % 10 == 0 ? 114 : 111) * scale
+                    var p = Path()
+                    p.move(to: CGPoint(x: c.x + rIn * CGFloat(cos(a)), y: c.y + rIn * CGFloat(sin(a))))
+                    p.addLine(to: CGPoint(x: c.x + rOut * CGFloat(cos(a)), y: c.y + rOut * CGFloat(sin(a))))
+                    ctx.stroke(p, with: .color(.white.opacity(t >= f || isFinished ? 0.9 : 0.18)),
+                               style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                }
+            }
+            Circle()
+                .stroke(Color.white.opacity(0.10), lineWidth: 7)
+                .padding(29)
+            if !isFinished {
+                Circle()
+                    .trim(from: CGFloat(f), to: 1)
+                    .rotation(.degrees(-90))
+                    .stroke(StrandPalette.metricCyan, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .padding(29)
+                    .animation(.snappy, value: f)
+                GeometryReader { geo in
+                    let r = geo.size.width / 2 - 29
+                    let a = Angle.degrees(-90 + 360 * f).radians
+                    Circle().fill(Color.white)
+                        .frame(width: 14, height: 14)
+                        .position(x: geo.size.width / 2 + r * CGFloat(cos(a)),
+                                  y: geo.size.height / 2 + r * CGFloat(sin(a)))
+                }
+            }
+            VStack(spacing: 0) {
+                NoopTag(verbatim: phase.label)
+                Text(verbatim: timeString(isFinished ? elapsed : remaining))
+                    .font(StrandFont.dot(66))
+                    .tracking(StrandFont.dotTracking(66))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+                    .padding(.top, 14)
+                Text(isFinished ? String(localized: "in total") : String(localized: "of \(phaseDuration) s"))
+                    .font(StrandFont.light(12, relativeTo: .caption))
+                    .foregroundStyle(NoopMetric.heroLabel)
+                    .padding(.top, 12)
+            }
+            .padding(.horizontal, 44)
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isFinished ? "Session done" : "\(remaining) seconds remaining in \(phase.label)")
     }
 
-    /// Frosted phase pill (WORK / REST / DONE) tinted to the active world.
-    private var phaseChip: some View {
-        Text(phase.label)
-            .font(StrandFont.rounded(15, weight: .heavy))
-            .tracking(2)
-            .foregroundStyle(phaseColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(phaseColor.opacity(0.16), in: Capsule(style: .continuous))
-            .overlay(Capsule(style: .continuous).strokeBorder(phaseColor.opacity(0.35), lineWidth: 1))
+    /// One segment per round: done rounds bright, the current one filling as it runs (work, then rest),
+    /// the rest dim.
+    private var roundsBar: some View {
+        HStack(spacing: 5) {
+            ForEach(1...max(1, rounds), id: \.self) { round in
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(round <= roundsDone ? 0.85 : 0.12))
+                        if round == currentRound && !isFinished {
+                            Capsule(style: .continuous).fill(Color.white)
+                                .frame(width: geo.size.width * currentRoundProgress)
+                        }
+                    }
+                }
+                .frame(height: 8)
+            }
+        }
+        .accessibilityHidden(true)
     }
 
-    /// Frosted round chip — "ROUND n / N".
-    private var roundChip: some View {
+    /// Progress through the current round, work and the rest after it together.
+    private var currentRoundProgress: Double {
+        let last = currentRound >= rounds
+        let length = Double(workSeconds + (last ? 0 : restSeconds))
+        guard length > 0 else { return 0 }
+        let done = phase == .work ? Double(workSeconds - remaining)
+                                  : Double(workSeconds + restSeconds - remaining)
+        return min(1, max(0, done / length))
+    }
+
+    // MARK: Status row
+
+    private var statusRow: some View {
+        HStack(spacing: 8) {
+            stateChip
+            if live.bonded {
+                NoopChip(strapCues ? "Buzz cues on" : "Buzz cues off", icon: "vibrate")
+            } else {
+                NoopChip("Connect strap for buzz cues", icon: "vibrate")
+            }
+            Spacer(minLength: 0)
+            // Heart rate comes from the strap, so it is shown only with one bonded.
+            if live.bonded { LiftHeartRatePill() }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
+    private var stateChip: some View {
         HStack(spacing: 6) {
-            Text("ROUND").strandOverline()
-            Text("\(min(currentRound, rounds))")
-                .font(StrandFont.number(18))
-                .foregroundStyle(StrandPalette.textPrimary)
-            Text("/ \(rounds)")
-                .font(StrandFont.number(18))
-                .foregroundStyle(StrandPalette.textTertiary)
+            if running { Circle().fill(StrandPalette.goldDeepText).frame(width: 6, height: 6) }
+            // Before the first second it is "Ready": "Paused" would claim a session that never started.
+            Text(running ? "Running" : (isFinished ? "Complete" : (elapsed == 0 ? "Ready" : "Paused")))
+                .font(StrandFont.book(12, relativeTo: .caption))
         }
+        .foregroundStyle(running ? StrandPalette.goldDeepText : StrandPalette.textSecondary)
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
-        .overlay(Capsule(style: .continuous).strokeBorder(StrandPalette.hairline, lineWidth: 1))
+        .frame(height: 30)
+        .background(Capsule(style: .continuous).fill(running ? StrandPalette.gold : NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(running ? Color.clear : NoopVisualStyle.border, lineWidth: 1))
+        .fixedSize()
     }
 
-    private var controls: some View {
-        HStack(spacing: NoopMetrics.space3) {
-            NoopButton(running ? "Pause" : (isFinished ? "Restart" : "Start"),
-                       systemImage: running ? "pause.fill" : "play.fill",
-                       kind: .primary, fullWidth: true) {
-                if isFinished { resetToStart() }
-                toggleRunning()
-            }
+    // MARK: Session card — elapsed / planned
 
-            NoopButton("Reset", systemImage: "arrow.counterclockwise",
-                       kind: .secondary, fullWidth: true) {
-                stopAndReset()
-            }
-            .disabled(!running && remaining == phaseDuration && currentRound == 1 && phase == .work && elapsed == 0)
-        }
-    }
-
-    // MARK: Overview card — elapsed / planned
-
-    private var overviewCard: some View {
-        StrandCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Session").strandOverline()
-                    Spacer()
-                    Text("\(timeString(elapsed)) / \(timeString(totalPlanned))")
-                        .font(StrandFont.bodyNumber)
+    private var sessionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NoopCardHeader("Session elapsed", icon: "clock") {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(verbatim: timeString(elapsed))
+                        .font(StrandFont.value(15, relativeTo: .body))
                         .foregroundStyle(StrandPalette.textPrimary)
-                }
-
-                // Slim total-session progress as the NOOP signature segmented bar — it cascades up as the
-                // session advances, tinted to the Effort world. Flat, crisp, no glow.
-                PipBar(value: sessionProgress, range: 0...1, segments: 28,
-                       tint: StrandPalette.effortColor, height: 10)
-                    .accessibilityLabel("Session progress")
-                    .accessibilityValue("\(Int((sessionProgress * 100).rounded())) percent")
-
-                HStack(spacing: 0) {
-                    overviewStat(String(localized: "Work"), "\(workSeconds)s", StrandPalette.effortColor)
-                    overviewStat(String(localized: "Rest"), "\(restSeconds)s", StrandPalette.restColor)
-                    overviewStat(String(localized: "Rounds"), "\(rounds)", StrandPalette.textPrimary)
-                    overviewStat(String(localized: "Remaining"), timeString(max(0, totalPlanned - elapsed)), StrandPalette.textSecondary)
+                    Text(verbatim: " / \(timeString(totalPlanned))")
+                        .font(StrandFont.light(12, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textTertiary)
                 }
             }
+            NoopTrack(fraction: sessionProgress, height: 12)
+                .accessibilityElement()
+                .accessibilityLabel("Session progress")
+                .accessibilityValue("\(Int((sessionProgress * 100).rounded())) percent")
+            HStack {
+                Text(String(localized: "\(rounds) × \(timeString(workSeconds + restSeconds)) rounds"))
+                Spacer(minLength: 8)
+                if running {
+                    Text(String(localized: "Ends \(Date().addingTimeInterval(TimeInterval(max(0, totalPlanned - elapsed))).formatted(date: .omitted, time: .shortened))"))
+                } else {
+                    Text(String(localized: "\(timeString(max(0, totalPlanned - elapsed))) left"))
+                }
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .lineLimit(1)
         }
+        .ltCard()
     }
 
     private var sessionProgress: Double {
@@ -307,71 +372,126 @@ struct IntervalTimerView: View {
         return min(1, max(0, Double(elapsed) / Double(totalPlanned)))
     }
 
-    private func overviewStat(_ label: String, _ value: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Same shape, and the same hazard, as IntelligenceView's day-row stat: four equal columns
-            // with NO gap (`HStack(spacing: 0)` above), so a label wide enough to fill its column runs
-            // into the next. "REMAINING" is the longest label on either screen at nine characters, and
-            // the value here is a time string that grows to "1:23:45" on a long session, so BOTH are
-            // protected rather than just the label.
-            //
-            // Not yet reported here; found by sweeping for the shape after the Intelligence card was
-            // seen rendering "CHARGEEFFORT" on a device. Larger Dynamic Type is where either bites.
-            Text(label.uppercased())
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(value)
-                .font(StrandFont.number(18))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: Config card
-
-    private var configCard: some View {
-        StrandCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Configure").strandOverline()
-                configStepper(title: String(localized: "Work"), unit: String(localized: "sec"), value: $workSeconds,
-                              range: 5...600, step: 5, tint: StrandPalette.effortColor)
-                Divider().overlay(StrandPalette.hairline)
-                configStepper(title: String(localized: "Rest"), unit: String(localized: "sec"), value: $restSeconds,
-                              range: 5...600, step: 5, tint: StrandPalette.restColor)
-                Divider().overlay(StrandPalette.hairline)
-                configStepper(title: String(localized: "Rounds"), unit: nil, value: $rounds,
-                              range: 1...30, step: 1, tint: StrandPalette.textPrimary)
-            }
-            .disabled(running)
-            .opacity(running ? StrandPalette.disabledOpacity : 1)
-        }
-    }
-
-    private func configStepper(title: String, unit: String?, value: Binding<Int>,
-                               range: ClosedRange<Int>, step: Int, tint: Color) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                Text("\(range.lowerBound)-\(range.upperBound)\(unit.map { " \($0)" } ?? "") · step \(step)")
-                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-            }
-            Spacer()
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(value.wrappedValue)")
-                    .font(StrandFont.number(24))
-                    .foregroundStyle(tint)
-                    .frame(minWidth: 44, alignment: .trailing)
-                if let unit {
-                    Text(unit).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+    private var controls: some View {
+        HStack(spacing: 10) {
+            Button {
+                if isFinished { resetToStart() }
+                toggleRunning()
+            } label: {
+                HStack(spacing: 8) {
+                    PhIcon(running ? "pause" : (isFinished ? "arrow-counter-clockwise" : "play"),
+                           weight: isFinished ? .light : .fill, size: 18)
+                    Text(running ? "Pause" : (isFinished ? "Restart" : "Start"))
                 }
             }
-            Stepper("", value: value, in: range, step: step)
-                .labelsHidden()
-                .accessibilityLabel("\(title) \(unit ?? "")")
+            .buttonStyle(LTPillStyle(kind: .primary))
+
+            Button {
+                stopAndReset()
+            } label: {
+                HStack(spacing: 8) {
+                    PhIcon("stop", size: 18)
+                    Text("Stop")
+                }
+            }
+            .buttonStyle(LTPillStyle(kind: .ghost))
+            .disabled(!running && remaining == phaseDuration && currentRound == 1 && phase == .work && elapsed == 0)
+        }
+    }
+
+    // MARK: Configure
+
+    @ViewBuilder private var configSection: some View {
+        NoopSectionTitle("Configure") {
+            if running { Text("Pause to change") }
+        }
+        NoopList {
+            configStepper(title: "Work", caption: "Effort phase", unit: String(localized: "s"),
+                          value: $workSeconds, range: 5...600, step: 5)
+            configStepper(title: "Rest", caption: "Easy phase", unit: String(localized: "s"),
+                          value: $restSeconds, range: 5...600, step: 5)
+            configStepper(title: "Rounds", caption: "Work + rest", unit: nil,
+                          value: $rounds, range: 1...30, step: 1)
+        }
+        .disabled(running)
+        .opacity(running ? 0.5 : 1)
+        NoopList {
+            Toggle(isOn: $strapCues) {
+                HStack(spacing: 14) {
+                    NoopIconTile("vibrate")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Strap buzz cues")
+                            .font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Text("3 into work · 1 into rest · a tick on the last 3 seconds")
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .toggleStyle(.noop)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 15)
+        }
+    }
+
+    /// One setting with − value + (`.stp`): 34 pt circle steps either side of the value.
+    private func configStepper(title: LocalizedStringKey, caption: LocalizedStringKey, unit: String?,
+                               value: Binding<Int>, range: ClosedRange<Int>, step: Int) -> some View {
+        NoopRow(title, caption: caption) {
+            HStack(spacing: 10) {
+                stepButton("minus", enabled: value.wrappedValue > range.lowerBound) {
+                    value.wrappedValue = max(range.lowerBound, value.wrappedValue - step)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(verbatim: "\(value.wrappedValue)")
+                        .font(StrandFont.value(17, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    if let unit {
+                        Text(verbatim: unit).font(StrandFont.book(10)).foregroundStyle(StrandPalette.textSecondary)
+                    }
+                }
+                .frame(minWidth: 52)
+                stepButton("plus", enabled: value.wrappedValue < range.upperBound) {
+                    value.wrappedValue = min(range.upperBound, value.wrappedValue + step)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(Text(verbatim: "\(value.wrappedValue)\(unit.map { " \($0)" } ?? "")"))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value.wrappedValue = min(range.upperBound, value.wrappedValue + step)
+            case .decrement: value.wrappedValue = max(range.lowerBound, value.wrappedValue - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    private func stepButton(_ icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            PhIcon(icon, size: 15)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(NoopVisualStyle.raised))
+                .overlay(Circle().strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(LTPressStyle())
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.38)
+    }
+
+    @ViewBuilder private var footnote: some View {
+        if !live.bonded {
+            Text("Bond your strap on the Live screen to feel the transitions hands-free.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
         }
     }
 

@@ -140,6 +140,12 @@ class FormatSpecExclusion(unittest.TestCase):
     def test_format_spec_with_real_text_kept(self):
         self.assertTrue(ia.is_probably_ui_text("%.1f br/min"))
 
+    def test_kebab_case_icon_names_excluded(self):
+        # Phosphor icon names passed beside copy ("bell-slash") are identifiers, not UI text.
+        self.assertFalse(ia.is_probably_ui_text("bell-slash"))
+        self.assertFalse(ia.is_probably_ui_text("sliders-horizontal"))
+        self.assertTrue(ia.is_probably_ui_text("Re-sync"))
+
 
 class ScanAndroidEndToEnd(unittest.TestCase):
     """Exercises scan_android() against real files on disk (its actual

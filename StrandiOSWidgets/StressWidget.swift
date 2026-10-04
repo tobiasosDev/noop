@@ -121,8 +121,6 @@ private struct StressMovingMarksShape: Shape {
 
 struct StressWidgetView: View {
     let entry: StressEntry
-    private let scaleWidth: CGFloat = 14
-    private let scaleGap: CGFloat = 6
 
     /// Resolved on read, so a curve scored for a day that is over is dropped rather than drawn. Measured
     /// from `entry.date` rather than `Date()` because WidgetKit renders an entry at ITS date, which is
@@ -133,103 +131,70 @@ struct StressWidgetView: View {
     private var stats: StressTrace.Stats? { StressTrace.stats(series) }
     private var latest: Double? { series.last(where: { $0.level != nil })?.level }
 
-    // The ramp's band anchors, taken from the palette tokens the Stress screen's own ramp is built from,
-    // rather than the local hexes the Glance twin has to carry. Blue calm, green steady, amber tense.
-    private var calm: Color { StrandPalette.accent }
-    private var steady: Color { StrandPalette.statusPositive }
-    private var tense: Color { StrandPalette.statusWarning }
-
-    /// Vertical, because `StressTrace.segments` maps the score onto Y off a FIXED domain: height already
-    /// encodes level, so one top-to-bottom gradient paints every run the colour its own score deserves.
-    /// The screen's ramp read upward.
-    private var rampGradient: LinearGradient {
-        LinearGradient(colors: [tense, steady, calm], startPoint: .top, endPoint: .bottom)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Stress")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(StrandPalette.textPrimary)
-
-            HStack(alignment: .lastTextBaseline, spacing: 4) {
-                Text(latest.map { StressTrace.formatLevel($0) } ?? "—")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                if latest != nil {
-                    Text("of 3")
-                        .font(.system(size: 12))
-                        .foregroundStyle(StrandPalette.textSecondary)
-                }
-                if let stats, let peak = stats.peak.level {
-                    // "Peak" is a catalog key the app already carries in every locale; the value and the
-                    // time are DATA, so they are formatted into a plain String and shown verbatim. That
-                    // keeps a translator's job to the word that has one, and adds no catalog entry for a
-                    // string that is otherwise punctuation.
-                    let peakTime = Date(timeIntervalSince1970: TimeInterval(stats.peak.ts))
-                        .formatted(date: .omitted, time: .shortened)
-                    HStack(spacing: 4) {
-                        Text("Peak")
-                        Text(verbatim: StressTrace.formatLevel(peak) + " · " + peakTime)
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(tense.opacity(0.18), in: Capsule())
-                    .padding(.leading, 6)
-                }
-            }
-
-            if stats != nil {
-                HStack(alignment: .top, spacing: scaleGap) {
-                    // The scale sits on the LEFT, where the Stress screen puts it. (The heart-rate
-                    // widget puts its scale on the right, which is right for a trace whose numbers are
-                    // read off the end.) Fixed rather than derived, because that is what the domain is:
-                    // an axis that moved with the day would make two days impossible to compare.
-                    let ticks = StressTrace.levelTicks()
-                    VStack(alignment: .trailing) {
-                        ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
-                            Text("\(tick)")
-                                .font(.system(size: 10))
-                                .foregroundStyle(StrandPalette.textSecondary)
-                            if index < ticks.count - 1 { Spacer(minLength: 0) }
-                        }
-                    }
-                    .frame(width: scaleWidth)
-                    StressCurveChart(series: series, ramp: rampGradient,
-                                     fillTint: steady, dotTint: tense)
-                }
-                StressTimeAxis(series: series)
-                    .padding(.leading, scaleWidth + scaleGap)
-            }
-
-            Spacer(minLength: 0)
-            if let updated = entry.snap?.updated, updated != .distantPast {
-                HStack {
-                    Spacer()
-                    // Both halves are catalog keys the app already carries, `avg %@` and `Updated %@`,
-                    // joined by a separator with nothing in it to translate. One composite key would have
-                    // needed a new entry in ten locales to say what these two already say.
-                    if let stats {
-                        HStack(spacing: 0) {
-                            Text("avg \(StressTrace.formatLevel(stats.mean))")
-                            Text(verbatim: " · ")
-                            Text("Updated \(updated, format: .dateTime.hour().minute())")
-                        }
-                        .font(.system(size: 10))
-                        .foregroundStyle(StrandPalette.textSecondary)
-                    } else {
-                        Text("Updated \(updated, format: .dateTime.hour().minute())")
-                            .font(.system(size: 10))
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 0) {
+                WidgetHeader(icon: "wave-sine", title: Text("Stress"))
+                HStack(alignment: .lastTextBaseline, spacing: 4) {
+                    Text(verbatim: latest.map { StressTrace.formatLevel($0) } ?? "—")
+                        .font(StrandFont.dot(42))
+                        .tracking(StrandFont.dotTracking(42))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if latest != nil {
+                        Text("of 3")
+                            .font(StrandFont.light(11))
                             .foregroundStyle(StrandPalette.textSecondary)
                     }
-                    Spacer()
+                }
+                .padding(.top, 14)
+                Spacer(minLength: 4)
+                if let latest {
+                    WidgetDotTag(text: Self.bandWord(latest))
+                        .accessibilityHidden(true)
                 }
             }
+            .frame(width: 112, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8) {
+                if let stats {
+                    HStack(spacing: 4) {
+                        if let peak = stats.peak.level {
+                            // "Peak" is a catalog key the app already carries in every locale; the value
+                            // and the time are DATA, so they are formatted into a plain String and shown
+                            // verbatim. That keeps a translator's job to the word that has one.
+                            let peakTime = Date(timeIntervalSince1970: TimeInterval(stats.peak.ts))
+                                .formatted(date: .omitted, time: .shortened)
+                            Text("Peak")
+                            Text(verbatim: StressTrace.formatLevel(peak) + " · " + peakTime)
+                        }
+                        Spacer(minLength: 4)
+                        Text("Avg \(StressTrace.formatLevel(stats.mean))")
+                    }
+                    .font(StrandFont.light(11))
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .lineLimit(1)
+                    Spacer(minLength: 0)
+                    StressCurveChart(series: series)
+                        .frame(height: 70)
+                    StressTimeAxis(series: series)
+                } else {
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+    }
+
+    /// The band word the Stress screen prints for a level: LOW under 1, MEDIUM under the high floor, HIGH
+    /// from it. The same cut points the chart's guides draw; the app's `StressBand` is the twin.
+    static func bandWord(_ level: Double) -> String {
+        if level < 1 { return "LOW" }
+        if level < StressTrace.highBandFloor { return "MEDIUM" }
+        return "HIGH"
     }
 
     /// One spoken sentence rather than a run of loose numbers, the same choice the heart-rate widget
@@ -248,7 +213,9 @@ struct StressWidgetView: View {
     }
 }
 
-/// The chart: fill, stroke, high-band dots, and the movement strip beneath them.
+/// The chart: guides at levels 1 and 2 of the fixed 0-3 domain, the fill and the line in the app's chart
+/// style, the high-band hours ringed above the line, the newest hour's dot, and the movement strip
+/// beneath them.
 ///
 /// The marks get their OWN row rather than a reserved band inside the chart's coordinate space. The
 /// Glance twin has to carve the band out of one bitmap and normalise around it, which is exactly where
@@ -256,24 +223,36 @@ struct StressWidgetView: View {
 /// disappears.
 private struct StressCurveChart: View {
     let series: [StressPoint]
-    let ramp: LinearGradient
-    let fillTint: Color
-    let dotTint: Color
 
     private var hasMarks: Bool { series.contains(where: \.moving) }
 
     var body: some View {
         VStack(spacing: 2) {
-            ZStack {
-                StressCurveShape(series: series, filled: true)
-                    .fill(LinearGradient(
-                        colors: [fillTint.opacity(0.3), fillTint.opacity(0)],
-                        startPoint: .top, endPoint: .bottom,
-                    ))
-                StressCurveShape(series: series, filled: false)
-                    .stroke(ramp, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                StressHighDotsShape(series: series)
-                    .fill(dotTint)
+            GeometryReader { geo in
+                let h = geo.size.height
+                ZStack(alignment: .topLeading) {
+                    // The fixed domain's level 1 and 2, so a calm day reads as calm at a glance.
+                    Path { p in
+                        for level in [1.0, 2.0] {
+                            let y = h - CGFloat(level / StressTrace.domainMax) * h
+                            p.move(to: CGPoint(x: 0, y: y))
+                            p.addLine(to: CGPoint(x: geo.size.width, y: y))
+                        }
+                    }
+                    .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                    StressCurveShape(series: series, filled: true)
+                        .fill(WidgetChartStyle.fill)
+                    StressCurveShape(series: series, filled: false)
+                        .stroke(WidgetChartStyle.line,
+                                style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    StressHighDotsShape(series: series)
+                        .stroke(Color.white, lineWidth: 1)
+                    if let last = StressTrace.segments(series, width: geo.size.width, height: h).last?.last {
+                        Circle().fill(Color.white)
+                            .frame(width: 6, height: 6)
+                            .position(x: min(max(last.x, 3), geo.size.width - 3), y: last.y)
+                    }
+                }
             }
             if hasMarks {
                 StressMovingMarksShape(series: series)
@@ -281,7 +260,7 @@ private struct StressCurveChart: View {
                     .frame(height: 3)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -297,8 +276,8 @@ private struct StressTimeAxis: View {
                 ForEach(Array(ticks.enumerated()), id: \.offset) { i, ts in
                     Text(Date(timeIntervalSince1970: TimeInterval(ts)),
                          format: .dateTime.hour().minute())
-                        .font(.system(size: 9))
-                        .foregroundStyle(StrandPalette.textSecondary)
+                        .font(StrandFont.light(9.5))
+                        .foregroundStyle(i == ticks.count - 1 ? StrandPalette.textSecondary : StrandPalette.textTertiary)
                     if i < ticks.count - 1 { Spacer(minLength: 0) }
                 }
             }
@@ -313,11 +292,11 @@ struct StressWidget: Widget {
         StaticConfiguration(kind: Self.kind, provider: StressProvider()) { entry in
             if #available(iOS 17.0, *) {
                 StressWidgetView(entry: entry)
-                    .containerBackground(StrandPalette.surfaceBase, for: .widget)
+                    .containerBackground(for: .widget) { WidgetCardBackground() }
             } else {
                 StressWidgetView(entry: entry)
                     .padding()
-                    .background(StrandPalette.surfaceBase)
+                    .background(WidgetCardBackground())
             }
         }
         .configurationDisplayName("Stress")

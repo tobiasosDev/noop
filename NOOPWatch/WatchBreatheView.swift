@@ -65,6 +65,18 @@ struct WatchBreatheView: View {
 
     private let reducedSteadyRing: CGFloat = 0.5
 
+    /// Starts a session as soon as the page appears. Only the DEBUG screenshot aid sets it (a simulator
+    /// cannot tap Start); the page itself always opens idle.
+    private var startsOnAppear = false
+
+    init() {}
+
+    #if DEBUG
+    init(startsOnAppear: Bool) {
+        self.startsOnAppear = startsOnAppear
+    }
+    #endif
+
     private var protocols: [BreathProtocol] { BreathProtocolCatalog.watchSubset }
 
     private var selectedProtocol: BreathProtocol? {
@@ -79,36 +91,21 @@ struct WatchBreatheView: View {
     }
 
     var body: some View {
+        // One screen, no scrolling. Idle carries the setup (session length, pace, Start) around a small orb;
+        // a running session clears the setup away and gives the face to the orb, as the board draws it.
         GeometryReader { geo in
-            let totalH = geo.size.height
-            let totalW = geo.size.width
-            let vSpacing: CGFloat = 4
-
-            let headerH: CGFloat = 14
-            let lengthH: CGFloat = 26
-            let pillsH: CGFloat = 28
-            let controlH: CGFloat = 36
-            let reserved = headerH + lengthH + pillsH + controlH + vSpacing * 4
-
-            let remaining = max(totalH - reserved, 36)
-            let ringSide = min(min(totalW, remaining), 140)
-
-            VStack(spacing: vSpacing) {
-                paceLine
-                    .frame(height: headerH)
-                sessionLengthPicker
-                    .frame(height: lengthH)
-                ring(side: ringSide)
-                Spacer(minLength: 0)
-                pacePicker
-                    .frame(height: pillsH)
-                control
-                    .frame(height: controlH)
+            Group {
+                if running {
+                    runningFace(size: geo.size)
+                } else {
+                    idleFace(size: geo.size)
+                }
             }
-            .frame(width: totalW, height: totalH)
-            .padding(.horizontal, 4)
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
-        .background(StrandPalette.surfaceBase.ignoresSafeArea())
+        .padding(.horizontal, 4)
+        // The page's one glow: Breathe lives in the Stress colour world on the phone too.
+        .background(WatchGlowBackground(glow: .stress, strength: running ? 0.55 : 0.4))
         .onReceive(phaseTimer) { now in
             guard running else { return }
             advance(now: now)
@@ -127,72 +124,171 @@ struct WatchBreatheView: View {
                 sessionLength = SessionLength.from(recommendedMs: proto.recommendedDurationMs)
             }
         }
+        .onAppear { if startsOnAppear, !running { start() } }
         .onDisappear { stop() }
     }
 
-    // MARK: - Ring
+    // MARK: - Faces
 
-    private func ring(side: CGFloat) -> some View {
-        let maxDiameter = side
-        let minScale: CGFloat = 0.46
+    /// Ready to breathe: the page title, session length, the resting orb, the pace and Start.
+    private func idleFace(size: CGSize) -> some View {
+        let spacing: CGFloat = 4
+        let reserved = Self.headerHeight + 26 + 28 + 36 + spacing * 4
+        let side = min(max(size.height - reserved, 40), size.width, 120)
+        return VStack(spacing: spacing) {
+            header
+            sessionLengthPicker
+                .frame(height: 26)
+            orb(diameter: side * 0.8, halo: side)
+            Spacer(minLength: 0)
+            pacePicker
+                .frame(height: 28)
+            control
+                .frame(height: 36)
+        }
+    }
+
+    /// A session in progress: the orb breathing at the centre inside its two halos, the protocol and the
+    /// time over the breath count and pace. Stop sits in the header, the one control a running session
+    /// needs.
+    private func runningFace(size: CGSize) -> some View {
+        let textBlock: CGFloat = 34
+        let largest = min(118, size.width / 1.37, size.height - Self.headerHeight - textBlock - 12)
+        let minScale: CGFloat = 0.6
         let scale = minScale + (1.0 - minScale) * ringProgress
-        let guideDiameter = maxDiameter * scale
+        return VStack(spacing: 0) {
+            header
+            Spacer(minLength: 4)
+            ZStack {
+                Circle()
+                    .strokeBorder(NoopGlow.stress.tint.opacity(0.12), lineWidth: 1)
+                    .frame(width: largest + 44, height: largest + 44)
+                orb(diameter: largest * scale, halo: largest + 20)
+            }
+            .frame(width: largest, height: largest)
+            .frame(maxWidth: .infinity)
+            Spacer(minLength: 8)
+            VStack(spacing: 3) {
+                Text(runningTitle)
+                    .font(StrandFont.book(13))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(runningDetail)
+                    .font(StrandFont.light(10))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(height: textBlock)
+        }
+    }
 
+    private static let headerHeight: CGFloat = 28
+
+    /// The page title in the Stress colour, with Stop at the right while a session runs.
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("Breathe")
+                .font(StrandFont.book(12))
+                .foregroundStyle(NoopGlow.stress.tint)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if running {
+                Button {
+                    stop()
+                } label: {
+                    PhIcon("stop", weight: .fill, size: 10)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(NoopVisualStyle.raised))
+                        .overlay(Circle().strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+                        .contentShape(Circle().inset(by: -6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Stop session"))
+            }
+        }
+        .padding(.leading, 4)
+        .frame(height: Self.headerHeight)
+    }
+
+    /// "Coherence · 4:12": the protocol, then the time left in a timed session or the time so far in an
+    /// open one.
+    private var runningTitle: String {
+        let title = selectedProtocol.map { watchLabel(for: $0) } ?? protocolId
+        let seconds = sessionLength.targetSeconds.map { max($0 - sessionSeconds, 0) } ?? sessionSeconds
+        return String(localized: "\(title) · \(timeString(seconds))")
+    }
+
+    /// "12 breaths · 6.0 br/min", or the guided protocol's own label.
+    private var runningDetail: String {
+        if isGuided { return String(localized: "Guided") }
+        return String(localized: "\(breathCount) breaths · \(paceText)")
+    }
+
+    /// The protocol's pace, "6.0 br/min".
+    private var paceText: String {
+        String(format: String(localized: "%@ br/min"), String(format: "%.1f", selectedBpm))
+    }
+
+    // MARK: - Orb
+
+    /// The breathing orb: a lit sphere in the Stress glow (bright at its upper centre, darkening and
+    /// fading at the rim) inside a faint halo ring. The cue sits on the orb in dark ink.
+    private func orb(diameter: CGFloat, halo: CGFloat) -> some View {
+        let glow = NoopGlow.stress
+        // The board's gradient reaches transparent at 72 % of the farthest-corner radius, measured from
+        // a centre 42 % down: about 0.76 of the orb's diameter.
+        let reach = diameter * 0.76
         return ZStack {
             Circle()
-                .strokeBorder(StrandPalette.restColor.opacity(0.26), lineWidth: 1)
-                .frame(width: maxDiameter, height: maxDiameter)
-
+                .strokeBorder(glow.tint.opacity(0.25), lineWidth: 1)
+                .frame(width: halo, height: halo)
             Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [StrandPalette.restBright.opacity(0.85),
-                                 StrandPalette.restColor.opacity(0.55),
-                                 StrandPalette.restDeep.opacity(0.80)],
-                        center: .init(x: 0.4, y: 0.35),
-                        startRadius: 1,
-                        endRadius: guideDiameter * 0.62
-                    )
-                )
-                .frame(width: guideDiameter, height: guideDiameter)
-
-            Circle()
-                .strokeBorder(StrandPalette.restBright.opacity(running ? 0.70 : 0.40), lineWidth: 2)
-                .frame(width: guideDiameter, height: guideDiameter)
-
+                .fill(RadialGradient(
+                    stops: [
+                        .init(color: glow.accent, location: 0.26),
+                        .init(color: glow.deep, location: 0.62),
+                        .init(color: glow.deep.opacity(0), location: 0.72),
+                    ],
+                    center: .init(x: 0.5, y: 0.42), startRadius: 0, endRadius: reach))
+                .overlay(Circle().fill(RadialGradient(
+                    colors: [Color.white.opacity(0.45), Color.white.opacity(0)],
+                    center: .init(x: 0.5, y: 0.42), startRadius: 0, endRadius: reach * 0.26)))
+                .frame(width: diameter, height: diameter)
             centerLabel
+                .frame(width: diameter * 0.8)
         }
-        .frame(width: maxDiameter, height: maxDiameter)
         .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private var centerLabel: some View {
+        let ink = NoopGlow.stress.floor
         VStack(spacing: 2) {
             if running {
                 Text(phaseWord)
-                    .font(StrandFont.rounded(14, weight: .semibold))
-                    .foregroundStyle(StrandPalette.restBright)
+                    .font(StrandFont.book(14))
+                    .foregroundStyle(ink)
                     .animation(.easeInOut(duration: 0.2), value: phase)
                 if !isGuided {
                     Text("\(max(phaseRemaining, 0))")
-                        .font(StrandFont.number(26))
-                        .foregroundStyle(StrandPalette.textPrimary)
+                        .font(StrandFont.dot(18))
+                        .foregroundStyle(ink)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                 }
             } else {
-                Text("Breathe")
-                    .font(StrandFont.rounded(15, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(selectedProtocol.map { watchLabel(for: $0) } ?? String(localized: "Breathe"))
+                    .font(StrandFont.book(13))
+                    .foregroundStyle(ink)
                 if selectedBpm > 0 {
-                    Text(String(format: String(localized: "%@ br/min"), String(format: "%.1f", selectedBpm)))
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                    Text(paceText)
+                        .font(StrandFont.light(10))
+                        .foregroundStyle(ink.opacity(0.75))
                 } else if isGuided {
                     Text(String(localized: "Guided"))
-                        .font(StrandFont.caption)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                        .font(StrandFont.light(10))
+                        .foregroundStyle(ink.opacity(0.75))
                 }
             }
         }
@@ -227,75 +323,49 @@ struct WatchBreatheView: View {
 
     // MARK: - Pickers
 
-    private var paceLine: some View {
-        Text(running ? sessionReadout : idlePaceLine)
-            .font(StrandFont.caption)
-            .foregroundStyle(StrandPalette.textTertiary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(maxWidth: .infinity)
-    }
-
-    private var sessionReadout: String {
-        if let target = sessionLength.targetSeconds {
-            return String(localized: "\(breathCount) breaths · \(timeString(sessionSeconds))/\(timeString(target))")
-        }
-        return String(localized: "\(breathCount) breaths · \(timeString(sessionSeconds))")
-    }
-
-    private var idlePaceLine: String {
-        let title = selectedProtocol.map { watchLabel(for: $0) } ?? protocolId
-        if isGuided {
-            return String(localized: "\(title) · guided")
-        }
-        return String(localized: "\(title) · \(sessionLength.label)")
-    }
-
     private var sessionLengthPicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(SessionLength.allCases, id: \.self) { len in
                 Button {
                     StrandHaptic.selection.play()
                     sessionLength = len
                 } label: {
                     Text(len.label)
-                        .font(StrandFont.caption)
+                        .font(StrandFont.book(11))
                         .foregroundStyle(len == sessionLength ? StrandPalette.textPrimary : StrandPalette.textTertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(len == sessionLength ? StrandPalette.restColor.opacity(0.22) : StrandPalette.surfaceRaised)
+                            Capsule(style: .continuous)
+                                .fill(len == sessionLength ? NoopVisualStyle.raised : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
                 .disabled(running)
             }
         }
+        .padding(2)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.surface.opacity(0.8)))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
     }
 
     private var pacePicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(protocols, id: \.id) { proto in
+                    let on = proto.id == protocolId
                     Button {
                         StrandHaptic.selection.play()
                         protocolId = proto.id
                     } label: {
                         Text(watchLabel(for: proto))
-                            .font(StrandFont.caption)
-                            .foregroundStyle(proto.id == protocolId ? StrandPalette.textPrimary : StrandPalette.textTertiary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(proto.id == protocolId ? StrandPalette.restColor.opacity(0.22) : StrandPalette.surfaceRaised)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(proto.id == protocolId ? StrandPalette.restBright.opacity(0.6) : Color.clear,
-                                                  lineWidth: 1)
-                            )
+                            .font(StrandFont.book(11))
+                            .foregroundStyle(on ? StrandPalette.goldDeepText : StrandPalette.textSecondary)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(Capsule(style: .continuous)
+                                .fill(on ? StrandPalette.textPrimary : NoopVisualStyle.inset))
+                            .overlay(Capsule(style: .continuous)
+                                .strokeBorder(on ? Color.clear : NoopVisualStyle.border, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                 }
@@ -326,21 +396,11 @@ struct WatchBreatheView: View {
             running ? stop() : start()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: running ? "stop.fill" : "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                PhIcon(running ? "stop" : "play", weight: .fill, size: 12)
                 Text(running ? String(localized: "Stop") : String(localized: "Start"))
-                    .font(StrandFont.rounded(14, weight: .semibold))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(running ? StrandPalette.statusCritical.opacity(0.22)
-                                  : StrandPalette.restColor.opacity(0.28))
-            )
-            .foregroundStyle(running ? StrandPalette.statusCritical : StrandPalette.restBright)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WatchPillButtonStyle(primary: !running))
         .accessibilityLabel(running ? String(localized: "Stop session") : String(localized: "Start session"))
     }
 

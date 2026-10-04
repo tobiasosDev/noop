@@ -222,14 +222,13 @@ struct TrendsReportPage: View {
     private var header: some View {
         // Report chrome uses the same shared panel surface as the in-app cards.
         ZStack(alignment: .leading) {
-            NoopPanelSurface(tint: StrandPalette.accent,
-                             cornerRadius: NoopMetrics.cardRadius,
+            NoopPanelSurface(cornerRadius: NoopMetrics.cardRadius,
                              elevated: true)
             VStack(alignment: .leading, spacing: NoopMetrics.space1) {
                 HStack(alignment: .firstTextBaseline) {
                     BrandMark(size: 22)
                     Text("NOOP").font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                        .foregroundStyle(StrandPalette.accent)
+                        .foregroundStyle(StrandPalette.textSecondary)
                     Spacer()
                     Text(range.longName).strandOverline()
                 }
@@ -259,9 +258,8 @@ struct TrendsReportPage: View {
                 SectionHeader("What changed", overline: "Summary")
                 ForEach(Array(report.headlines.enumerated()), id: \.offset) { _, line in
                     HStack(alignment: .top, spacing: NoopMetrics.space2) {
-                        Image(systemName: "sparkles")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.accent)
+                        PhIcon("sparkle", size: 13)
+                            .foregroundStyle(StrandPalette.textPrimary)
                         Text(line)
                             .font(StrandFont.subhead)
                             .foregroundStyle(StrandPalette.textPrimary)
@@ -353,9 +351,9 @@ struct TrendsReportPage: View {
     private var emptyState: some View {
         NoopCard {
             HStack(alignment: .top, spacing: NoopMetrics.space3) {
-                Image(systemName: "calendar.badge.exclamationmark")
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.accent)
+                PhIcon("calendar-x", size: 18)
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: NoopMetrics.space2) {
                     Text("Not enough data in this range yet")
                         .font(StrandFont.headline)
@@ -497,65 +495,53 @@ struct TrendsReportSheet: View {
                          generatedOn: generatedOn, units: units)
     }
 
+    /// "5 Jul – 3 Oct · 91 nights": the report window and how many nights of sleep it holds.
+    private func rangeCaption(_ rpt: RangeReport) -> String {
+        let nights = days.reduce(0) { $0 + ($1.day >= rpt.start && $1.day <= rpt.end && ($1.totalSleepMin ?? 0) > 0 ? 1 : 0) }
+        return String(localized: "\(TrendsDayFormat.range(rpt.start, rpt.end)) · \(nights) nights")
+    }
+
     var body: some View {
         let rpt = report
-        ScrollView {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
-                VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-                    Text("Export trends report")
-                        .font(StrandFont.title2)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text("A clean, shareable one-page PDF of your recovery, sleep, HRV, resting heart rate and strain over a date range. Saved on your \(Platform.deviceNoun). Nothing leaves the device.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-                    Text("Range").strandOverline()
-                    SegmentedPillControl(ReportRange.allCases, selection: $range) { $0.label }
-                    Text(range.longName)
+        VStack(spacing: 0) {
+            NoopSheetHeader("Trends report", doneTitle: nil, onCancel: { dismiss() })
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Range").font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Spacer(minLength: 8)
+                        Text(verbatim: rangeCaption(rpt))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    .padding(.top, 2)
+                    SegmentedPillControl(ReportRange.allCases, selection: $range, fillsAvailableWidth: true) { $0.label }
+                        .padding(.top, 12)
+                        .accessibilityLabel(Text(range.longName))
+                    preview(rpt)
+                        .padding(.top, 14)
+                    exportButton(rpt)
+                        .padding(.top, 24)
+                    Text("Built on \(Platform.deviceNounPhrase). It stays here until you share the file.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 12)
                 }
-
-                // A scaled-down live preview of the page so the user sees exactly what
-                // they'll get before exporting.
-                VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-                    Text("Preview").strandOverline()
-                    page(for: rpt)
-                        .scaleEffect(0.46, anchor: .topLeading)
-                        .frame(width: TrendsReportPage.pageWidth * 0.46,
-                               height: 760 * 0.46, alignment: .topLeading)
-                        .clipped()
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(StrandPalette.hairline, lineWidth: 1)
-                        )
-                }
-
-                // WHOOP primary action — routed through the unified button system (filled blue accent,
-                // white ink, no glow). The label swaps to "Preparing…" while a PDF is being written.
-                NoopButton(exporting ? "Preparing…" : "Export PDF",
-                           systemImage: "square.and.arrow.up", kind: .primary, fullWidth: true) {
-                    export(rpt)
-                }
-                .disabled(exporting)
-
-                Text("Tip: the share sheet can save the PDF to Files, AirDrop it, or send it on.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+                .screenPadding()
+                .padding(.bottom, 34)
             }
-            .screenPadding()
-            .padding(.vertical, NoopMetrics.space6)
+            #if os(iOS)
+            // #697/#horizontal-swipe parity, see ScreenScaffold.
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            #endif
         }
-        #if os(iOS)
-        // #697/#horizontal-swipe parity, see ScreenScaffold.
-        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #if os(macOS)
+        .background(NoopSheetBackground())
+        .frame(width: 460, height: 720)
         #endif
-        .background(StrandPalette.surfaceBase)
-        .frame(width: 460, height: 640)
         #if os(iOS)
         .noopSheetPresentation(largeFirst: true)
         #endif
@@ -565,6 +551,48 @@ struct TrendsReportSheet: View {
             let pts = await repo.series(key: "stress", source: "my-whoop")
             stressByDay = Dictionary(pts.map { ($0.day, $0.value) }, uniquingKeysWith: { _, b in b })
         }
+    }
+
+    /// A scaled-down live preview of the top of the page, so the wearer sees what they will get.
+    private func preview(_ rpt: RangeReport) -> some View {
+        let scale: CGFloat = 196 / TrendsReportPage.pageWidth
+        return NoopHeroCard(glow: .ink, padding: 18) {
+            VStack(spacing: 0) {
+                HStack {
+                    NoopIconBadge("Preview", icon: "file-text")
+                    Spacer(minLength: 8)
+                    NoopPill("1 page · PDF", compact: true)
+                }
+                page(for: rpt)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: 196, height: 277, alignment: .topLeading)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.55), radius: 20, y: 18)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .padding(.top, 20)
+                Text(rpt.isEmpty ? String(localized: "Not enough data in this range yet")
+                                 : String(localized: "Top of the page · every metric follows below"))
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .padding(.top, 22)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// The primary action. The label swaps to "Preparing…" while a PDF is being written.
+    private func exportButton(_ rpt: RangeReport) -> some View {
+        Button { export(rpt) } label: {
+            HStack(spacing: 8) {
+                PhIcon("file-arrow-down", size: 18)
+                Text(exporting ? "Preparing…" : "Export PDF")
+            }
+        }
+        .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
+        .disabled(exporting)
     }
 
     @MainActor

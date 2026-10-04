@@ -63,23 +63,14 @@ public enum RhythmConsent {
 // MARK: - The experimental, non-diagnostic disclaimer block (permanent, non-dismissible)
 
 /// The standing experimental + non-diagnostic note shown at the foot of the visualization
-/// (spec §6 "permanent, non-dismissible disclaimer block", §7 wording). Calm titanium
-/// styling — never red, never alarm. Reused at the bottom of every result state so the
-/// framing is always present, even when the rhythm "looked steady".
+/// (spec §6 "permanent, non-dismissible disclaimer block", §7 wording). Calm, neutral ink —
+/// never red, never alarm. Reused at the bottom of every result state so the framing is always
+/// present, even when the rhythm "looked steady".
 private struct RhythmDisclaimerNote: View {
     var body: some View {
-        StrandCard(padding: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "info.circle")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .accessibilityHidden(true)
-                Text("Experimental wellness visualization: not a diagnosis, not an ECG, and not a medical device. It cannot detect any heart condition. Beat-to-beat variation has many ordinary, benign causes. If you feel unwell or are worried, contact a qualified professional; in an emergency, your local emergency service. Everything is computed on your device.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        NoopInsightRow("Experimental wellness visualization: not a diagnosis, not an ECG, and not a medical device. It cannot detect any heart condition. Beat-to-beat variation has many ordinary, benign causes. If you feel unwell or are worried, contact a qualified professional; in an emergency, your local emergency service. Everything is computed on your device.",
+                       icon: "info")
+            .padding(.horizontal, 4)
     }
 }
 
@@ -97,85 +88,125 @@ struct RhythmConsentGate: View {
     var onCancel: (() -> Void)? = nil
 
     @State private var checked = false
+    @Environment(\.isPresented) private var isPresented
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ZStack {
-            StrandPalette.surfaceBase.ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                VStack(spacing: 6) {
-                    Text("Before you turn on Rhythm")
-                        .font(StrandFont.title1)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text("An experimental picture of your beat-to-beat timing. Please read these first.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 36)
-                .padding(.bottom, 22)
-                .padding(.horizontal, 24)
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        ForEach(RhythmConsent.points, id: \.0) { point in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(point.0)
-                                    .font(StrandFont.headline)
-                                    .foregroundStyle(StrandPalette.textPrimary)
-                                Text(point.1)
-                                    .font(StrandFont.footnote)
-                                    .foregroundStyle(StrandPalette.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        ScrollView {
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                // Close: backs out without accepting, so the feature stays OFF.
+                HStack {
+                    Spacer()
+                    if onCancel != nil || isPresented {
+                        NoopCircleButton("x", accessibilityLabel: "Close Rhythm") {
+                            if let onCancel { onCancel() } else { dismiss() }
                         }
-                        Text("This is a wellness visualization, not a screening test. It does not tell you to see a clinician and it names no condition. This is not legal or medical advice.")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .padding(.top, 2)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.bottom, 18)
                 }
-                #if os(iOS)
-                // #697/#horizontal-swipe parity, see ScreenScaffold.
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                #endif
+                .frame(minHeight: 42)
 
-                Rectangle()
-                    .fill(StrandPalette.hairline)
-                    .frame(height: 1)
-
-                VStack(spacing: 16) {
-                    Toggle(isOn: $checked) {
-                        Text("I understand this is an experimental wellness feature, not a medical device or a diagnosis.")
-                            .font(StrandFont.footnote)
+                NoopHeroCard(glow: .ink, padding: 22) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoopIconBadge("Rhythm", icon: "heartbeat")
+                        Text("Before you turn on Rhythm")
+                            .font(StrandFont.title1)
+                            .tracking(-0.56)
                             .foregroundStyle(StrandPalette.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-                    #if os(macOS)
-                    .toggleStyle(.checkbox)
-                    #endif
-
-                    Button(action: onAccept) {
-                        Text("Turn on Rhythm")
-                    }
-                    .buttonStyle(.noopPrimary)
-                    .disabled(!checked)
-                    .keyboardShortcut(.defaultAction)
-
-                    if let onCancel {
-                        Button("Not now", action: onCancel)
-                            .buttonStyle(.noopGhost)
+                            .padding(.top, 44)
+                        Text("An experimental picture of your beat-to-beat timing. Please read these first.")
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
+                            .foregroundStyle(Color.white.opacity(0.62))
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 10)
                     }
                 }
-                .padding(26)
+
+                NoopList {
+                    ForEach(RhythmConsent.points, id: \.0) { point in
+                        HStack(alignment: .top, spacing: 14) {
+                            PhIcon("check", size: 14)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                                .frame(width: 26, height: 26)
+                                .background(Circle().fill(NoopVisualStyle.raised))
+                                .overlay(Circle().strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(point.0)
+                                    .font(StrandFont.book(15, relativeTo: .body))
+                                    .foregroundStyle(StrandPalette.textPrimary)
+                                Text(point.1)
+                                    .font(StrandFont.light(12, relativeTo: .caption))
+                                    .foregroundStyle(StrandPalette.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+
+                Text("This is a wellness visualization, not a screening test. It does not tell you to see a clinician and it names no condition. This is not legal or medical advice.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+
+                // The un-pre-checked acknowledgement.
+                Button { checked.toggle() } label: {
+                    HStack(alignment: .center, spacing: 12) {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(checked ? StrandPalette.textPrimary : Color.clear)
+                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(checked ? Color.clear : NoopVisualStyle.borderHighlight, lineWidth: 1.5))
+                            .overlay { if checked { PhIcon("check", weight: .fill, size: 14).foregroundStyle(NoopVisualStyle.canvas) } }
+                            .frame(width: 24, height: 24)
+                        Text("I understand this is an experimental wellness feature, not a medical device or a diagnosis.")
+                            .font(StrandFont.book(14, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .noopPanel(cornerRadius: NoopVisualStyle.listRadius)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(checked ? [.isButton, .isSelected] : .isButton)
+
+                Button(action: onAccept) {
+                    Text("Turn on Rhythm")
+                }
+                .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
+                .disabled(!checked)   // the kit style dims a disabled button itself
+                .keyboardShortcut(.defaultAction)
+                .padding(.top, 6)
+
+                if let onCancel {
+                    Button("Not now", action: onCancel)
+                        .buttonStyle(.noopGhost)
+                        .frame(maxWidth: .infinity)
+                }
             }
-            .frame(maxWidth: 560, maxHeight: 680)
+            .padding(.horizontal, NoopMetrics.screenHPadding)
+            .padding(.top, 8)
+            .padding(.bottom, 40)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
         }
+        #if os(iOS)
+        // #697/#horizontal-swipe parity, see ScreenScaffold.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
     }
 }
 
@@ -183,56 +214,97 @@ struct RhythmConsentGate: View {
 
 /// The signature visualization: a Poincaré scatter of successive (NN[i], NN[i+1]) pairs.
 /// A steady rhythm draws a tight elongated comet along the diagonal; a more variable one
-/// draws a rounder, more diffuse cloud. Purely descriptive — drawn in the calm Rest blue
-/// world (never red). The identity diagonal is shown for reference. Decorative for
-/// accessibility (the numbers + label carry the meaning).
+/// draws a rounder, more diffuse cloud. Purely descriptive — drawn in neutral white on a neutral
+/// glow (never red). A scale grid, the identity diagonal for reference, and — when the stats are
+/// known — the cloud's long (SD2) and short (SD1) axes. Decorative for accessibility (the numbers
+/// + label carry the meaning).
 private struct PoincarePlot: View {
     let points: [RhythmScreener.PoincarePoint]
-    /// The world colour the cloud + axes are drawn in (Rest blue — calm, never alarm).
-    var tint: Color = StrandPalette.restColor
-    var brightTint: Color = StrandPalette.restBright
+    /// The cloud's descriptive axes (SD1, SD2) in ms, drawn through its centre when both are known.
+    var sd1: Double?
+    var sd2: Double?
 
     /// Fixed physiological plot bounds (ms) so the same rhythm always reads at the same
     /// scale night-to-night — 300…1500 ms covers ~40…200 bpm, the readable resting band.
     private let lo: Double = 300
     private let hi: Double = 1500
+    private let ticks: [Double] = [300, 600, 900, 1200, 1500]
 
     var body: some View {
         GeometryReader { geo in
-            let side = min(geo.size.width, geo.size.height)
-            Canvas { ctx, size in
-                let s = min(size.width, size.height)
-                let inset: CGFloat = 8
-                let plot = s - inset * 2
+            let axisW: CGFloat = 30, axisH: CGFloat = 16
+            let side = min(geo.size.width - axisW, geo.size.height - axisH)
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, size in
+                    let s = side
+                    func map(_ v: Double) -> CGFloat {
+                        let clamped = Swift.min(Swift.max(v, lo), hi)
+                        return CGFloat((clamped - lo) / (hi - lo)) * s
+                    }
+                    let ox = axisW
+                    // Grid + axes.
+                    var grid = Path()
+                    for t in ticks.dropFirst().dropLast() {
+                        grid.move(to: CGPoint(x: ox + map(t), y: 0)); grid.addLine(to: CGPoint(x: ox + map(t), y: s))
+                        grid.move(to: CGPoint(x: ox, y: s - map(t))); grid.addLine(to: CGPoint(x: ox + s, y: s - map(t)))
+                    }
+                    ctx.stroke(grid, with: .color(.white.opacity(0.08)), lineWidth: 1)
+                    var axes = Path()
+                    axes.move(to: CGPoint(x: ox, y: 0)); axes.addLine(to: CGPoint(x: ox, y: s))
+                    axes.addLine(to: CGPoint(x: ox + s, y: s))
+                    ctx.stroke(axes, with: .color(.white.opacity(0.3)), lineWidth: 1)
 
-                func map(_ v: Double) -> CGFloat {
-                    let clamped = Swift.min(Swift.max(v, lo), hi)
-                    let frac = (clamped - lo) / (hi - lo)
-                    return inset + CGFloat(frac) * plot
+                    // Identity diagonal (NN[i] == NN[i+1]) — the line a perfectly metronomic
+                    // beat would sit on. For reference only.
+                    var diag = Path()
+                    diag.move(to: CGPoint(x: ox, y: s))
+                    diag.addLine(to: CGPoint(x: ox + s, y: 0))
+                    ctx.stroke(diag, with: .color(.white.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+
+                    // The point cloud. Small, semi-transparent dots so density reads as a cloud.
+                    let r: CGFloat = 1.6
+                    for p in points {
+                        let x = ox + map(p.x)
+                        let y = s - map(p.y)     // Canvas y grows downward; higher NN[i+1] sits higher.
+                        ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                                 with: .color(.white.opacity(0.42)))
+                    }
+
+                    // The descriptive axes through the cloud's centre: SD2 along the diagonal, SD1 across it.
+                    if let sd1, let sd2, !points.isEmpty {
+                        let mx = points.map(\.x).reduce(0, +) / Double(points.count)
+                        let my = points.map(\.y).reduce(0, +) / Double(points.count)
+                        let c = CGPoint(x: ox + map(mx), y: s - map(my))
+                        let k = s / CGFloat(hi - lo) / CGFloat(2.0.squareRoot())
+                        let l2 = CGFloat(sd2) * 2 * k, l1 = CGFloat(sd1) * 2 * k
+                        var axis = Path()
+                        axis.move(to: CGPoint(x: c.x - l2, y: c.y + l2)); axis.addLine(to: CGPoint(x: c.x + l2, y: c.y - l2))
+                        axis.move(to: CGPoint(x: c.x - l1, y: c.y - l1)); axis.addLine(to: CGPoint(x: c.x + l1, y: c.y + l1))
+                        ctx.stroke(axis, with: .color(.white.opacity(0.9)), lineWidth: 1)
+                    }
                 }
+                .frame(width: axisW + side, height: side)
 
-                // Identity diagonal (NN[i] == NN[i+1]) — the line a perfectly metronomic
-                // beat would sit on. Faint hairline, for reference only.
-                var diag = Path()
-                diag.move(to: CGPoint(x: inset, y: s - inset))
-                diag.addLine(to: CGPoint(x: s - inset, y: inset))
-                ctx.stroke(diag, with: .color(StrandPalette.hairlineStrong), lineWidth: 1)
-
-                // The point cloud. Dots are small + semi-transparent so density reads as a
-                // cloud; the bright world colour keeps it legible on the deep canvas.
-                let r: CGFloat = 1.6
-                for p in points {
-                    let x = map(p.x)
-                    // Canvas y grows downward; invert so higher NN[i+1] sits higher.
-                    let y = s - map(p.y)
-                    let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
-                    ctx.fill(Path(ellipseIn: rect), with: .color(brightTint.opacity(0.55)))
+                // Tick labels.
+                ForEach(ticks.dropFirst(), id: \.self) { t in
+                    Text(verbatim: "\(Int(t))")
+                        .font(StrandFont.light(9.5))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                        .frame(width: axisW - 4, alignment: .trailing)
+                        .position(x: (axisW - 4) / 2, y: side - CGFloat((t - lo) / (hi - lo)) * side)
+                }
+                ForEach(ticks.dropLast(), id: \.self) { t in
+                    Text(verbatim: "\(Int(t))")
+                        .font(StrandFont.light(9.5))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                        .fixedSize()
+                        .position(x: axisW + CGFloat((t - lo) / (hi - lo)) * side, y: side + 10)
                 }
             }
-            .frame(width: side, height: side)
+            .frame(width: axisW + side, height: side + axisH)
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .frame(height: NoopMetrics.chartHeight)
+        .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
     }
 }
@@ -273,6 +345,9 @@ struct RhythmView: View {
     @AppStorage(RhythmConsent.acceptedVersionKey) private var acceptedVersion = ""
     @AppStorage(RhythmConsent.enabledKey) private var enabled = false
 
+    /// The "How this is measured" note, one tap away.
+    @State private var showsMethod = false
+
     private var consentGiven: Bool {
         enabled && RhythmConsent.isAccepted(acceptedVersion)
     }
@@ -291,6 +366,7 @@ struct RhythmView: View {
                 )
             }
         }
+        .noopHidesSystemNavBar()
     }
 
     // MARK: Visualization (post-consent)
@@ -326,75 +402,99 @@ struct RhythmView: View {
 
     private var visualization: some View {
         ScreenScaffold(
-            title: "Rhythm",
-            subtitle: "An experimental picture of your beat-to-beat timing",
-            // PERF: chart-heavy column (the Poincaré beat-to-beat scatter, the stats grid and the
-            // methodology card). The LazyVStack path builds the off-screen cards — including the scatter
-            // plot's point set — on demand; byte-identical layout.
-            lazy: true,
-            // Liquid finish: the day-of-sky backdrop, so the visualization sits in the same liquid
-            // atmosphere as Today. The calm Rest-blue world of the cards stays unchanged over it.
-            topBackground: liquidScaffoldSky(),
-            trailing: { closeButton }
+            title: nil,
+            // PERF: chart-heavy column (the Poincaré beat-to-beat scatter and the stats grid). The
+            // LazyVStack path builds the off-screen cards — including the scatter's point set — on demand.
+            lazy: true
         ) {
-            SourceBadge("Experimental", tint: StrandPalette.restColor)
-                .task(id: windows.count) { rhythmExportURL = buildRhythmExportURL() }
+            NoopScreenHeader("Rhythm") {
+                NoopPill("Experimental", compact: true)
+            }
+            .padding(.bottom, 8)
+            .task(id: windows.count) { rhythmExportURL = buildRhythmExportURL() }
 
             if allPoints.isEmpty {
                 emptyState
             } else {
-                summaryCard
-                plotCard
-                statsCard
+                heroCard
+                statsSection
+            }
+
+            NoopList {
+                Button { showsMethod = true } label: {
+                    NoopRow(title: Text("How this is measured"),
+                            caption: Text("Quiet, still windows only · SD1, SD2 and regularity"),
+                            icon: "book-open", chevron: true) { EmptyView() }
+                }
+                .buttonStyle(.plain)
                 if let rhythmExportURL {
                     // #1298: hand the clinician the DATA, never a verdict. A neutral CSV export.
                     ShareLink(item: rhythmExportURL) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                            .font(StrandFont.subhead)
+                        NoopRow(title: Text("Share"), caption: Text("The night's descriptive numbers as a CSV"),
+                                icon: "export", chevron: true) { EmptyView() }
                     }
-                    .tint(StrandPalette.restColor)
+                    .buttonStyle(.plain)
                 }
             }
-
-            methodologyCard
+            .padding(.top, allPoints.isEmpty ? 0 : 14)
             RhythmDisclaimerNote()
+                .padding(.top, 8)
         }
+        .sheet(isPresented: $showsMethod) { methodologySheet }
     }
 
-    @ViewBuilder private var closeButton: some View {
-        if let onClose {
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(StrandPalette.textTertiary)
+    // MARK: Hero — the scatter and the neutral, plain-language headline (NO verdict)
+
+    private var heroCard: some View {
+        // Neutral ink glow, never the heart red: this screen must not read as an alarm (§11).
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Last night · beat-to-beat scatter")
+                            .font(StrandFont.overline)
+                            .tracking(StrandFont.overlineTracking)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Color.white.opacity(0.8))
+                        Text("Each dot pairs one heartbeat interval with the next.")
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(Color.white.opacity(0.55))
+                    }
+                    Spacer(minLength: 8)
+                    ScoreStatePill(confidenceState, text: confidenceText)
+                }
+                PoincarePlot(points: allPoints, sd1: headlineWindow?.sd1, sd2: headlineWindow?.sd2)
+                    .padding(.top, 18)
+                Text("RRn across · RRn+1 up · ms")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(Color.white.opacity(0.55))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 6)
+                    .padding(.leading, 24)
+                HStack(alignment: .center, spacing: 10) {
+                    statusChip
+                    Text(headlineDetail)
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 14)
+                .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1) }
+                .padding(.top, 16)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close Rhythm")
         }
     }
 
-    // MARK: Summary card — the neutral, plain-language headline (NO verdict)
+    private var regularity: RhythmRegularity { night?.overall ?? headlineWindow?.label ?? .unreadable }
 
-    /// OpenStrap-style status chip: a compact pill with an icon + the neutral regularity label. Modelled
-    /// on `SourceBadge`, but in the calm Rest-blue palette — NEVER a warn/alarm colour (§11 forbids alarm
-    /// styling; OpenStrap tints its chip amber, NOOP does not). States differ by icon + wording only, and
-    /// the short `chipLabel` sits in the pill, the sentence `headlineDetail` reads below. Non-diagnostic.
+    /// The neutral regularity status as a dot-matrix tag: wording only, never an alarm colour (§11).
+    /// Twin of Android `StatusChip`.
     private var statusChip: some View {
-        let label = night?.overall ?? headlineWindow?.label ?? .unreadable
-        return HStack(spacing: 6) {
-            Image(systemName: Self.statusIcon(label))
-            Text(chipLabel(label))
-        }
-        .font(StrandFont.subhead)
-        .foregroundStyle(StrandPalette.restBright)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(StrandPalette.restColor.opacity(0.16), in: Capsule(style: .continuous))
-        .overlay(Capsule(style: .continuous).strokeBorder(StrandPalette.restColor.opacity(0.34), lineWidth: 1))
+        NoopTag(verbatim: chipLabel(regularity), size: 12).fixedSize()
     }
 
-    /// The SHORT neutral status word inside the chip (the sentence-length `headlineDetail` reads below).
-    /// Compact so the chip renders like OpenStrap's, not a full-width banner. Non-diagnostic wording.
+    /// The SHORT neutral status word for the tag (the sentence-length `headlineDetail` reads beside it).
+    /// Non-diagnostic wording.
     private func chipLabel(_ label: RhythmRegularity) -> String {
         switch label {
         case .steady:           return String(localized: "Steady")
@@ -404,127 +504,68 @@ struct RhythmView: View {
         }
     }
 
-    /// A calm, non-alarm SF Symbol per neutral state — a check for steady, the ECG waveform for any
-    /// variation (never a warning triangle), a question mark when unread. No red, no alarm (§11).
-    private static func statusIcon(_ label: RhythmRegularity) -> String {
-        switch label {
-        case .steady:                    return "checkmark.circle.fill"
-        case .occasionalEctopy, .varied: return "waveform.path.ecg"
-        case .unreadable:                return "questionmark.circle"
-        }
-    }
+    // MARK: The numbers — the descriptive stats (2 × 3 tiles)
 
-    private var summaryCard: some View {
-        StrandCard(padding: 18, tint: StrandPalette.restColor) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("LAST NIGHT").strandOverline()
-                    Spacer()
-                    ScoreStatePill(confidenceState, text: confidenceText)
-                }
-                statusChip
-                Text(headlineDetail)
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                // Two calm liquid readouts of the night's real descriptive fractions (both 0–1, neutral —
-                // never a verdict): the beat-to-beat variation index and the extra/skipped fraction. The
-                // liquid tube idiom, drawn in the same Rest-blue world so it never reads as alarm. The
-                // stats grid below still prints every exact number; these are a descriptive picture.
-                if let hw = headlineWindow {
-                    VStack(spacing: 8) {
-                        liquidStatRow("Beat-to-beat variation", frac: hw.normRmssd,
-                                      tint: StrandPalette.restBright)
-                        liquidStatRow("Extra or skipped beats", frac: hw.ectopicFraction,
-                                      tint: StrandPalette.restColor)
-                    }
-                    .padding(.top, 2)
-                }
-            }
-        }
-    }
-
-    /// One calm liquid readout: an UPPERCASE overline label, the fraction as a percent, and a posed
-    /// liquid tube filled to that fraction (clamped 0–1). Descriptive only — never a verdict, never red.
-    /// Static tube so a page of them costs one cached frame each. Decorative for VoiceOver (the numbers
-    /// grid carries the meaning).
-    private func liquidStatRow(_ label: LocalizedStringKey, frac: Double?, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(label)
-                    .font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .textCase(.uppercase)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                Spacer()
-                Text(percent(frac))
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(StrandPalette.textSecondary)
-            }
-            LiquidTube(frac: max(0, min(1, frac ?? 0)), tint: tint, height: 8, animated: false)
-        }
-        .accessibilityHidden(true)
-    }
-
-    // MARK: Plot card — the Poincaré scatter + the "comet vs cloud" reading note
-
-    private var plotCard: some View {
-        StrandCard(padding: 18, tint: StrandPalette.restColor) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("BEAT-TO-BEAT SCATTER").strandOverline()
-                ZStack {
-                    ScenicHeroBackground(domain: .rest, starCount: 36)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    PoincarePlot(points: allPoints)
-                        .padding(8)
-                }
-                .frame(height: NoopMetrics.chartHeight + 24)
-
-                Text("Each dot pairs one heartbeat interval with the next. A tight line along the diagonal means a steady beat; a rounder, more spread-out cloud means the timing varied more.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    // MARK: Stats card — the descriptive numbers (equal-height tiles)
-
-    private var statsCard: some View {
+    private var statsSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("The numbers", overline: "DESCRIPTIVE STATS")
-            HStack(spacing: NoopMetrics.gap) {
-                StatTile(label: "SHORT AXIS",
-                         value: fmt(headlineWindow?.sd1, "%.0f"),
-                         caption: String(localized: "SD1 · ms"),
-                         accent: StrandPalette.restBright)
-                StatTile(label: "LONG AXIS",
-                         value: fmt(headlineWindow?.sd2, "%.0f"),
-                         caption: String(localized: "SD2 · ms"),
-                         accent: StrandPalette.restColor)
-            }
-            HStack(spacing: NoopMetrics.gap) {
-                StatTile(label: "CLOUD SHAPE",
-                         value: fmt(headlineWindow?.sd1sd2, "%.2f"),
-                         caption: String(localized: "SD1:SD2 ratio"),
-                         accent: StrandPalette.metricCyan)
-                StatTile(label: "BEAT-TO-BEAT",
-                         value: percent(headlineWindow?.normRmssd),
-                         caption: String(localized: "variation index"),
-                         accent: StrandPalette.metricPurple)
-            }
-            HStack(spacing: NoopMetrics.gap) {
-                StatTile(label: "EXTRA / SKIPPED",
-                         value: percent(headlineWindow?.ectopicFraction),
-                         caption: String(localized: "of beats"),
-                         accent: StrandPalette.restColor)
-                StatTile(label: "BEATS READ",
-                         value: headlineWindow.map { "\($0.nBeats)" } ?? "—",
-                         caption: String(localized: "clean intervals"),
-                         accent: StrandPalette.textSecondary)
+            NoopSectionTitle("The numbers", captionKey: "DESCRIPTIVE STATS")
+            Grid(horizontalSpacing: NoopMetrics.gap, verticalSpacing: NoopMetrics.gap) {
+                GridRow {
+                    statTile("SHORT AXIS", value: fmt(headlineWindow?.sd1, digits: 0), unit: "ms",
+                             caption: "SD1 · ms")
+                    statTile("LONG AXIS", value: fmt(headlineWindow?.sd2, digits: 0), unit: "ms",
+                             caption: "SD2 · ms")
+                }
+                GridRow {
+                    statTile("CLOUD SHAPE", value: fmt(headlineWindow?.sd1sd2, digits: 2), unit: nil,
+                             caption: "SD1:SD2 ratio")
+                    statTile("BEAT-TO-BEAT", value: percent(headlineWindow?.normRmssd), unit: nil,
+                             caption: "variation index")
+                }
+                GridRow {
+                    statTile("EXTRA / SKIPPED", value: percent(headlineWindow?.ectopicFraction), unit: nil,
+                             caption: "of beats")
+                    statTile("BEATS READ", value: headlineWindow.map { $0.nBeats.formatted(.number.locale(AppLanguage.activeLocale)) } ?? "—", unit: nil,
+                             caption: "clean intervals")
+                }
             }
         }
+    }
+
+    private func statTile(_ label: LocalizedStringKey, value: String, unit: String?,
+                          caption: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label)
+                .font(StrandFont.overlineScaled(10))
+                .tracking(1.2)
+                .textCase(.uppercase)
+                .foregroundStyle(StrandPalette.textTertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(verbatim: value)
+                    .font(StrandFont.value(26, weight: 300))
+                    .tracking(-0.52)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let unit {
+                    Text(verbatim: unit)
+                        .font(StrandFont.book(11))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.top, 10)
+            Text(caption)
+                .font(StrandFont.light(10.5, relativeTo: .caption2))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.top, 5)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 15)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .noopPanel()
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Empty / thin-night state
@@ -547,27 +588,37 @@ struct RhythmView: View {
             title = "No clear reading yet"
             message = "Rhythm only looks during quiet, still, resting windows, so it needs a calm night's worth of steady beats. Once there's a clean window, the scatter and its description show here."
         }
-        return DataPendingNote(title: title, message: message, symbol: "waveform.path")
+        return G5EmptyCard(icon: "wave-sine", title: title, message: Text(message))
     }
 
     // MARK: Methodology
 
-    private var methodologyCard: some View {
-        StrandCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("How this is measured").strandOverline()
+    private var methodologySheet: some View {
+        VStack(spacing: 0) {
+            NoopSheetHeader("How this is measured", cancelTitle: "Done", doneTitle: nil,
+                            onCancel: { showsMethod = false })
+            ScrollView {
                 Text("During quiet, still, resting windows, NOOP looks at the timing between your heartbeats (R-R intervals) and draws their Poincaré scatter. From the cloud it computes its short and long axes (SD1, SD2) and a few plain regularity numbers. Movement and noisy windows are skipped, not shown. These are transparent, published descriptive statistics: a picture of your timing, never a clinical measurement.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, NoopMetrics.screenHPadding)
+                    .padding(.bottom, 30)
             }
         }
+        .background(NoopSheetBackground())
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: false)
+        #else
+        .frame(width: 480, height: 360)
+        #endif
     }
 
     // MARK: - Copy mapping (neutral, non-clinical — NO verdict, NO condition name)
 
     private var headlineDetail: String {
-        switch night?.overall ?? headlineWindow?.label ?? .unreadable {
+        switch regularity {
         case .steady:
             return String(localized: "Across the quiet windows we could read, your beat-to-beat timing held a tight, even shape.")
         case .occasionalEctopy:
@@ -600,9 +651,9 @@ struct RhythmView: View {
 
     // MARK: - Formatting
 
-    private func fmt(_ value: Double?, _ format: String) -> String {
+    private func fmt(_ value: Double?, digits: Int) -> String {
         guard let value else { return "—" }
-        return String(format: format, value)
+        return value.formatted(.number.precision(.fractionLength(digits)).locale(AppLanguage.activeLocale))
     }
 
     /// A 0…1 fraction rendered as a whole-number percent (normalised RMSSD / ectopic fraction).
@@ -630,5 +681,40 @@ struct RhythmView: View {
         ]
     )
     .preferredColorScheme(.dark)
+}
+
+/// Render targets for `--demo-screen rhythm` / `rhythm-consent`: the visualization from a fixture night
+/// (marking consent as given on the demo device), or the consent gate itself.
+struct RhythmDemoHost: View {
+    var showsConsent = false
+    @AppStorage(RhythmConsent.acceptedVersionKey) private var acceptedVersion = ""
+    @AppStorage(RhythmConsent.enabledKey) private var enabled = false
+
+    var body: some View {
+        if showsConsent {
+            RhythmConsentGate(onAccept: {}, onCancel: {})
+        } else {
+            RhythmView(night: Self.night, windows: Self.windows)
+                .onAppear {
+                    acceptedVersion = RhythmConsent.currentVersion
+                    enabled = true
+                }
+        }
+    }
+
+    private static let night = RhythmScreener.NightRhythmSummary(
+        readableWindows: 6, steadyWindows: 6, occasionalWindows: 0,
+        variedWindows: 0, variationRecurred: false, overall: .steady)
+
+    private static let windows = [
+        RhythmScreener.WindowResult(
+            label: .steady, sd1: 28, sd2: 74, sd1sd2: 0.38,
+            normRmssd: 0.05, turningPointRate: 0.7, ectopicFraction: 0.01,
+            nBeats: 240, confidence: .solid, agreedAcrossSources: false,
+            poincare: (0..<240).map { i in
+                let base = 980.0 + sin(Double(i) * 0.3) * 60 + cos(Double(i) * 0.11) * 50
+                return RhythmScreener.PoincarePoint(x: base, y: base + 18 + sin(Double(i) * 1.7) * 22)
+            })
+    ]
 }
 #endif

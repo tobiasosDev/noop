@@ -11,7 +11,9 @@ import StrandDesign
 // It is deliberately a bar and not a badge: it has to show the one thing you need mid-workout
 // without opening anything, which is how long is left of your rest.
 //
-// COLOUR MATCHES THE SHEET so the two read as one thing: green while working, amber while resting.
+// IT WEARS THE SHEET'S CHROME so the two read as one thing: the floating black-glass capsule of the tab bar
+// beneath it, the stage icon the sheet's hero shows (a timer while resting, a barbell while working), and
+// the ink tick of a done set as the one action.
 
 struct LiftSessionBar: View {
     @EnvironmentObject var session: LiftSessionController
@@ -29,26 +31,28 @@ struct LiftSessionBar: View {
                 // The Lock Screen banner's layout (`LiftLiveActivity`), because this is the same banner
                 // seen inside the app: the icon and the numbers sit near the edges and the heart rate
                 // stacks over the clock, so the words get the width (Utku, 21 Sep 2026, with a screenshot
-                // of the bar: "more place for writings"). Same sizes as before.
+                // of the bar: "more place for writings").
                 HStack(spacing: 10) {
-                    Image(systemName: "dumbbell.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(tint(engine))
+                    PhIcon(shown.isResting ? "timer" : "barbell", size: 16)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.white.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(shown.exercise)
-                            .font(StrandFont.caption)
+                            .font(StrandFont.book(13, relativeTo: .subheadline))
                             .foregroundStyle(StrandPalette.textPrimary)
                             .lineLimit(1)
                         Text(shown.detail.map { "\(shown.status) — \($0)" } ?? shown.status)
-                            .font(StrandFont.footnote)
+                            .font(StrandFont.light(11, relativeTo: .caption))
                             .foregroundStyle(StrandPalette.textSecondary)
                             .lineLimit(1)
                         // The set coming up, on one line that cuts the exercise name before the
                         // set number (`LiftSessionController.nextLine`).
                         Text(shown.next)
-                            .font(StrandFont.footnote)
+                            .font(StrandFont.light(11, relativeTo: .caption))
                             .foregroundStyle(StrandPalette.textTertiary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -64,13 +68,13 @@ struct LiftSessionBar: View {
                         LiftHeartRate(style: .compact)
 
                         Text(verbatim: "00:00")
-                            .font(StrandFont.bodyNumber)
+                            .font(StrandFont.value(17, relativeTo: .body))
                             .monospacedDigit()
                             .hidden()
                             .overlay(alignment: .trailing) {
                                 bigClock(engine)
-                                    .font(StrandFont.bodyNumber)
-                                    .foregroundStyle(tint(engine))
+                                    .font(StrandFont.value(17, relativeTo: .body))
+                                    .foregroundStyle(StrandPalette.textPrimary)
                                     .fixedSize()
                             }
                     }
@@ -78,30 +82,27 @@ struct LiftSessionBar: View {
                     // The same action the sheet's button performs, so a set can be closed out
                     // without opening anything.
                     Button { session.advance() } label: {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(tint(engine))
+                        LiftCheckCircle(done: true, size: 34)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Next")
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 8)
+                .padding(.leading, 10)
+                .padding(.trailing, 10)
                 .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(tint(engine).opacity(0.35), lineWidth: 1))
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(Capsule(style: .continuous).fill(NoopVisualStyle.inset.opacity(0.86)))
+                        .overlay(Capsule(style: .continuous)
+                            .strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+                        .shadow(color: .black.opacity(0.6), radius: 20, x: 0, y: 12)
+                }
+                .environment(\.colorScheme, .dark)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open the running session")
-        }
-    }
-
-    private func tint(_ engine: LiftSessionEngine) -> Color {
-        switch engine.stage {
-        case .working:  return StrandPalette.statusPositive
-        case .resting:  return StrandPalette.metricAmber
-        default:        return StrandPalette.effortColor
         }
     }
 

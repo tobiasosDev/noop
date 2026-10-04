@@ -224,11 +224,10 @@ enum ChargeBreakdownFormat {
 /// The same legacy R-R explanation on classic and Liquid Today.
 struct ChargeLegacyRRGapNote: View {
     var body: some View {
-        NoopCard(padding: 14, tint: StrandPalette.chargeColor) {
+        NoopCard {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(StrandPalette.chargeColor)
+                PhIcon("heartbeat", size: 18)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(ChargeBreakdownFormat.chargeLegacyRRGapTitle)
@@ -259,21 +258,20 @@ struct ConfidenceTierChip: View {
     private var hue: Color { ChargeBreakdownFormat.confidenceDotColor(confidence) }
 
     var body: some View {
+        // v2 `.pill` (small): the tier word in ink on 7 % white, the state carried by a small dot.
         HStack(spacing: 6) {
             Circle()
                 .fill(hue)
-                .frame(width: 7, height: 7)
-                .shadow(color: hue.opacity(0.8), radius: 2)
+                .frame(width: 6, height: 6)
                 .accessibilityHidden(true)
             Text(tag)
-                .font(StrandFont.overline)
-                .tracking(0.4)
-                .foregroundStyle(hue)
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .foregroundStyle(StrandPalette.textPrimary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule(style: .continuous).fill(hue.opacity(0.12)))
-        .overlay(Capsule(style: .continuous).stroke(hue.opacity(0.32), lineWidth: 1))
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.07)))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibility)
     }
@@ -301,10 +299,7 @@ struct ChargeBreakdownSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-            Divider().overlay(StrandPalette.hairline)
-            HStack(alignment: .firstTextBaseline) {
-                Text("What shaped it").strandOverline()
-                Spacer()
+            NoopCardHeader("What shaped it", icon: "lightning") {
                 ConfidenceTierChip(confidence: confidence)
             }
             VStack(spacing: NoopMetrics.rowSpacing) {
@@ -333,8 +328,23 @@ struct ChargeDriverRow: View {
     var maxMagnitude: Int? = nil
 
     private var chipText: String { ChargeBreakdownFormat.chipLabel(deltaPoints: driver.deltaPoints) }
-    private var chipHue: Color { ChargeBreakdownFormat.chipColor(deltaPoints: driver.deltaPoints) }
     private var magnitude: Double { Double(abs(driver.deltaPoints)) }
+    /// The engine words its reference as "56 bpm baseline" in English only; the number is re-set in the
+    /// app's own "Baseline 56 bpm" phrase so the word follows the UI language. Anything else passes through.
+    private var baselineLabel: String {
+        let suffix = " baseline"
+        guard driver.baselineText.hasSuffix(suffix) else { return driver.baselineText }
+        let value = String(driver.baselineText.dropLast(suffix.count))
+        return String(localized: "Baseline \(value)")
+    }
+
+    /// The same for a read-out the engine already states against the baseline ("+0.1 C vs baseline"):
+    /// the number stays, the words take the app's existing "vs baseline" translation.
+    private var valueLabel: String {
+        let suffix = " vs baseline"
+        guard driver.valueText.hasSuffix(suffix) else { return driver.valueText }
+        return String(driver.valueText.dropLast(suffix.count)) + " " + String(localized: "vs baseline")
+    }
     private var barMax: Double { Double(max(1, maxMagnitude ?? abs(driver.deltaPoints))) }
 
     var body: some View {
@@ -344,29 +354,32 @@ struct ChargeDriverRow: View {
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textPrimary)
                 Spacer(minLength: 8)
-                // The signed point-delta chip , green for a supporting term, red for a limiting one.
+                // The signed point-delta: ink for a supporting term, grey for a limiting one (one accent
+                // per screen — the sign carries the direction).
                 Text(chipText)
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(chipHue)
+                    .font(StrandFont.value(13))
+                    .foregroundStyle(driver.deltaPoints >= 0 ? StrandPalette.textPrimary : StrandPalette.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(chipHue.opacity(0.14), in: Capsule(style: .continuous))
+                    .background(Color.white.opacity(0.07), in: Capsule(style: .continuous))
             }
             // value vs baseline , the baseline line is omitted for terms with no learned baseline.
             HStack(spacing: 6) {
-                Text(driver.valueText)
+                Text(verbatim: valueLabel)
                     .font(StrandFont.captionNumber)
                     .foregroundStyle(StrandPalette.textSecondary)
                 if !driver.baselineText.isEmpty {
                     Text("·").font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-                    Text(driver.baselineText)
+                    Text(verbatim: baselineLabel)
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
                 Spacer(minLength: 0)
             }
-            // A thin magnitude bar tinted to the chip hue, reading the term's share of the biggest mover.
-            PipBar(value: magnitude, range: 0...barMax, segments: 16, tint: chipHue, height: 6)
-                .accessibilityHidden(true)
+            // A thin magnitude bar, reading the term's share of the biggest mover.
+            NoopTrack(fraction: magnitude / barMax, height: 6,
+                      fill: driver.deltaPoints >= 0
+                        ? [StrandPalette.textPrimary.opacity(0.75), StrandPalette.textPrimary]
+                        : [Color(light: "#9A9AA2", dark: "#6B6B73"), Color(light: "#9A9AA2", dark: "#6B6B73")])
             Text(LocalizedStringKey(driver.verdict))
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
@@ -388,18 +401,15 @@ struct SkinTempDeviationRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "thermometer.medium")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(StrandPalette.metricAmber)
+            PhIcon("thermometer-simple", size: 14)
+                .foregroundStyle(StrandPalette.textPrimary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text("Skin temperature")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text(deviationText)
-                        .font(StrandFont.captionNumber)
-                        .foregroundStyle(StrandPalette.metricAmber)
+                // Side by side when it fits; stacked otherwise, so a long translation never wraps the
+                // read-out into a ragged column beside the title.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { skinTitle; deviation }
+                    VStack(alignment: .leading, spacing: 2) { skinTitle; deviation }
                 }
                 Text(tierWord)
                     .font(StrandFont.footnote)
@@ -411,6 +421,20 @@ struct SkinTempDeviationRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Skin temperature \(deviationText). \(tierWord). Reliable.")
+    }
+
+    private var skinTitle: some View {
+        Text("Skin temperature")
+            .font(StrandFont.subhead)
+            .foregroundStyle(StrandPalette.textPrimary)
+            .fixedSize()
+    }
+
+    private var deviation: some View {
+        Text(deviationText)
+            .font(StrandFont.captionNumber)
+            .foregroundStyle(StrandPalette.textSecondary)
+            .fixedSize()
     }
 }
 
@@ -452,7 +476,12 @@ struct SkinTempDeviationRow: View {
 /// from Release.
 struct ChargeBreakdownDemoHost: View {
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            Text("What shaped your Charge")
+                .font(StrandFont.headline)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .padding(.top, 14)
+                .padding(.bottom, 16)
             ScrollView {
                 VStack(spacing: NoopMetrics.gap) {
                     NoopCard(padding: 18, tint: StrandPalette.chargeColor) {
@@ -480,9 +509,8 @@ struct ChargeBreakdownDemoHost: View {
                 }
                 .padding(NoopMetrics.screenPadding)
             }
-            .background(StrandPalette.surfaceBase)
-            .navigationTitle("What shaped your Charge")
         }
+        .background(NoopSheetBackground())
         .preferredColorScheme(.dark)
     }
 }

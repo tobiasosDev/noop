@@ -131,6 +131,9 @@ public struct TrendChart: View {
     /// (the default) draws nothing, and the rule rides the chart's own y domain, so a value outside the
     /// plotted range simply falls off it rather than being clamped to an edge it does not sit on.
     public var baselineValue: Double?
+    /// Optional personal normal band, shaded faintly behind a line series (never behind bars). Drawn in the
+    /// chart's own y space so it cannot drift from the scale; nil (the default) draws nothing.
+    public var normalBand: ClosedRange<Double>?
     public var height: CGFloat
     /// Whether hovering reveals a crosshair + tooltip for the nearest point.
     public var showsHover: Bool
@@ -168,6 +171,7 @@ public struct TrendChart: View {
         showsArea: Bool = true,
         showsBars: Bool = false,
         baselineValue: Double? = nil,
+        normalBand: ClosedRange<Double>? = nil,
         height: CGFloat = 220,
         showsHover: Bool = true,
         valueFormat: @escaping (Double) -> String = { String(Int($0.rounded())) },
@@ -187,6 +191,7 @@ public struct TrendChart: View {
         self.showsArea = showsArea
         self.showsBars = showsBars
         self.baselineValue = baselineValue
+        self.normalBand = normalBand
         self.height = height
         self.showsHover = showsHover
         self.valueFormat = valueFormat
@@ -305,6 +310,11 @@ public struct TrendChart: View {
             .foregroundStyle(StrandPalette.textPrimary)
         }
         Chart {
+            if let band = normalBand, !showsBars {
+                RectangleMark(yStart: .value("Band low", band.lowerBound),
+                              yEnd: .value("Band high", band.upperBound))
+                    .foregroundStyle(Color.white.opacity(0.07))
+            }
             if let baselineValue {
                 RuleMark(y: .value("Baseline", baselineValue))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))

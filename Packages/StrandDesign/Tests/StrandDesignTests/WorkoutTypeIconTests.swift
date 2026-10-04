@@ -67,6 +67,18 @@ final class WorkoutTypeIconTests: XCTestCase {
                        .custom(.padelRacket))
     }
 
+    /// The v2 Phosphor glyphs must be bundled and, like the SF / custom ones, never shared by two types.
+    func testPhosphorGlyphsAreBundledAndUnique() {
+        var seen = Set<String>()
+        for type in KnownWorkoutType.allCases {
+            guard let name = WorkoutTypeIconography.phosphorName(for: type) else { continue }
+            XCTAssertTrue(PhIcon.exists(name), "Phosphor icon \(name) for \(type.rawValue) is not bundled")
+            XCTAssertFalse(seen.contains(name), "Duplicate Phosphor glyph \(name) for \(type.rawValue)")
+            seen.insert(name)
+        }
+        XCTAssertGreaterThan(seen.count, 20)
+    }
+
     func testSportSymbolBridgeNonEmpty() {
         for type in KnownWorkoutType.allCases {
             XCTAssertFalse(sportSymbol(type.rawValue).isEmpty)

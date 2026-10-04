@@ -25,7 +25,13 @@ public struct RecoveryDay: Identifiable, Sendable {
 
 public struct YearHeatStrip: View {
 
+    /// `.classic` is the original grid (weekday gutter, month labels above, the recovery gradient).
+    /// `.v2` is the v2 heat calendar: no gutter, month captions below, the five-step Charge ramp and an
+    /// outlined square for a day the strap was not worn.
+    public enum Style: Sendable { case classic, v2 }
+
     public var days: [RecoveryDay]
+    public var style: Style
     public var cellSize: CGFloat
     public var spacing: CGFloat
     public var showsMonthLabels: Bool
@@ -48,10 +54,12 @@ public struct YearHeatStrip: View {
         spacing: CGFloat = 3,
         showsMonthLabels: Bool = true,
         showsHover: Bool = true,
-        valueFormat: @escaping (Double) -> String = { "Recovery \(Int($0.rounded()))" }
+        valueFormat: @escaping (Double) -> String = { "Recovery \(Int($0.rounded()))" },
+        style: Style = .classic
     ) {
         let sorted = days.sorted { $0.date < $1.date }
         self.days = sorted
+        self.style = style
         self.cellSize = cellSize
         self.spacing = spacing
         self.showsMonthLabels = showsMonthLabels
@@ -61,8 +69,22 @@ public struct YearHeatStrip: View {
     }
 
     // The grid layout constants used both for drawing and hover hit-testing.
-    private let gutterWidth: CGFloat = 24
-    private let monthLabelHeight: CGFloat = 10
+    private var gutterWidth: CGFloat { style == .v2 ? 0 : 24 }
+    private var monthLabelHeight: CGFloat { style == .v2 ? 14 : 10 }
+
+    /// The v2 Charge ramp, five steps on the recovery-state bands (DEPLETED · LOW · MODERATE · PRIMED · PEAK).
+    public static func v2Color(_ score: Double) -> Color {
+        switch score {
+        case ..<25: return Color(light: "#D9D8D4", dark: "#232328")
+        case ..<50: return Color(light: "#BFDCCB", dark: "#20402F")
+        case ..<70: return Color(light: "#8CC7A4", dark: "#27603F")
+        case ..<88: return Color(light: "#4FAE76", dark: "#349055")
+        default:    return Color(light: "#2E9A5E", dark: "#56D08A")
+        }
+    }
+
+    /// The outline of a day that exists in the history but carries no Charge (strap not worn).
+    public static let v2NotWornStroke = Color(light: "#C9C8C4", dark: "#3A3A42")
 
     /// Hovered cell as (weekIndex, row), or nil.
     @State private var hoverCell: (week: Int, row: Int)? = nil
@@ -135,9 +157,10 @@ public struct YearHeatStrip: View {
         // a tooltip can be clamped within bounds.
         let gridWidth = gridOriginX + CGFloat(weeks.count) * (cellSize + spacing) - spacing
         let gridHeight = gridOriginY + 7 * (cellSize + spacing) - spacing
+            + (style == .v2 && showsMonthLabels ? 8 + monthLabelHeight : 0)
 
-        VStack(alignment: .leading, spacing: spacing) {
-            if showsMonthLabels {
+        VStack(alignment: .leading, spacing: style == .v2 ? 8 : spacing) {
+            if showsMonthLabels && style == .classic {
                 // #1021: month labels were each boxed to ONE cell width (~12pt), so a 3-letter month
                 // ("Jul"/"May") truncated to "J…"/"M…". A month marker also needs to sit at the exact x of
                 // the week column where the month starts. Positioning each label absolutely (topLeading +
@@ -160,12 +183,14 @@ public struct YearHeatStrip: View {
             }
             HStack(alignment: .top, spacing: spacing) {
                 // weekday gutter
-                VStack(alignment: .trailing, spacing: spacing) {
-                    ForEach(0..<7, id: \.self) { r in
-                        Text(rowLabels[r])
-                            .font(.system(size: 8))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                            .frame(width: gutterWidth, height: cellSize, alignment: .trailing)
+                if style == .classic {
+                    VStack(alignment: .trailing, spacing: spacing) {
+                        ForEach(0..<7, id: \.self) { r in
+                            Text(rowLabels[r])
+                                .font(.system(size: 8))
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .frame(width: gutterWidth, height: cellSize, alignment: .trailing)
+                        }
                     }
                 }
                 // week columns
@@ -176,6 +201,9 @@ public struct YearHeatStrip: View {
                         }
                     }
                 }
+            }
+            if showsMonthLabels && style == .v2 {
+                v2MonthLabels(gridWidth: gridWidth)
             }
         }
         .frame(width: gridWidth, height: gridHeight, alignment: .topLeading)
@@ -211,9 +239,35 @@ public struct YearHeatStrip: View {
     // MARK: Grid geometry
 
     /// x of the first week column (after the weekday gutter + HStack spacing).
-    private var gridOriginX: CGFloat { gutterWidth + spacing }
-    /// y of the first cell row (below the optional month-label row).
-    private var gridOriginY: CGFloat { showsMonthLabels ? monthLabelHeight + spacing : 0 }
+    private var gridOriginX: CGFloat { style == .v2 ? 0 : gutterWidth + spacing }
+    /// y of the first cell row (below the optional month-label row; the v2 labels sit under the grid).
+    private var gridOriginY: CGFloat { showsMonthLabels && style == .classic ? monthLabelHeight + spacing : 0 }
+
+    /// v2 month captions under the grid, each at the column where its month starts. A caption that would
+    /// crowd the previous one is skipped, so a fitted year reads every other month.
+    private func v2MonthLabels(gridWidth: CGFloat) -> some View {
+        var lastX = -CGFloat.infinity
+        var placed: [(x: CGFloat, text: String)] = []
+        for (i, week) in weeks.enumerated() {
+            guard let label = week.monthLabel, !label.isEmpty else { continue }
+            let x = CGFloat(i) * (cellSize + spacing)
+            if x - lastX >= 40 && x + 16 <= gridWidth {
+                placed.append((x, label))
+                lastX = x
+            }
+        }
+        return ZStack(alignment: .topLeading) {
+            Color.clear.frame(width: gridWidth, height: monthLabelHeight)
+            ForEach(placed.indices, id: \.self) { i in
+                Text(verbatim: placed[i].text)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize()
+                    .offset(x: placed[i].x)
+            }
+        }
+        .accessibilityHidden(true)
+    }
 
     private func isHovered(_ week: Int, _ row: Int) -> Bool {
         guard let h = hoverCell else { return false }
@@ -277,10 +331,14 @@ public struct YearHeatStrip: View {
 
     @ViewBuilder
     private func cell(_ day: RecoveryDay?, isHovered: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 2.5)
-        if let day, let score = day.score {
+        let shape = RoundedRectangle(cornerRadius: style == .v2 ? cellSize * 0.28 : 2.5)
+        if style == .v2, let day, day.score == nil {
             shape
-                .fill(StrandPalette.recoveryColor(score))
+                .strokeBorder(Self.v2NotWornStroke, lineWidth: 0.75)
+                .frame(width: cellSize, height: cellSize)
+        } else if let day, let score = day.score {
+            shape
+                .fill(style == .v2 ? Self.v2Color(score) : StrandPalette.recoveryColor(score))
                 .frame(width: cellSize, height: cellSize)
                 .opacity(isHovered ? 1.0 : (hoverCell == nil ? 1.0 : 0.78))
                 .help("\(DateFormatterCache.day.string(from: day.date)) · recovery \(Int(score.rounded()))")

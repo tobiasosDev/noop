@@ -72,22 +72,18 @@ struct CoachBriefWidgetView: View {
     private var rectangular: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(StrandPalette.accent)
+                PhIcon("sparkle", size: 11)
                 Text("Coach")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(StrandPalette.textSecondary)
+                    .font(StrandFont.medium(11))
                 Spacer(minLength: 0)
                 if let date = entry.briefDate {
                     Text(date, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                        .font(StrandFont.light(10))
+                        .foregroundStyle(HierarchicalShapeStyle.secondary)
                 }
             }
             Text(briefDisplay)
-                .font(.system(size: 11))
-                .foregroundStyle(StrandPalette.textPrimary)
+                .font(StrandFont.book(11))
                 .lineLimit(3)
                 .minimumScaleFactor(0.8)
         }
@@ -101,47 +97,64 @@ struct CoachBriefWidgetView: View {
 
     // MARK: - Home Screen: systemSmall
 
+    /// The brief's first sentence as the headline and the rest under it, with the brief's time at the
+    /// foot (`Coach` header with the sparkle, as in the app).
     private var small: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(StrandPalette.accent)
-                Text("Coach Brief")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(StrandPalette.textSecondary)
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            WidgetHeader(icon: "sparkle", title: Text("Coach"))
             if entry.briefText == nil {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("No brief yet")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(StrandPalette.textTertiary)
+                        .font(StrandFont.book(13.5))
+                        .foregroundStyle(StrandPalette.textSecondary)
                     Text("Enable Morning Brief in Coach settings to see today's readiness here.")
-                        .font(.system(size: 11))
+                        .font(StrandFont.light(11))
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.top, 12)
             } else {
-                Text(briefDisplay)
-                    .font(.system(size: 12))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .lineLimit(5)
-                    .minimumScaleFactor(0.8)
+                let parts = briefParts
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(parts.head)
+                        .font(StrandFont.book(13.5))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(parts.tail == nil ? 5 : 3)
+                        .minimumScaleFactor(0.85)
+                    if let tail = parts.tail {
+                        Text(tail)
+                            .font(StrandFont.light(11.5))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                    }
+                }
+                .padding(.top, 12)
             }
             Spacer(minLength: 0)
             if let date = entry.briefDate {
-                Text(date, format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .foregroundStyle(StrandPalette.textTertiary)
+                HStack(spacing: 3) {
+                    Text("Brief")
+                    Text(verbatim: "·")
+                    Text(date, format: .dateTime.hour().minute())
+                }
+                .font(StrandFont.light(10))
+                .foregroundStyle(StrandPalette.textTertiary)
             }
         }
-        .padding(12)
     }
 
-    // MARK: - Text helpers
+    /// The brief split after its first sentence, so the opening line can lead and the rest support it.
+    private var briefParts: (head: String, tail: String?) {
+        let text = briefDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        let enders: [Character] = [".", "!", "?", "\n"]
+        guard let cut = text.firstIndex(where: { enders.contains($0) }),
+              text.index(after: cut) < text.endIndex else { return (text, nil) }
+        let head = String(text[...cut]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let tail = String(text[text.index(after: cut)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (head, tail.isEmpty ? nil : tail)
+    }
 
-    /// The full brief text for the widget body, or a placeholder when there's no brief.
     private var briefDisplay: String {
         entry.briefText ?? "No brief available."
     }
@@ -165,11 +178,11 @@ struct CoachBriefWidget: Widget {
         StaticConfiguration(kind: Self.kind, provider: CoachBriefProvider()) { entry in
             if #available(iOS 17.0, *) {
                 CoachBriefWidgetView(entry: entry)
-                    .containerBackground(StrandPalette.surfaceBase, for: .widget)
+                    .containerBackground(for: .widget) { WidgetCardBackground() }
             } else {
                 CoachBriefWidgetView(entry: entry)
                     .padding()
-                    .background(StrandPalette.surfaceBase)
+                    .background(WidgetCardBackground())
             }
         }
         .configurationDisplayName("Coach Brief")

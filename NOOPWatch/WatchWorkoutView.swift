@@ -14,8 +14,8 @@ import HealthKit
 //
 // We deliberately reimplement the phone's LiveWorkoutView rather than link it: that screen reads the strap
 // feed and the shared scorers off AppModel, which don't exist on the watch. The framing is kept though —
-// a generic "functional" workout (functionalStrengthTraining), a big live HR hero in SF-Rounded, elapsed
-// time, and the building Effort idea expressed honestly here as the live calorie burn from the wrist.
+// a generic "functional" workout (functionalStrengthTraining), the elapsed clock in the dot face, the live
+// HR, and the building Effort idea expressed honestly here as the live calorie burn from the wrist.
 //
 // Everything is GUARDED. If HealthKit is unavailable or workout authorization is denied, we show a calm
 // "Grant Health access" state instead of a dead Start button. StrandHaptic (real WatchKit path now) marks
@@ -23,10 +23,18 @@ import HealthKit
 struct WatchWorkoutView: View {
     @StateObject private var workout = WatchWorkoutSession()
 
+    init() {}
+
+    #if DEBUG
+    /// DEBUG screenshot aid: drive the page from a given session (see `WatchWorkoutSession.demoRecording`).
+    init(session: WatchWorkoutSession) {
+        _workout = StateObject(wrappedValue: session)
+    }
+    #endif
+
     var body: some View {
         // One screen, no scrolling. A GeometryReader hands each state the real space it has to live in so
-        // the controls never fall below the fold on any watch size. The recording state in particular sizes
-        // its HR hero to whatever height is left after the fixed header and the fixed control row.
+        // the controls never fall below the fold on any watch size.
         GeometryReader { geo in
             Group {
                 switch workout.phase {
@@ -38,15 +46,20 @@ struct WatchWorkoutView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .active, .paused, .ending:
-                    recording(in: geo.size)
+                    recording
                 case .saved:
                     saved
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
-            .padding(.horizontal, 4)
         }
-        .background(StrandPalette.surfaceBase.ignoresSafeArea())
+        .padding(.horizontal, 4)
+        // The page's one glow: the Effort world, lit while a session is recording.
+        .background(WatchGlowBackground(glow: .strain, strength: isRecording ? 0.55 : 0.3))
+    }
+
+    private var isRecording: Bool {
+        workout.phase == .active || workout.phase == .paused || workout.phase == .ending
     }
 
     // MARK: Pre-flight states
@@ -55,93 +68,89 @@ struct WatchWorkoutView: View {
     /// the user to Settings if the system has already remembered a hard "no").
     private var grantAccess: some View {
         VStack(spacing: 8) {
-            Image(systemName: "heart.text.square")
-                .font(.system(size: 24))
+            PhIcon("heartbeat", size: 24)
                 .foregroundStyle(StrandPalette.textTertiary)
             Text("Grant Health access")
-                .font(StrandFont.subhead)
+                .font(StrandFont.book(14))
                 .foregroundStyle(StrandPalette.textPrimary)
             // Condensed so the whole panel clears the fold on a 41mm.
             Text("Live heart rate and energy, recorded on your wrist. Stays on device.")
-                .font(StrandFont.footnote)
+                .font(StrandFont.light(11))
                 .foregroundStyle(StrandPalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .minimumScaleFactor(0.8)
             Button("Allow access") { workout.requestAuthorization() }
-                .font(StrandFont.subhead)
-                .tint(StrandPalette.effortColor)
+                .buttonStyle(WatchPillButtonStyle())
+                .frame(height: 34)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 8)
     }
 
-    /// Ready to record. A single big Effort-tinted Start.
+    /// Ready to record: what it records, and one ink Start.
     private var idle: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "figure.strengthtraining.functional")
-                .font(.system(size: 30))
-                .foregroundStyle(StrandPalette.effortColor)
-            Text("Workout")
-                .font(StrandFont.rounded(22, weight: .semibold))
+        VStack(spacing: 0) {
+            PhIcon("barbell", size: 28)
                 .foregroundStyle(StrandPalette.textPrimary)
+            Text("Workout")
+                .font(StrandFont.light(22))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .padding(.top, 10)
             Text("Functional strength")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
+                .font(StrandFont.light(11))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .padding(.top, 2)
+            Spacer(minLength: 10)
             Button {
                 workout.start()
             } label: {
-                Label("Start", systemImage: "play.fill")
-                    .font(StrandFont.subhead)
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 6) {
+                    PhIcon("play", weight: .fill, size: 12)
+                    Text("Start")
+                }
             }
-            .tint(StrandPalette.effortColor)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(WatchPillButtonStyle())
+            .frame(height: 38)
         }
+        .padding(.top, 18)
+        .padding(.bottom, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Recording
 
-    /// The whole recording layout, sized to fit ONE screen. We reserve fixed heights for the compact header,
-    /// the stats row, and the side-by-side control row, then hand whatever is left to the HR hero so End is
-    /// always on screen. The hero gets the remaining height (floored so it never collapses), which keeps the
-    /// big SF-Rounded BPM the visual anchor on a 41mm and lets it breathe on the bigger watches.
-    private func recording(in size: CGSize) -> some View {
-        let spacing: CGFloat = 6
-        let headerH: CGFloat = 22
-        let statsH: CGFloat = 50
-        let controlsH: CGFloat = 40
-        let reserved = headerH + statsH + controlsH + spacing * 4   // 3 gaps + a little breathing room
-        let heroH = max(56, size.height - reserved)
-
-        return VStack(spacing: spacing) {
+    /// The recording page, top to bottom: the state line, the elapsed clock in the dot face, the live heart
+    /// rate, the energy and average under it, and Pause/Resume + End pinned to the bottom so they are always
+    /// on screen without scrolling.
+    private var recording: some View {
+        VStack(alignment: .leading, spacing: 0) {
             header
-                .frame(height: headerH)
+            Spacer(minLength: 6).frame(maxHeight: 14)
+            Text("Functional strength")
+                .font(StrandFont.light(11))
+                .foregroundStyle(StrandPalette.textSecondary)
+            elapsed
+                .padding(.top, 6)
+            Spacer(minLength: 6).frame(maxHeight: 12)
             heroHeartRate
-                .frame(maxHeight: heroH)
             statsRow
-                .frame(height: statsH)
+                .padding(.top, 8)
+            Spacer(minLength: 6)
             controls
-                .frame(height: controlsH)
+                .frame(height: 36)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
-        HStack {
-            Circle()
-                .fill(workout.phase == .paused ? StrandPalette.statusWarning : StrandPalette.statusCritical)
-                .frame(width: 7, height: 7)
+        HStack(spacing: 6) {
+            WatchLiveDot(color: workout.phase == .paused ? StrandPalette.statusWarning : .white)
             Text(workout.phase == .paused ? String(localized: "PAUSED") : String(localized: "RECORDING"))
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(workout.phase == .paused ? StrandPalette.statusWarning : StrandPalette.metricRose)
-            Spacer()
-            // Elapsed time ticks itself off the session start via a TimelineView, so we never run a manual
-            // Timer. While paused we freeze the readout at the accumulated duration the session reports.
-            elapsed
+                .font(StrandFont.book(12))
+                .foregroundStyle(StrandPalette.metricCyan)
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -149,120 +158,86 @@ struct WatchWorkoutView: View {
         if workout.phase == .paused {
             // Frozen while paused: builder.elapsedTime freezes on pause, so liveElapsed() reads the same
             // pause-accurate value the active clock last showed — no reliance on the pause event's timing.
-            Text(Self.clock(workout.liveElapsed()))
-                .font(StrandFont.rounded(18, weight: .semibold))
+            clockText(workout.liveElapsed())
+        } else {
+            // Elapsed time ticks itself off the session via a TimelineView, so we never run a manual Timer.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                clockText(workout.liveElapsed())
+            }
+        }
+    }
+
+    private func clockText(_ seconds: TimeInterval) -> some View {
+        Text(verbatim: Self.clock(seconds))
+            .font(StrandFont.dot(30))
+            .tracking(30 * 0.02)
+            .monospacedDigit()
+            .foregroundStyle(StrandPalette.textPrimary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+    }
+
+    /// The live wrist heart rate. A dash until the first in-session sample lands.
+    private var heroHeartRate: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            PhIcon("heart", size: 14)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 1 }
+            Text(verbatim: workout.bpm.map(String.init) ?? "–")
+                .font(StrandFont.light(26))
+                .tracking(-0.5)
                 .monospacedDigit()
                 .foregroundStyle(StrandPalette.textPrimary)
-        } else {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text(Self.clock(workout.liveElapsed()))
-                    .font(StrandFont.rounded(18, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(StrandPalette.textPrimary)
-            }
-        }
-    }
-
-    /// The big live wrist heart rate, SF-Rounded, on a near-black Effort-tinted card. A dash until the
-    /// first in-session sample lands.
-    private var heroHeartRate: some View {
-        VStack(spacing: 1) {
-            Text("HEART RATE")
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textSecondary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(StrandPalette.statusCritical)
-                Text(workout.bpm.map(String.init) ?? "–")
-                    .font(StrandFont.rounded(40, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-            }
-            Text("bpm")
-                .font(StrandFont.caption)
-                .foregroundStyle(StrandPalette.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(StrandPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    /// Active energy from the watch's own builder, the watch-native stand-in for the phone's building
-    /// Effort. Whole kcal, SF-Rounded, never a fabricated number (a dash until the builder reports any).
-    private var statsRow: some View {
-        HStack(spacing: 6) {
-            stat("ENERGY", workout.activeKcal.map { "\($0)" } ?? "–", unit: "kcal",
-                 tint: StrandPalette.effortColor)
-            stat("AVG HR", workout.avgBpm.map(String.init) ?? "–", unit: "bpm",
-                 tint: StrandPalette.metricRose)
-        }
-    }
-
-    private func stat(_ title: String, _ value: String, unit: String, tint: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(title)
-                .font(StrandFont.overlineScaled(9))
-                .tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.textTertiary)
-            Text(value)
-                .font(StrandFont.rounded(24, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(unit)
-                .font(StrandFont.overlineScaled(8))
-                .foregroundStyle(StrandPalette.textTertiary)
+                .minimumScaleFactor(0.7)
+            Text("bpm")
+                .font(StrandFont.light(11))
+                .foregroundStyle(StrandPalette.textSecondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(StrandPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Active energy and the session-average heart rate from the watch's own builder, the watch-native
+    /// stand-in for the phone's building Effort. A dash until the builder reports any.
+    private var statsRow: some View {
+        HStack {
+            Text(workout.activeKcal.map { String(localized: "\($0) kcal") } ?? String(localized: "– kcal"))
+            Spacer(minLength: 4)
+            Text(workout.avgBpm.map { String(localized: "Avg \($0) bpm") } ?? String(localized: "Avg – bpm"))
+        }
+        .font(StrandFont.light(10))
+        .foregroundStyle(StrandPalette.textTertiary)
+        .monospacedDigit()
     }
 
     /// Pause/Resume and End sit SIDE BY SIDE on one row so both are always on screen without scrolling.
-    /// Icon-only buttons keep them compact on a 41mm; the role/tint still reads at a glance (Effort-tinted
-    /// pause/resume, critical-red End).
     private var controls: some View {
         HStack(spacing: 8) {
             if workout.phase == .paused {
                 Button {
                     workout.resume()
                 } label: {
-                    Label("Resume", systemImage: "play.fill")
-                        .labelStyle(.iconOnly)
-                        .font(StrandFont.subhead)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    PhIcon("play", weight: .fill, size: 14)
                 }
+                .buttonStyle(WatchPillButtonStyle())
                 .accessibilityLabel("Resume")
-                .tint(StrandPalette.effortColor)
-                .buttonStyle(.borderedProminent)
             } else {
                 Button {
                     workout.pause()
                 } label: {
-                    Label("Pause", systemImage: "pause.fill")
-                        .labelStyle(.iconOnly)
-                        .font(StrandFont.subhead)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    PhIcon("pause", weight: .fill, size: 14)
                 }
+                .buttonStyle(WatchPillButtonStyle(primary: false))
                 .accessibilityLabel("Pause")
-                .tint(StrandPalette.surfaceRaised)
-                .buttonStyle(.bordered)
             }
 
             Button(role: .destructive) {
                 workout.end()
             } label: {
-                Label("End", systemImage: "stop.fill")
-                    .labelStyle(.iconOnly)
-                    .font(StrandFont.subhead)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                PhIcon("stop", weight: .fill, size: 14)
             }
+            .buttonStyle(WatchPillButtonStyle(primary: false, tint: StrandPalette.statusCritical))
             .accessibilityLabel("End workout")
-            .tint(StrandPalette.statusCritical)
-            .buttonStyle(.borderedProminent)
             .disabled(workout.phase == .ending)
         }
     }
@@ -270,22 +245,21 @@ struct WatchWorkoutView: View {
     // MARK: Saved
 
     private var saved: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(StrandPalette.chargeColor)
+        VStack(spacing: 10) {
+            PhIcon("check-circle", weight: .fill, size: 34)
+                .foregroundStyle(StrandPalette.textPrimary)
             Text("Workout saved")
-                .font(StrandFont.rounded(20, weight: .semibold))
+                .font(StrandFont.light(20))
                 .foregroundStyle(StrandPalette.textPrimary)
             // A small honest recap of what we banked. Whole-phrase per shape (no appended tail)
             // so the kcal variant localizes as one string.
             Text(workout.activeKcal.map { String(localized: "\(Self.clock(workout.elapsed)) · \($0) kcal") }
                  ?? Self.clock(workout.elapsed))
-                .font(StrandFont.footnote)
+                .font(StrandFont.light(11))
                 .foregroundStyle(StrandPalette.textSecondary)
             Button("Done") { workout.reset() }
-                .font(StrandFont.subhead)
-                .tint(StrandPalette.effortColor)
+                .buttonStyle(WatchPillButtonStyle())
+                .frame(height: 34)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -490,6 +464,21 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
         phase = .saved
         #endif
     }
+
+    #if DEBUG
+    /// DEBUG-ONLY screenshot aid: a session that reads as mid-recording with nothing behind it (no
+    /// HealthKit session, no builder), so the recording page can be screenshotted on a simulator that cannot
+    /// start a real workout. Compiled out of release builds.
+    static func demoRecording() -> WatchWorkoutSession {
+        let demo = WatchWorkoutSession()
+        demo.phase = .active
+        demo.bpm = 146
+        demo.avgBpm = 139
+        demo.activeKcal = 312
+        demo.elapsed = 1934
+        return demo
+    }
+    #endif
 
     /// Clear the recap and return to idle so another workout can be started.
     func reset() {

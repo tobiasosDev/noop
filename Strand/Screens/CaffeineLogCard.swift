@@ -32,57 +32,109 @@ struct CaffeineLogCard: View {
     static let bedtimeMinutesKey = "noop.caffeine.bedtimeMinutes"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Caffeine", overline: "Log")
-            NoopCard(tint: StrandPalette.accent) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Log a coffee, tea, or energy drink and NOOP shows a rough estimate of how much may still be active. It's a guide based on a typical 5 to 6 hour half-life, not a measurement.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    activeHint
-
-                    // PR#566 — the late-intake nudge sits right under the active hint when the cutoff is on
-                    // and a logged intake is past it, so the timing warning is the first thing read.
-                    lateIntakeNudge
-
-                    Divider().overlay(StrandPalette.hairline)
-
-                    // Optional amount — leave blank if you don't know it. We never invent a number.
-                    HStack {
-                        TextField("Amount in mg (optional)", text: $mgDraft)
-                            .textFieldStyle(.roundedBorder)
-                        #if os(iOS)
-                            .keyboardType(.numberPad)
-                        #endif
-                        Text("mg")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-
-                    // Log "now" or a quick number of hours ago — mirrors the journal's day-pill row.
-                    HStack {
-                        Text("Had it")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                        Spacer()
-                        ForEach(quickHoursAgo, id: \.self) { h in
-                            logPill(h == 0 ? "Now" : "\(h)h ago", hoursAgo: h)
-                        }
-                    }
-
-                    Divider().overlay(StrandPalette.hairline)
-                    cutoffSection
-
-                    if !store.intakes.isEmpty {
-                        Divider().overlay(StrandPalette.hairline)
-                        loggedList
-                    }
+        NoopCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopCardHeader("Caffeine", icon: "coffee", captionKey: "Log")
+                    .padding(.bottom, 12)
+                todayRow
+                activeHint
+                    .padding(.top, 10)
+                // PR#566 — the late-intake nudge sits right under the active hint when the cutoff is on
+                // and a logged intake is past it, so the timing warning is the first thing read.
+                lateIntakeNudge
+                logControls
+                    .padding(.top, 14)
+                if !store.intakes.isEmpty {
+                    loggedList
                 }
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                    .padding(.top, 14)
+                cutoffSection
+                    .padding(.top, 12)
+                Text("Log a coffee, tea, or energy drink and NOOP shows a rough estimate of how much may still be active. It's a guide based on a typical 5 to 6 hour half-life, not a measurement.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
             }
         }
         .onReceive(ticker) { tick = $0 }
+    }
+
+    // MARK: - Today
+
+    /// What was logged today (known amounts summed; an unknown amount is counted but never guessed),
+    /// with the one-tap "Had it" that logs an intake now.
+    private var todayRow: some View {
+        // The store keeps two days of intakes for the decay estimate; this row counts today's only.
+        let today = store.intakes.filter { Calendar.current.isDate($0.at, inSameDayAs: tick) }
+        let known = today.compactMap(\.mg)
+        let total = known.reduce(0, +)
+        return HStack(alignment: .bottom, spacing: 10) {
+            // Nothing logged reads 0; intakes logged without an amount read "—" (never an invented mg).
+            NoopDotNumber(today.isEmpty ? "0" : known.isEmpty ? "—" : "\(Int(total.rounded()))", size: 48)
+            Group {
+                if today.count == 1 {
+                    Text("mg logged today · 1 intake")
+                } else {
+                    Text("mg logged today · \(today.count) intakes")
+                }
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .padding(.bottom, 5)
+            Spacer(minLength: 8)
+            Button { log(hoursAgo: 0) } label: {
+                HStack(spacing: 6) {
+                    PhIcon("plus", size: 15)
+                    Text("Had it")
+                }
+                .font(StrandFont.medium(14, relativeTo: .subheadline))
+                .foregroundStyle(NoopVisualStyle.canvas)
+                .padding(.horizontal, 18)
+                .frame(height: 40)
+                .background(Capsule(style: .continuous).fill(StrandPalette.textPrimary))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Log caffeine now")
+        }
+    }
+
+    /// Optional amount, and logging an intake from a few hours back.
+    private var logControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Optional amount — leave blank if you don't know it. We never invent a number.
+            HStack(spacing: 8) {
+                TextField("Amount in mg (optional)", text: $mgDraft)
+                    .textFieldStyle(.plain)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                #if os(iOS)
+                    .keyboardType(.numberPad)
+                #endif
+                Text("mg")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            .g3FieldChrome(minHeight: 44, radius: 14)
+            HStack(spacing: 6) {
+                Text("Earlier")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                Spacer(minLength: 4)
+                ForEach(quickHoursAgo.filter { $0 > 0 }, id: \.self) { h in
+                    Button { log(hoursAgo: h) } label: { NoopChip("\(h)h ago") }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func log(hoursAgo: Int) {
+        let mg = Double(mgDraft.trimmingCharacters(in: .whitespaces))   // nil if blank/invalid
+        let at = Calendar.current.date(byAdding: .hour, value: -hoursAgo, to: tick) ?? tick
+        store.log(at: at, mg: mg)
+        mgDraft = ""
     }
 
     // MARK: - Cutoff window (PR#566) — bedtime + late-intake nudge
@@ -93,35 +145,40 @@ struct CaffeineLogCard: View {
     /// number and matches the "still active" math.
     @ViewBuilder private var cutoffSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Cutoff before bed")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Text("Warn me when I log caffeine too close to bedtime. A timing guide from your own bedtime, not a measurement.")
-                        .font(StrandFont.footnote)
+            Toggle(isOn: $cutoffEnabled) {
+                HStack(spacing: 12) {
+                    PhIcon("clock-countdown", size: 18).opacity(0.7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cutoff before bed")
+                            .font(StrandFont.book(14.5, relativeTo: .subheadline))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        Group {
+                            if cutoffEnabled {
+                                Text("Stop caffeine after about \(cutoffTimeLabel) to keep most of it cleared by \(timeLabel(bedtimeMinutes)).")
+                            } else {
+                                Text("Warn me when I log caffeine too close to bedtime. A timing guide from your own bedtime, not a measurement.")
+                            }
+                        }
+                        .font(StrandFont.light(11.5, relativeTo: .caption))
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer(minLength: 8)
-                Toggle("", isOn: $cutoffEnabled)
-                    .labelsHidden().toggleStyle(.switch).tint(StrandPalette.accent)
-                    .accessibilityLabel("Warn me about caffeine close to bedtime")
+                .foregroundStyle(StrandPalette.textPrimary)
             }
+            .toggleStyle(.noop)
+            .accessibilityLabel("Warn me about caffeine close to bedtime")
             if cutoffEnabled {
                 HStack {
                     Text("Bedtime")
-                        .font(StrandFont.footnote)
+                        .font(StrandFont.book(14, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textSecondary)
                     Spacer()
                     DatePicker("", selection: bedtimeBinding, displayedComponents: .hourAndMinute)
                         .labelsHidden()
                         .accessibilityLabel("Bedtime")
                 }
-                Text("Stop caffeine after about \(cutoffTimeLabel) to keep most of it cleared by \(timeLabel(bedtimeMinutes)).")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 30)
             }
         }
     }
@@ -131,23 +188,11 @@ struct CaffeineLogCard: View {
     /// health claim, and it disappears the moment no logged intake is past cutoff.
     @ViewBuilder private var lateIntakeNudge: some View {
         if cutoffEnabled, latePastCutoffCount > 0 {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "moon.zzz")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.statusWarning)
-                    .accessibilityHidden(true)
-                Text(lateNudgeText)
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.statusWarning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .background(StrandPalette.statusWarning.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityElement(children: .combine)
+            NoopInsightRow(verbatim: lateNudgeText, icon: "moon")
+                .padding(.top, 12)
+                .accessibilityElement(children: .combine)
         }
     }
-
     /// Count of logged intakes whose local time-of-day is past the bedtime cutoff. Uses the shared decay
     /// model's `isPastCutoff` so the UI and the cutoff math can't drift. Each intake's wall-clock minute is
     /// compared against the cutoff derived from the user's bedtime.
@@ -216,7 +261,7 @@ struct CaffeineLogCard: View {
         if est.hasActive {
             VStack(alignment: .leading, spacing: 4) {
                 Text(activeTitle(est))
-                    .font(StrandFont.headline)
+                    .font(StrandFont.book(15, relativeTo: .body))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(activeDetail(est))
                     .font(StrandFont.footnote)
@@ -267,13 +312,13 @@ struct CaffeineLogCard: View {
     // MARK: - Logged list
 
     @ViewBuilder private var loggedList: some View {
-        Text("Logged today")
-            .font(StrandFont.caption)
-            .foregroundStyle(StrandPalette.textTertiary)
+        NoopOverline("Recent intakes")
+            .padding(.top, 16)
+            .padding(.bottom, 4)
         ForEach(store.intakes) { intake in
             HStack {
                 Text(intakeLabel(intake))
-                    .font(StrandFont.body)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Spacer()
                 // No remove control on an imported intake (#949): the next sync re-reads the same window
@@ -281,20 +326,22 @@ struct CaffeineLogCard: View {
                 // offering something NOOP cannot honour. Remove it where it was logged.
                 if intake.isImported {
                     Text("Apple Health")
-                        .font(StrandFont.caption)
+                        .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                 } else {
                     Button {
                         store.remove(intake.id)
                     } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .font(StrandFont.body)
-                            .foregroundStyle(StrandPalette.statusCritical)
+                        PhIcon("minus-circle", weight: .fill, size: 20)
+                            .foregroundStyle(NoopGlow.low.tint)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Remove caffeine intake at \(Self.timeFormatter.string(from: intake.at))")
                 }
             }
+            .padding(.vertical, 4)
         }
     }
 
@@ -304,32 +351,6 @@ struct CaffeineLogCard: View {
             return String(localized: "\(time) · \(Int(mg.rounded())) mg")
         }
         return String(localized: "\(time) · amount not logged")
-    }
-
-    // MARK: - Controls
-
-    private func logPill(_ label: LocalizedStringKey, hoursAgo: Int) -> some View {
-        pillButton(label, selected: false) {
-            let mg = Double(mgDraft.trimmingCharacters(in: .whitespaces))   // nil if blank/invalid
-            let at = Calendar.current.date(byAdding: .hour, value: -hoursAgo, to: tick) ?? tick
-            store.log(at: at, mg: mg)
-            mgDraft = ""
-        }
-    }
-
-    private func pillButton(_ label: LocalizedStringKey, selected: Bool,
-                            action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(StrandFont.footnote)
-                .foregroundStyle(selected ? StrandPalette.surfaceBase : StrandPalette.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(selected ? StrandPalette.accent : StrandPalette.surfaceInset, in: Capsule())
-                .overlay(Capsule().stroke(selected ? StrandPalette.accent : StrandPalette.hairline,
-                                          lineWidth: 1))
-        }
-        .buttonStyle(.plain)
     }
 
     /// #1821: routed through AppClock so the Clock format setting reaches this label. Was a `static

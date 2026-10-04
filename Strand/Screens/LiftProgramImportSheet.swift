@@ -27,7 +27,10 @@ struct LiftProgramImportSheet: View {
     @State private var importing = false
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            // Import appears only once a file has been read and holds at least one program.
+            NoopSheetHeader("Import a program", doneTitle: "Import", doneEnabled: !importing,
+                            onCancel: { dismiss() }, onDone: importAction)
             ScrollView {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                     if let parsed {
@@ -44,25 +47,17 @@ struct LiftProgramImportSheet: View {
                         }
                     }
                 }
-                .padding(NoopMetrics.screenPadding)
-            }
-            .background(StrandPalette.surfaceBase)
-            .navigationTitle("Import a program")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if let parsed, !parsed.programs.isEmpty {
-                        Button("Import") { Task { await performImport(parsed) } }
-                            .disabled(importing)
-                    }
-                }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.top, 4)
+                .padding(.bottom, 28)
             }
         }
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #else
+        .frame(width: 520, height: 640)
+        .background(NoopSheetBackground())
+        #endif
         .fileImporter(isPresented: $picking,
                       allowedContentTypes: Self.acceptedTypes,
                       allowsMultipleSelection: false) { result in
@@ -78,12 +73,18 @@ struct LiftProgramImportSheet: View {
         return types
     }()
 
+    /// The header's Import, once there is something to import.
+    private var importAction: (() -> Void)? {
+        guard let parsed, !parsed.programs.isEmpty else { return nil }
+        return { Task { await performImport(parsed) } }
+    }
+
     private var intro: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             NoopCard {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Fill it in on a computer")
-                        .font(StrandFont.headline)
+                        .font(StrandFont.book(16, relativeTo: .headline))
                         .foregroundStyle(StrandPalette.textPrimary)
                     Text("Download the template from the NOOP repository, fill in one row per exercise, then bring the file here. Excel, Numbers, Google Sheets and LibreOffice all work — .xlsx or .csv.")
                         .font(StrandFont.footnote)
@@ -95,14 +96,10 @@ struct LiftProgramImportSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Button {
+            LTActionButton("Choose a file", icon: "file-arrow-up", kind: .primary) {
                 failure = nil
                 picking = true
-            } label: {
-                Label("Choose a file", systemImage: "doc.badge.plus")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.noopPrimary)
         }
     }
 
@@ -112,7 +109,7 @@ struct LiftProgramImportSheet: View {
                 NoopCard {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(program.name)
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(16, relativeTo: .headline))
                             .foregroundStyle(StrandPalette.textPrimary)
                         Text("\(program.lines.count) exercises")
                             .font(StrandFont.caption)
@@ -137,9 +134,7 @@ struct LiftProgramImportSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         // No count in the heading: the warnings are listed directly beneath it, so
                         // the number adds nothing — and it dodges plural agreement in ten languages.
-                        Text("Worth checking")
-                            .font(StrandFont.headline)
-                            .foregroundStyle(StrandPalette.metricAmber)
+                        NoopCardHeader("Worth checking", icon: "warning", caption: nil)
                         // Shown in full rather than summarised: each one names a row the user can go
                         // and fix, and a count alone would send them hunting.
                         ForEach(Array(result.warnings.enumerated()), id: \.offset) { _, w in
@@ -156,14 +151,11 @@ struct LiftProgramImportSheet: View {
                 }
             }
 
-            Button {
+            LTActionButton("Choose a different file", icon: "arrows-clockwise", height: 44, fontSize: 14) {
                 failure = nil
                 parsed = nil
                 picking = true
-            } label: {
-                Label("Choose a different file", systemImage: "arrow.triangle.2.circlepath")
             }
-            .buttonStyle(NoopButtonStyle(.secondary))
         }
     }
 

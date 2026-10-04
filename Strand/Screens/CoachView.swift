@@ -25,6 +25,8 @@ struct CoachView: View {
     @State private var draft: String = UserDefaults.standard.string(forKey: "coach.composerDraft") ?? ""
     /// Pending key text in the setup card (never persisted here, handed to `setKey`).
     @State private var keyDraft: String = ""
+    /// Whether the setup key field shows its text in the clear (the eye toggle).
+    @State private var revealKey = false
     /// The replacement key, typed into the editor a rejection or Update key opens. Separate from
     /// `keyDraft` so the
     /// setup card's own field is untouched, and cleared on save so a secret does not sit in view state
@@ -42,15 +44,22 @@ struct CoachView: View {
     /// #2243: the coach settings, presented as a sheet. See `CoachSettingsView` for why a sheet
     /// rather than a push.
     @State private var showSettings = false
-
-    // K4: on-device voice input for the composer (iOS only). macOS gets a no-op stub via
-    // `#if os(iOS)` guards — the shared file keeps compiling for both targets.
+    /// The reply most recently saved to the journal, so its action reads "Saved" instead of offering
+    /// the same save twice.
+    @State private var savedReplyID: UUID?
+    /// Height of the docked composer, measured so the transcript can scroll clear of it.
+    @State private var dockHeight: CGFloat = 0
     #if os(iOS)
-    @StateObject private var voiceInput = CoachVoiceInput()
+    /// The docked composer rides on the keyboard while it is up and above the floating tab bar
+    /// otherwise; focus alone is not enough (a hardware keyboard focuses the field with no keyboard).
+    @State private var keyboardVisible = false
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     #endif
 
     /// Sentinel tag for the "Custom…" entry in the model Picker.
     private let customModelTag = "__custom__"
+    /// Scroll target at the very end of the transcript.
+    private let transcriptEndID = "coach.transcript.end"
 
     /// Contextual suggestion chips, derived from today's bands by `AICoachEngine.suggestions`
     /// (→ `CoachSuggestions`). Falls back to a stable generic set when there is no data. Recomputed
@@ -58,39 +67,8 @@ struct CoachView: View {
     private var suggestions: [String] { coach.suggestions }
 
     var body: some View {
-        ScreenScaffold(title: "Coach",
-                       subtitle: "Ask about your charge, effort, rest and workouts, grounded in your own numbers.",
-                       // Liquid finish: the same full-bleed day-of-sky backdrop Today + the other liquid
-                       // tabs carry, so Coach sits in one atmosphere. Static + non-interactive; the frosted
-                       // message/setup cards below sit on the opaque canvas and stay legible.
-                       topBackground: liquidScaffoldSky()) {
-            if coach.isConfigured {
-                connectedHeader
-                transcript
-                if let error = coach.errorText, !error.isEmpty {
-                    errorBanner(error)
-                }
-                if coach.keyRejected || showKeyEditor { keyRepairPanel }
-                // K7: show follow-up chips after each assistant reply (when the transcript is
-                // non-empty and the last message is from the assistant and not mid-send);
-                // otherwise show the initial contextual chips.
-                if showFollowUpChips {
-                    followUpChips
-                } else {
-                    suggestionChips
-                }
-                composer
-                // K12: show a rough token estimate when the draft is non-empty.
-                if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   let tokens = coach.estimatedTokens(forDraft: draft) {
-                    tokenEstimateBar(tokens)
-                }
-                privacyFootnote
-            } else {
-                setupCard
-            }
-        }
-        // macOS only. On iOS these actions live in `connectionMenu` instead, because this bar is hidden for
+        screen
+        // macOS only. On iOS these actions live in Coach settings instead, because this bar is hidden for
         // a primary tab root and VISIBLE in the pillar sheet, so leaving them here would render nothing
         // on the Coach tab and a duplicate of the menu in the sheet. One control per platform, reachable
         // in both of iOS's presentations. The `#if` sits on the CHAIN rather than inside the builder:
@@ -130,12 +108,16 @@ struct CoachView: View {
             }
         }
         #endif
+        .noopHidesSystemNavBar()
         // #2243: coach settings. `repo` rides along because the scaffold's environment is not
         // inherited by a sheet's own view tree.
         .sheet(isPresented: $showSettings) {
             CoachSettingsView()
                 .environmentObject(coach)
                 .environmentObject(repo)
+                #if os(iOS)
+                .noopSheetPresentation(largeFirst: true)
+                #endif
         }
         .confirmationDialog(
             "Clear conversation?",
@@ -192,178 +174,360 @@ struct CoachView: View {
         .onChangeCompat(of: coach.dataConsent) { _ in
             Task { await coach.startBriefIfNeeded() }
         }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisible = false
+        }
+        #endif
     }
 
-    // MARK: - Setup (no key yet)
-
-    private var setupCard: some View {
-        StrandCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
-                    Text("Connect a provider")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
-
-                Text("Coach uses your own API key. Pick a provider, paste a key, and choose a model. Your key is stored securely in the Keychain and never leaves \(Platform.deviceNounPhrase) except as the request you make.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                // Provider
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Provider").strandOverline()
-                    Picker("Provider", selection: $coach.provider) {
-                        ForEach(AIProvider.allCases) { p in
-                            Text(p.displayName).tag(p)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .accessibilityLabel("Provider")
-                }
-
-                // Server URL (Custom / local LLM only)
-                if coach.provider == .custom {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Server URL").strandOverline()
-                        TextField("http://localhost:11434/v1", text: $coach.customBaseURL)
-                            .textFieldStyle(.plain)
-                            .font(StrandFont.body)
-                            .foregroundStyle(StrandPalette.textPrimary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 9)
-                            .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                            .disableAutocorrection(true)
-                            .accessibilityLabel("Server URL")
-                        Text("Any OpenAI-compatible server: Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves \(Platform.deviceNounPhrase).")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Key header").strandOverline()
-                        Picker("Key header", selection: $coach.customAuthHeader) {
-                            ForEach(CustomAIAuthHeader.allCases) { header in
-                                Text(header.displayName).tag(header)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .accessibilityLabel("Key header")
-                        Text("Use Bearer for most local servers; use x-api-key for gateways that require the key in that header.")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                // Model
-                modelSelector
-
-                // Key
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(coach.provider == .custom ? "API key (optional)" : "API key").strandOverline()
-                    SecureField(coach.provider == .custom
-                                ? "Only if your server requires one"
-                                : "Paste your \(coach.provider.displayName) API key", text: $keyDraft)
-                        .textFieldStyle(.plain)
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                        .onSubmit { coach.provider == .custom ? connectCustom() : saveKey() }
-                        .accessibilityLabel("API key")
-                }
-
-                HStack {
-                    if coach.provider == .custom {
-                        NoopButton("Connect", systemImage: "link", kind: .primary, action: connectCustom)
-                            .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    } else {
-                        NoopButton("Save key", systemImage: "key.fill", kind: .primary, action: saveKey)
-                            .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    Spacer()
-                }
-
-                // Whatever the last attempt from THIS card ran into. The setup card had no error line
-                // at all, so every way it can fail before a key is committed failed silently: a Refresh
-                // the provider turned away, a Connect to a server that wants auth. The wearer saw a
-                // button do nothing. No repair affordance beside it, unlike the chat: the key field is
-                // already on screen, which is the whole point of the card.
-                if let error = coach.errorText, !error.isEmpty {
-                    errorBanner(error)
-                }
-
-                Divider().overlay(StrandPalette.hairline)
-                privacyFootnote
+    @ViewBuilder private var screen: some View {
+        if coach.isConfigured {
+            chatScreen
+        } else {
+            ScreenScaffold(title: nil) {
+                header
+                setupContent
             }
         }
     }
 
-    /// Model selector: a Picker over `coach.availableModels` with a free-text "Custom…" path and a
-    /// "Refresh models" button that fetches the provider's live list.
-    private var modelSelector: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Model").strandOverline()
-                Spacer()
-                Button {
-                    Task { await coach.refreshModels() }
-                } label: {
-                    Label("Refresh models", systemImage: "arrow.clockwise")
-                        .font(StrandFont.footnote)
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(StrandPalette.accent)
-                .disabled(!coach.hasKey)
-                .help("Fetch the available models from \(coach.provider.displayName) using your saved key")
-                .accessibilityLabel("Refresh models from provider")
-            }
+    // MARK: - Header
 
-            Picker("Model", selection: modelPickerSelection) {
-                ForEach(coach.availableModels, id: \.self) { m in
-                    Text(m).tag(m)
-                }
-                Divider()
-                Text("Custom…").tag(customModelTag)
+    /// The Coach header (`.chd`): a 17 pt title, the connection pill and the settings circle. On a
+    /// presented Coach the shared screen header adds its back circle.
+    private var header: some View {
+        NoopScreenHeader("Coach") {
+            providerPill
+            // #2243: the way through to the coach settings (consent, instructions, brief, connection).
+            NoopCircleButton("sliders-horizontal", accessibilityLabel: "Coach settings") {
+                showSettings = true
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
+        }
+        .padding(.bottom, 4)
+    }
+
+    /// The provider/model pill, or "Not connected" with a hollow dot before setup.
+    private var providerPill: some View {
+        let connected = coach.isConfigured
+        return HStack(spacing: 7) {
+            Circle()
+                .fill(connected ? StrandPalette.textPrimary : Color.clear)
+                .overlay(Circle().strokeBorder(connected ? Color.clear : StrandPalette.textTertiary, lineWidth: 1))
+                .frame(width: 6, height: 6)
+                .shadow(color: connected ? StrandPalette.textPrimary.opacity(0.6) : .clear, radius: 3)
+            Group {
+                if connected {
+                    Text(verbatim: "\(coach.provider.v2ShortName) · \(coach.model)")
+                } else {
+                    Text("Not connected")
+                }
+            }
+            .font(StrandFont.book(12, relativeTo: .caption))
+            .foregroundStyle(connected ? StrandPalette.textSecondary : StrandPalette.textTertiary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 12)
+        .frame(height: 30)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Setup (no key yet)
+
+    @ViewBuilder private var setupContent: some View {
+        setupHero
+        NoopSectionTitle("Provider", captionKey: "Pick one")
+        providerList
+        if coach.provider == .custom { customServerFields }
+        NoopSectionTitle(coach.provider == .custom ? "API key (optional)" : "API key") {
+            Text(verbatim: coach.provider.v2ShortName)
+        }
+        setupKeyField
+        Text("Kept in the Keychain on \(Platform.deviceNounPhrase). Never synced, never backed up.")
+            .font(StrandFont.light(11.5, relativeTo: .caption))
+            .foregroundStyle(StrandPalette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.top, -2)
+        connectButton
+            .padding(.top, 6)
+        modelList
+        // Whatever the last attempt from THIS card ran into. The setup card had no error line
+        // at all, so every way it can fail before a key is committed failed silently: a Refresh
+        // the provider turned away, a Connect to a server that wants auth. The wearer saw a
+        // button do nothing. No repair affordance beside it, unlike the chat: the key field is
+        // already on screen, which is the whole point of the card.
+        if let error = coach.errorText, !error.isEmpty {
+            errorBanner(error)
+        }
+        NoopSectionTitle("Try asking", captionKey: "After you connect")
+        G3FlowLayout(spacing: 8, lineSpacing: 8) {
+            ForEach(suggestions, id: \.self) { G3PromptChip(text: $0) }
+        }
+        .opacity(0.5)
+        .accessibilityHidden(true)
+        privacyFootnote
+            .padding(.top, 10)
+    }
+
+    /// The ink hero of the connect screen: what bring-your-own-key means, and the direct route from
+    /// this device to the provider.
+    private var setupHero: some View {
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge("Bring your own key", icon: "key")
+                    Spacer(minLength: 8)
+                    NoopPill("No server", compact: true)
+                }
+                Text("Connect a provider")
+                    .font(StrandFont.title1)
+                    .tracking(-0.56)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .padding(.top, 26)
+                Text("Bring your own key. Questions go straight from \(Platform.deviceNounPhrase) to the provider you pick — NOOP runs no server.")
+                    .font(StrandFont.light(14.5, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textPrimary.opacity(0.8))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
+                routeDiagram
+                    .padding(.top, 22)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// This device ── DIRECT ── the provider: the request path, with no hop in between.
+    private var routeDiagram: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // A standalone label needs the nominative; the in-sentence "this %@" phrase cannot supply it in
+            // gendered languages ("Diese iPhone").
+            routeNode(icon: Platform.deviceNoun == "Mac" ? "desktop" : "device-mobile",
+                      label: Text("This device"))
+            ZStack {
+                Rectangle()
+                    .fill(.clear)
+                    .frame(height: 1)
+                    .overlay(
+                        Line().stroke(StrandPalette.textPrimary.opacity(0.4),
+                                      style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    )
+                NoopTag("Direct", size: 12)
+                    .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+            routeNode(icon: coach.provider == .custom ? "hard-drives" : "cloud",
+                      label: coach.provider == .custom ? Text("Your server") : Text("Your provider"))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Questions go directly to the provider"))
+    }
+
+    private func routeNode(icon: String, label: Text) -> some View {
+        VStack(spacing: 7) {
+            PhIcon(icon, size: 20)
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(StrandPalette.textPrimary.opacity(0.10)))
+                .overlay(Circle().strokeBorder(StrandPalette.textPrimary.opacity(0.16), lineWidth: 1))
+            label
+                .font(StrandFont.light(11, relativeTo: .caption2))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(StrandPalette.textPrimary)
+        .frame(width: 70)
+    }
+
+    /// Single-choice provider list (`.list` + `.rad`), in the order the design lists them.
+    private var providerList: some View {
+        NoopList {
+            ForEach([AIProvider.anthropic, .openAI, .gemini, .custom]) { p in
+                providerRow(p)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Provider")
+    }
+
+    private func providerRow(_ p: AIProvider) -> some View {
+        let selected = coach.provider == p
+        return Button {
+            coach.provider = p
+        } label: {
+            HStack(spacing: 14) {
+                G3RowLabel(title: Text(verbatim: p.v2ShortName), caption: p.v2Caption, icon: p.v2Icon)
+                G3RadioMark(isOn: selected)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 15)
+            .frame(minHeight: 52)
+            .background(selected ? NoopVisualStyle.inset : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    /// Server URL + key header for the Custom (OpenAI-compatible / local LLM) provider.
+    @ViewBuilder private var customServerFields: some View {
+        NoopSectionTitle("Server URL")
+        HStack(spacing: 10) {
+            PhIcon("hard-drives").opacity(0.5)
+            TextField("http://localhost:11434/v1", text: $coach.customBaseURL)
+                .textFieldStyle(.plain)
+                .font(StrandFont.book(15, relativeTo: .body))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .disableAutocorrection(true)
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                #endif
+                .accessibilityLabel("Server URL")
+        }
+        .g3FieldChrome()
+        Text("Any OpenAI-compatible server: Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves \(Platform.deviceNounPhrase).")
+            .font(StrandFont.light(11.5, relativeTo: .caption))
+            .foregroundStyle(StrandPalette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: 8) {
+            NoopOverline("Key header")
+            SegmentedPillControl(CustomAIAuthHeader.allCases, selection: $coach.customAuthHeader,
+                                 fillsAvailableWidth: true) { $0.displayName }
+                .accessibilityLabel("Key header")
+            Text("Use Bearer for most local servers; use x-api-key for gateways that require the key in that header.")
+                .font(StrandFont.light(11.5, relativeTo: .caption))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+        .padding(.top, 6)
+    }
+
+    /// The key field (`.fld`): lock, the secret (masked unless revealed), the eye toggle and Paste.
+    private var setupKeyField: some View {
+        HStack(spacing: 10) {
+            PhIcon("lock-simple").opacity(0.5)
+            Group {
+                if revealKey {
+                    TextField(setupKeyPlaceholder, text: $keyDraft)
+                } else {
+                    SecureField(setupKeyPlaceholder, text: $keyDraft)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(StrandFont.book(15, relativeTo: .body))
+            .foregroundStyle(StrandPalette.textPrimary)
+            .disableAutocorrection(true)
+            #if os(iOS)
+            .textInputAutocapitalization(.never)
+            #endif
+            .onSubmit { coach.provider == .custom ? connectCustom() : saveKey() }
+            .accessibilityLabel("API key")
+            Button {
+                revealKey.toggle()
+            } label: {
+                PhIcon(revealKey ? "eye" : "eye-slash").opacity(0.6)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(revealKey ? Text("Hide key") : Text("Show key"))
+            Button(action: pasteKey) {
+                NoopChip("Paste")
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(StrandPalette.textPrimary)
+        .g3FieldChrome()
+    }
+
+    private var setupKeyPlaceholder: String {
+        coach.provider == .custom
+            ? String(localized: "Only if your server requires one")
+            // The section caption already names the provider; the short form keeps the placeholder whole
+            // beside the reveal and Paste controls in longer languages.
+            : String(localized: "Paste your key")
+    }
+
+    @ViewBuilder private var connectButton: some View {
+        if coach.provider == .custom {
+            NoopButton("Connect", kind: .primary, fullWidth: true, action: connectCustom)
+                .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } else {
+            NoopButton("Connect", kind: .primary, fullWidth: true, action: saveKey)
+                .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    /// Model selector + "Refresh models": a menu over `coach.availableModels` with a free-text
+    /// "Custom…" path, and the button that fetches the provider's live list.
+    @ViewBuilder private var modelList: some View {
+        NoopList {
+            Menu {
+                Picker("Model", selection: modelPickerSelection) {
+                    ForEach(coach.availableModels, id: \.self) { m in
+                        Text(m).tag(m)
+                    }
+                    Divider()
+                    Text("Custom…").tag(customModelTag)
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    G3RowLabel(title: Text("Model"), caption: Text(verbatim: coach.provider.v2ShortName), icon: "cpu")
+                    Text(verbatim: coach.model.isEmpty ? "—" : coach.model)
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineLimit(1)
+                    PhIcon("caret-up-down").opacity(0.6)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 15)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(StrandPalette.textPrimary)
             .accessibilityLabel("Model")
 
-            if customModel {
-                HStack(spacing: 8) {
-                    TextField("Enter a model id", text: $customModelDraft)
-                        .textFieldStyle(.plain)
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                        .onSubmit(applyCustomModel)
-                        .accessibilityLabel("Custom model id")
-
-                    Button("Use", action: applyCustomModel)
-                        .buttonStyle(NoopButtonStyle(.secondary))
-                        .disabled(customModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityLabel("Use custom model")
-                }
+            Button {
+                Task { await coach.refreshModels() }
+            } label: {
+                G3RowLabel(title: Text("Refresh models"), icon: "arrows-clockwise")
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 15)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(!coach.hasKey)
+            .opacity(coach.hasKey ? 1 : 0.5)
+            .help("Fetch the available models from \(coach.provider.displayName) using your saved key")
+            .accessibilityLabel("Refresh models from provider")
+        }
+        if customModel {
+            HStack(spacing: 10) {
+                TextField("Enter a model id", text: $customModelDraft)
+                    .textFieldStyle(.plain)
+                    .font(StrandFont.book(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .disableAutocorrection(true)
+                    .onSubmit(applyCustomModel)
+                    .accessibilityLabel("Custom model id")
+                Button(action: applyCustomModel) { NoopChip("Use") }
+                    .buttonStyle(.plain)
+                    .disabled(customModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Use custom model")
+            }
+            .g3FieldChrome()
         }
     }
 
@@ -393,225 +557,282 @@ struct CoachView: View {
 
     // MARK: - Connected state
 
-    private var connectedHeader: some View {
-        HStack(spacing: 10) {
-            StatePill("\(coach.provider.displayName) · \(coach.model)", tone: .accent, showsDot: true)
-            Spacer()
-            if coach.sending {
-                StatePill("Thinking", tone: .accent, pulsing: true)
+    /// The conversation: its own scroll view (not `ScreenScaffold`) because the composer is docked
+    /// over the bottom of the screen and the transcript has to scroll clear of it.
+    private var chatScreen: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                        .padding(.bottom, 12)
+                    chatHero
+                    transcript
+                    if let error = coach.errorText, !error.isEmpty {
+                        errorBanner(error).padding(.top, 14)
+                    }
+                    if coach.keyRejected || showKeyEditor {
+                        keyRepairPanel.padding(.top, 12)
+                    }
+                    // K7: show follow-up chips after each assistant reply (when the transcript is
+                    // non-empty and the last message is from the assistant and not mid-send);
+                    // otherwise the initial contextual chips.
+                    if showFollowUpChips {
+                        followUpChips.padding(.top, 14)
+                    } else if !coach.sending {
+                        suggestionChips
+                    }
+                    Color.clear
+                        .frame(height: dockHeight + dockLift + 24)
+                        .id(transcriptEndID)
+                }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.top, 8)
+                #if os(iOS)
+                .frame(maxWidth: hSizeClass == .regular ? 700 : .infinity)
+                .frame(maxWidth: .infinity)
+                #endif
             }
-            // #2243: the way through to what used to be stacked under this header.
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(StrandPalette.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(String(localized: "Coach settings"))
             #if os(iOS)
-            connectionMenu
+            // #697 parity: this screen builds its OWN ScrollView rather than going through
+            // ScreenScaffold, so it never inherited the scaffold's horizontal-bounce suppression and
+            // could still rubber-band left-right on a purely vertical scroll. Same modifier, same
+            // guard. `.basedOnSize` permits horizontal bounce only when content genuinely overflows
+            // the width, so nothing that is meant to scroll sideways is affected. (#1532 follow-up)
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            .scrollDismissesKeyboard(.interactively)
             #endif
+            #if os(iOS) && DEBUG
+            .modifier(DemoScrollAnchor())
+            #endif
+            .background(StrandPalette.surfaceBase.ignoresSafeArea())
+            .overlay(alignment: .bottom) { composerDock }
+            .onChangeCompat(of: coach.messages.count) { _ in
+                scrollToEnd(proxy)
+            }
+            // A persisted conversation opens on its latest exchange, not on the hero above it.
+            .onAppear {
+                guard !coach.messages.isEmpty else { return }
+                DispatchQueue.main.async { proxy.scrollTo(transcriptEndID, anchor: .bottom) }
+            }
+            .onChangeCompat(of: coach.sending) { _ in
+                scrollToEnd(proxy)
+            }
         }
     }
 
-    #if os(iOS)
-    /// #2206: the same connection actions the toolbar above carries, drawn where iPhone can reach them.
-    ///
-    /// `RootTabView.tab(...)` wraps every primary tab root in a NavigationStack and applies
-    /// `.toolbar(.hidden, for: .navigationBar)`, because each screen draws its own in-content header.
-    /// So Clear conversation and Disconnect were being placed into a bar this platform never shows, and
-    /// rendered nowhere. At the time, Disconnect was the only route back to the setup card: `isConfigured`
-    /// gates that card away the moment a key is saved. The
-    /// result was a key that could be set once and then never changed, with reinstalling the app the
-    /// only way out, which on an offline-first app costs the wearer their entire history.
-    ///
-    /// macOS keeps the toolbar and does not get this, so its behaviour is untouched. On iOS the toolbar
-    /// route is withdrawn rather than kept alongside: CoachView is presented twice on this platform, as
-    /// a primary tab whose bar is hidden and as a pillar sheet whose bar is NOT (it draws a Done button
-    /// and only hides the bar's background). Keeping both would render nothing on the tab and two of
-    /// everything in the sheet. One control, reachable in both presentations.
-    ///
-    /// A menu rather than a bare button because it needs two taps to reach a destructive action,
-    /// matching the protection the toolbar's separation gives, and because both actions belong to the
-    /// same connection.
-    ///
-    /// Worth knowing before changing `disconnect()`: neither `hasKey` nor `isConfigured` is published,
-    /// since `hasKey` reads the Keychain on each evaluation. The setup card reappears because
-    /// `disconnect()` ALSO assigns the published `messages`, which is what re-evaluates the body. A
-    /// future disconnect that stopped clearing the transcript would clear the key and leave this screen
-    /// showing a chat for a connection that no longer exists. macOS has depended on the same coupling
-    /// since its toolbar button existed, so this is a latent edge being written down, not a new one.
-    private var connectionMenu: some View {
-        Menu {
-            Button {
-                toggleKeyEditor()
-            } label: {
-                Label("Update key", systemImage: "key.fill")
-            }
-            Button {
-                showClearConfirm = true
-            } label: {
-                Label("Clear conversation", systemImage: "trash")
-            }
-            .disabled(coach.messages.isEmpty)
-            Button(role: .destructive) {
-                coach.disconnect()
-                keyDraft = ""
-            } label: {
-                Label("Disconnect", systemImage: "gearshape")
-            }
-        } label: {
-            // Same affordance DevicesView uses for its per-device menu, headline size included. The
-            // size is not decoration here: the report this came from was that the option could not be
-            // FOUND, so a control that matches the one the wearer has already learned, at a size worth
-            // aiming at, is doing part of the work.
-            Image(systemName: "ellipsis.circle")
-                .font(StrandFont.headline)
-                .foregroundStyle(StrandPalette.textSecondary)
-        }
-        .accessibilityLabel("Connection")
-    }
-    #endif
-
-    private var transcript: some View {
-        StrandCard(padding: 16) {
-            if coach.messages.isEmpty {
-                emptyTranscript
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        // Lazy so off-screen bubbles aren't all resident/laid-out at once; with the
-                        // `maxStoredMessages` cap the transcript is already bounded, this keeps render cost flat.
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(coach.messages) { message in
-                                bubble(message).id(message.id)
-                            }
-                            if coach.sending {
-                                typingIndicator.id("typing")
-                            }
+    /// The ink hero at the top of the conversation: what Coach answers from.
+    private var chatHero: some View {
+        NoopHeroCard(glow: .ink, padding: 0, cornerRadius: 30) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    NoopIconBadge("Your coach", icon: "sparkle")
+                    Spacer(minLength: 8)
+                    Group {
+                        if coach.dataConsent {
+                            Text("14 days of context")
+                        } else {
+                            Text("No data shared")
                         }
-                        .padding(.vertical, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    // #697 parity: this screen builds its OWN ScrollView rather than going through
-                    // ScreenScaffold, so it never inherited the scaffold's horizontal-bounce suppression and
-                    // could still rubber-band left-right on a purely vertical scroll. Same modifier, same
-                    // guard. `.basedOnSize` permits horizontal bounce only when content genuinely overflows
-                    // the width, so nothing that is meant to scroll sideways is affected. (#1532 follow-up)
-                    #if os(iOS)
-                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                    #endif
-                    .frame(minHeight: 220, maxHeight: 460)
-                    .onChangeCompat(of: coach.messages.count) { _ in
-                        scrollToEnd(proxy)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textPrimary.opacity(0.6))
+                }
+                Text("Ask about your charge, effort, rest and workouts, grounded in your own numbers.")
+                    .font(StrandFont.light(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary.opacity(0.86))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 20)
+        }
+    }
+
+    /// The messages, top to bottom. The conversation is retired at the day boundary, so everything
+    /// shown is from today.
+    @ViewBuilder private var transcript: some View {
+        if coach.messages.isEmpty {
+            emptyTranscript
+        } else {
+            Text("Today")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 22)
+                .padding(.bottom, 14)
+            // Lazy so off-screen bubbles aren't all resident/laid-out at once; with the
+            // `maxStoredMessages` cap the transcript is already bounded, this keeps render cost flat.
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(coach.messages.enumerated()), id: \.element.id) { index, message in
+                    if !isPendingReply(message, at: index) {
+                        bubble(message, isLatest: index == coach.messages.count - 1)
+                            .padding(.top, index == 0 ? 0 : (message.role == .user ? 22 : 14))
+                            .id(message.id)
                     }
-                    .onChangeCompat(of: coach.sending) { _ in
-                        scrollToEnd(proxy)
-                    }
+                }
+                if showsThinking {
+                    thinkingBubble.padding(.top, 16)
                 }
             }
         }
     }
 
+    /// The empty assistant placeholder `send` appends before the first streamed token; the thinking
+    /// bubble stands in for it until text arrives.
+    private func isPendingReply(_ message: ChatMessage, at index: Int) -> Bool {
+        coach.sending && index == coach.messages.count - 1 && message.role == .assistant
+            && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var showsThinking: Bool {
+        guard coach.sending, let last = coach.messages.last else { return false }
+        return last.role == .user || last.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var emptyTranscript: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Ask your first question")
-                .font(StrandFont.headline)
-                .foregroundStyle(StrandPalette.textPrimary)
+        VStack(alignment: .leading, spacing: 14) {
+            NoopSectionTitle("Ask your first question", topPadding: 30)
             Text("Coach reads a summary of your last two weeks plus 30-day averages and recent workouts, then answers in plain language. Try a suggestion below.")
-                .font(StrandFont.subhead)
+                .font(StrandFont.light(14, relativeTo: .subheadline))
                 .foregroundStyle(StrandPalette.textSecondary)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
     }
 
     @ViewBuilder
-    private func bubble(_ message: ChatMessage) -> some View {
+    private func bubble(_ message: ChatMessage, isLatest: Bool) -> some View {
         switch message.role {
         case .user:
             HStack {
                 Spacer(minLength: 48)
                 Text(message.text)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.surfaceBase)
+                    .font(StrandFont.book(14.5, relativeTo: .body))
+                    .lineSpacing(3)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .textSelection(.enabled)
                     .multilineTextAlignment(.leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(StrandPalette.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 13)
+                    .background(
+                        UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22,
+                                               bottomTrailingRadius: 6, topTrailingRadius: 22,
+                                               style: .continuous)
+                            .fill(NoopVisualStyle.raised)
+                    )
+                    .overlay(
+                        UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22,
+                                               bottomTrailingRadius: 6, topTrailingRadius: 22,
+                                               style: .continuous)
+                            .strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1)
+                    )
                     .frame(maxWidth: 520, alignment: .trailing)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("You said: \(message.text)")
         case .assistant:
-            // LLM replies arrive as Markdown (bold, lists, headings, tables),             // rendered with the chat-bubble-sized Strand theme. User bubbles stay
-            // verbatim `Text` so typed `*`/`#` never turn into surprise formatting.
-            // The reply sits on a frosted Charge-tinted surface, a card, not a flat box.
-            // K8: context menu (long-press / right-click) with Copy, Share, and Save actions.
-            HStack {
-                Markdown(message.text)
-                    .markdownTheme(.strand)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-                    .frostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: 16)
-                    .frame(maxWidth: 560, alignment: .leading)
-                    // K8: Copy / Share / Save context menu on assistant replies.
-                    .contextMenu {
-                        Button {
-                            #if os(macOS)
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(message.text, forType: .string)
-                            #else
-                            UIPasteboard.general.string = message.text
-                            #endif
-                        } label: {
-                            Label("Copy", systemImage: "doc.on.doc")
-                        }
-                        ShareLink(item: message.text) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-                        Button {
-                            saveAdvice(message.text)
-                        } label: {
-                            Label("Save to Journal", systemImage: "square.and.pencil")
-                        }
-                    }
-                Spacer(minLength: 48)
+            VStack(alignment: .leading, spacing: 0) {
+                replyCard(message)
+                if isLatest && !coach.sending {
+                    replyActions(message)
+                        .padding(.top, 10)
+                        .padding(.leading, 4)
+                }
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Coach said: \(message.text)")
         }
     }
 
-    private var typingIndicator: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small).tint(StrandPalette.accent)
-            Text("Coach is thinking…")
-                .font(StrandFont.subhead)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer(minLength: 0)
+    /// An assistant reply. LLM replies arrive as Markdown (bold, lists, headings, tables), rendered with
+    /// the chat-sized Strand theme; user bubbles stay verbatim `Text` so typed `*`/`#` never turn into
+    /// surprise formatting.
+    private func replyCard(_ message: ChatMessage) -> some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 8,
+                                           bottomTrailingRadius: 24, topTrailingRadius: 24,
+                                           style: .continuous)
+        return VStack(alignment: .leading, spacing: 10) {
+            NoopCardHeader("Coach", icon: "sparkle", caption: nil)
+            Markdown(message.text)
+                .markdownTheme(.strand)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .frostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: 16)
-        .frame(maxWidth: 320, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(G3CardSurface(shape: shape))
+        .contentShape(shape)
+        // K8: Copy / Share / Save context menu on every assistant reply (long-press / right-click).
+        .contextMenu {
+            Button {
+                copyToPasteboard(message.text)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            ShareLink(item: message.text) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                saveAdvice(message)
+            } label: {
+                Label("Save to Journal", systemImage: "square.and.pencil")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Coach said: \(message.text)")
+    }
+
+    /// K8: the same Copy / Share / Save actions, drawn under the latest reply.
+    private func replyActions(_ message: ChatMessage) -> some View {
+        HStack(spacing: 8) {
+            Button { copyToPasteboard(message.text) } label: {
+                G3ActionCapsule(title: "Copy", icon: "copy")
+            }
+            .buttonStyle(.plain)
+            ShareLink(item: message.text) {
+                G3ActionCapsule(title: "Share", icon: "share-network")
+            }
+            .buttonStyle(.plain)
+            Button { saveAdvice(message) } label: {
+                if savedReplyID == message.id {
+                    G3ActionCapsule(title: "Saved", icon: "check")
+                } else {
+                    G3ActionCapsule(title: "Save to Journal", icon: "notebook")
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(savedReplyID == message.id)
+        }
+    }
+
+    /// `.think`: three dots and "Thinking" while the reply has not started streaming.
+    private var thinkingBubble: some View {
+        HStack(spacing: 12) {
+            ThinkingDots()
+            Text("Thinking")
+                .font(StrandFont.book(13.5, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textPrimary)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 44)
+        .background(G3CardSurface(shape: UnevenRoundedRectangle(
+            topLeadingRadius: 22, bottomLeadingRadius: 6, bottomTrailingRadius: 22, topTrailingRadius: 22,
+            style: .continuous)))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Coach is thinking")
     }
 
     private func errorBanner(_ message: String) -> some View {
-        StrandCard(padding: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(StrandPalette.statusCritical)
-                    .accessibilityHidden(true)
+        NoopCard(padding: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                PhIcon("warning-circle")
+                    .foregroundStyle(NoopGlow.low.tint)
+                    .padding(.top, 1)
                 Text(message)
                     .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.statusCritical)
+                    .foregroundStyle(StrandPalette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
@@ -627,31 +848,32 @@ struct CoachView: View {
     /// custom provider: far more than correcting a typo asks for, and named for an outcome the wearer
     /// is trying to avoid. Twin of the Kotlin editor in `CoachChat`.
     private var keyRepairPanel: some View {
-        StrandCard(padding: 14) {
-            VStack(alignment: .leading, spacing: 8) {
+        NoopCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                NoopCardHeader("Update key", icon: "key", caption: nil)
                 if coach.keyRejected {
                     Text("Paste the corrected key. Your conversation is kept.")
-                        .font(StrandFont.footnote)
+                        .font(StrandFont.light(13.5, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                SecureField("Paste your \(coach.provider.displayName) API key", text: $keyFix)
-                    .textFieldStyle(.plain)
-                    .font(StrandFont.body)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                    .onSubmit(saveRepairedKey)
-                    .accessibilityLabel(coach.keyRejected ? Text("Corrected API key") : Text("API key"))
-                HStack {
-                    NoopButton("Update key", systemImage: "key.fill", kind: .primary, action: saveRepairedKey)
+                HStack(spacing: 10) {
+                    PhIcon("lock-simple").opacity(0.5)
+                    SecureField("Paste your \(coach.provider.displayName) API key", text: $keyFix)
+                        .textFieldStyle(.plain)
+                        .font(StrandFont.book(15, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .onSubmit(saveRepairedKey)
+                        .accessibilityLabel(coach.keyRejected ? Text("Corrected API key") : Text("API key"))
+                }
+                .foregroundStyle(StrandPalette.textPrimary)
+                .g3FieldChrome()
+                HStack(spacing: 10) {
+                    NoopButton("Update key", kind: .primary, action: saveRepairedKey)
                         .disabled(keyFix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Spacer()
                     if showKeyEditor && !coach.keyRejected {
-                        Button("Cancel") { toggleKeyEditor() }
+                        NoopButton("Cancel", kind: .tertiary) { toggleKeyEditor() }
                     }
                 }
             }
@@ -674,29 +896,19 @@ struct CoachView: View {
         if !showKeyEditor { keyFix = "" }
     }
 
-    private var suggestionChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+    /// The initial contextual prompts: a wrapping "Try asking" block on an empty transcript, a
+    /// sideways row once a conversation is under way.
+    @ViewBuilder private var suggestionChips: some View {
+        if coach.messages.isEmpty {
+            G3FlowLayout(spacing: 8, lineSpacing: 8) {
                 ForEach(suggestions, id: \.self) { prompt in
-                    Button {
-                        send(prompt)
-                    } label: {
-                        Text(prompt)
-                            .font(StrandFont.captionNumber)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
-                            .overlay(Capsule(style: .continuous).strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                    }
-                    // Liquid tap response: the physical settle-inward every tappable liquid
-                    // affordance gets, replacing the flat `.plain` press.
-                    .buttonStyle(LiquidPressStyle())
-                    .disabled(coach.sending)
-                    .accessibilityLabel("Suggested prompt: \(prompt)")
+                    promptButton(prompt, label: "Suggested prompt: \(prompt)")
                 }
             }
-            .padding(.vertical, 1)
+            .padding(.top, 16)
+        } else {
+            promptRow(suggestions, label: { "Suggested prompt: \($0)" })
+                .padding(.top, 14)
         }
     }
 
@@ -711,188 +923,183 @@ struct CoachView: View {
     /// K7: Follow-up suggestion chips shown after each assistant reply, so the user can dig
     /// deeper without typing. Uses the static `AICoachEngine.followUpSuggestions` list.
     private var followUpChips: some View {
+        promptRow(AICoachEngine.followUpSuggestions, label: { "Follow-up prompt: \($0)" })
+    }
+
+    private func promptRow(_ prompts: [String], label: @escaping (String) -> LocalizedStringKey) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(AICoachEngine.followUpSuggestions, id: \.self) { prompt in
-                    Button {
-                        send(prompt)
-                    } label: {
-                        Text(prompt)
-                            .font(StrandFont.captionNumber)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(StrandPalette.surfaceInset, in: Capsule(style: .continuous))
-                            .overlay(Capsule(style: .continuous).strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                    }
-                    .buttonStyle(LiquidPressStyle())
-                    .disabled(coach.sending)
-                    .accessibilityLabel("Follow-up prompt: \(prompt)")
+                ForEach(prompts, id: \.self) { prompt in
+                    promptButton(prompt, label: label(prompt))
                 }
             }
             .padding(.vertical, 1)
         }
     }
 
-    /// K12: A subtle token estimate shown below the composer when the draft is non-empty.
-    /// Uses the ~4 chars/token heuristic — an estimate only, not an exact tokenizer count.
-    private func tokenEstimateBar(_ tokens: Int) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: "speedometer")
-                .font(.system(size: 10))
-                .foregroundStyle(StrandPalette.textTertiary)
-            Text("~\(tokens) tokens")
-                .font(StrandFont.captionNumber)
-                .foregroundStyle(StrandPalette.textTertiary)
-            if tokens > 8000 {
-                Text("· may exceed small context windows")
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
+    private func promptButton(_ prompt: String, label: LocalizedStringKey) -> some View {
+        Button {
+            send(prompt)
+        } label: {
+            G3PromptChip(text: prompt)
         }
-        .padding(.top, 2)
+        // Liquid tap response: the physical settle-inward every tappable affordance gets.
+        .buttonStyle(LiquidPressStyle())
+        .disabled(coach.sending)
+        .accessibilityLabel(label)
     }
 
-    /// The input bar, a frosted overlay surface holding the field + Send, so the composer reads as a
-    /// distinct docked surface above the canvas rather than two floating controls.
+    // MARK: - Docked composer
+
+    /// How far the dock sits above the bottom of the screen: clear of the floating tab bar on iPhone
+    /// (bar 66 + its 22 inset + a 12 gap), right on the keyboard while it is up.
+    private var dockLift: CGFloat {
+        #if os(iOS)
+        return keyboardVisible ? 10 : 100
+        #else
+        return 16
+        #endif
+    }
+
+    /// The composer docked over the bottom of the conversation: what the next request carries, the
+    /// field and Send, on a fade so the transcript passes beneath it.
+    private var composerDock: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Group {
+                    if coach.dataConsent {
+                        Text("Shares your last 14 days")
+                    } else {
+                        Text("Shares no personal data")
+                    }
+                }
+                Spacer(minLength: 8)
+                // K12: a rough token estimate for the next request (~4 chars/token, not a tokenizer).
+                if let tokens = coach.estimatedTokens(forDraft: draft) {
+                    tokenEstimate(tokens)
+                }
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .padding(.horizontal, 14)
+            composer
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { dockHeight = geo.size.height }
+                    .onChangeCompat(of: geo.size.height) { dockHeight = $0 }
+            }
+        )
+        .padding(.bottom, dockLift)
+        .background(alignment: .bottom) {
+            // Opaque by the caption line, so the transcript fades out above the dock rather than
+            // running through its text.
+            LinearGradient(
+                stops: [.init(color: NoopVisualStyle.canvas.opacity(0), location: 0),
+                        .init(color: NoopVisualStyle.canvas, location: 0.3)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .padding(.top, -64)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        #if os(iOS)
+        .ignoresSafeArea(.container, edges: .bottom)
+        #endif
+        .animation(.easeOut(duration: 0.2), value: keyboardLiftKey)
+    }
+
+    /// Animation key for the dock's lift (macOS has no keyboard state).
+    private var keyboardLiftKey: Bool {
+        #if os(iOS)
+        return keyboardVisible
+        #else
+        return false
+        #endif
+    }
+
+    /// "~1.4k tokens", with the small-context warning past 8k.
+    private func tokenEstimate(_ tokens: Int) -> some View {
+        let count = tokens >= 1000
+            ? String(format: "%.1fk", Double(tokens) / 1000)
+            : "\(tokens)"
+        return HStack(spacing: 4) {
+            Text("~\(count) tokens")
+            if tokens > 8000 {
+                Text("· may exceed small context windows")
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+    }
+
+    /// The input capsule (`.cmp`): the field and the mic inside, the round Send beside it.
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField("Ask Coach about your data…", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textPrimary)
-                .lineLimit(1...5)
-                .focused($composerFocused)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(composerFocused ? StrandPalette.focusRing : StrandPalette.hairline, lineWidth: 1))
-                .onSubmit { send(draft) }
-                .accessibilityLabel("Question")
+            HStack(alignment: .center, spacing: 10) {
+                TextField("Ask Coach about your data…", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(StrandFont.light(14.5, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .lineLimit(1...5)
+                    .focused($composerFocused)
+                    .onSubmit { send(draft) }
+                    .accessibilityLabel("Question")
+                // K4: on-device voice input (iOS only). macOS compiles this section out entirely.
+                #if os(iOS)
+                CoachMicButton(draft: $draft, disabled: coach.sending)
+                #endif
+            }
+            .padding(.leading, 20)
+            .padding(.trailing, 14)
+            .padding(.vertical, 8)
+            .frame(minHeight: 54)
+            .background(RoundedRectangle(cornerRadius: 27, style: .continuous).fill(NoopVisualStyle.inset))
+            .overlay(RoundedRectangle(cornerRadius: 27, style: .continuous)
+                .strokeBorder(composerFocused ? StrandPalette.textTertiary : NoopVisualStyle.borderHighlight,
+                              lineWidth: 1))
 
-            // K4: on-device voice input (iOS only). macOS compiles this section out entirely.
-            #if os(iOS)
-            micButton
-            #endif
-
-            // Docked icon-only send affordance: a crisp accent-filled square sized to the
-            // composer row (not the full 48pt control height), so it routes through the same
-            // token fill/label colours as the button system without overpowering the field.
             Button {
                 send(draft)
             } label: {
                 Group {
                     if coach.sending {
-                        ProgressView().controlSize(.small).tint(StrandPalette.goldDeepText)
+                        ProgressView().controlSize(.small).tint(NoopVisualStyle.canvas)
                     } else {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 15, weight: .semibold))
+                        PhIcon("arrow-up", size: 20)
                     }
                 }
-                .frame(width: 44, height: 38)
-                .foregroundStyle(StrandPalette.goldDeepText)
-                .background(StrandPalette.accent,
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .foregroundStyle(NoopVisualStyle.canvas)
+                .frame(width: 54, height: 54)
+                .background(Circle().fill(StrandPalette.textPrimary))
+                .opacity(sendDisabled && !coach.sending ? 0.45 : 1)
+                .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .disabled(coach.sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(sendDisabled)
             .accessibilityLabel("Send")
         }
-        .padding(8)
-        .background(NoopPanelSurface(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(StrandPalette.hairline, lineWidth: 1))
     }
 
-    // MARK: - K4: Voice input (iOS only)
-
-    #if os(iOS)
-    /// Mic button: starts/stops on-device speech recognition. Disabled when the locale lacks
-    /// on-device support or permission is denied; tapping when permission is not yet determined
-    /// triggers the system prompt.
-    private var micButton: some View {
-        Button {
-            toggleVoice()
-        } label: {
-            Group {
-                if voiceInput.isRecording {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(StrandPalette.statusCritical)
-                } else {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(canUseVoice ? StrandPalette.textSecondary : StrandPalette.textTertiary)
-                }
-            }
-            .frame(width: 36, height: 38)
-            .background(StrandPalette.surfaceInset,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .disabled(!micButtonEnabled)
-        .help(voiceInput.statusMessage ?? "Ask out loud")
-        .accessibilityLabel(voiceInput.isRecording ? "Stop voice input" : "Voice input")
-        .accessibilityHint(voiceInput.statusMessage ?? "Transcribes your question on-device")
-        .task {
-            // Pre-check on appear so the button reflects the right state without a tap.
-            if voiceInput.authorization == .notDetermined {
-                voiceInput.requestAuthorization { _ in }
-            }
-        }
+    private var sendDisabled: Bool {
+        coach.sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-
-    /// Whether the mic button is tappable: not while sending, and only if voice is either
-    /// already usable or permission hasn't been asked yet (first tap triggers the prompt).
-    private var canUseVoice: Bool { voiceInput.canUseVoice }
-    private var micButtonEnabled: Bool {
-        !coach.sending && (canUseVoice || voiceInput.authorization == .notDetermined)
-    }
-
-    private func toggleVoice() {
-        if voiceInput.isRecording {
-            voiceInput.stopTranscribing { finalText in
-                let trimmed = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    // Append to the draft (not replace) so a user can speak into existing text.
-                    draft = draft.isEmpty ? trimmed : "\(draft) \(trimmed)"
-                }
-            }
-        } else {
-            // First tap with undetermined permission triggers the system prompt; if granted,
-            // start transcribing immediately on the next tap. If already authorized, start now.
-            if voiceInput.authorization == .notDetermined {
-                voiceInput.requestAuthorization { state in
-                    if state == .authorized {
-                        voiceInput.startTranscribing { partial in
-                            draft = partial
-                        }
-                    }
-                }
-            } else {
-                voiceInput.startTranscribing { partial in
-                    draft = partial
-                }
-            }
-        }
-    }
-    #endif
 
     private var privacyFootnote: some View {
-        Label {
+        HStack(alignment: .top, spacing: 10) {
+            PhIcon("lock-simple", size: 14)
+                .padding(.top, 1)
             Text(coach.provider == .custom
                  ? "Coach talks only to the server URL you set. Point it at a local model (Ollama, LM Studio, llama.cpp) to keep everything on your own machine. Nothing is sent until you ask."
                  : "This is the only feature that leaves \(Platform.deviceNounPhrase). It sends a summary of your metrics to \(coach.provider.displayName) using your own key. Nothing is sent until you ask.")
                 .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: "lock.shield")
-                .foregroundStyle(StrandPalette.textTertiary)
         }
+        .foregroundStyle(StrandPalette.textTertiary)
+        .padding(.horizontal, 4)
         .accessibilityElement(children: .combine)
     }
 
@@ -915,6 +1122,27 @@ struct CoachView: View {
         coach.connectCustom()
     }
 
+    /// Fill the key field from the clipboard. Read only on this explicit tap.
+    private func pasteKey() {
+        #if os(macOS)
+        let pasted = NSPasteboard.general.string(forType: .string)
+        #else
+        let pasted = UIPasteboard.general.string
+        #endif
+        if let pasted = pasted?.trimmingCharacters(in: .whitespacesAndNewlines), !pasted.isEmpty {
+            keyDraft = pasted
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #else
+        UIPasteboard.general.string = text
+        #endif
+    }
+
     private func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !coach.sending else { return }
@@ -935,25 +1163,84 @@ struct CoachView: View {
     /// K8: Save a coach reply to the journal as a note, so it appears alongside other journal
     /// entries in Insights and can be reviewed later. Uses the existing journal API with a
     /// fixed question ("Coach advice") and the reply text in the notes field.
-    private func saveAdvice(_ text: String) {
+    private func saveAdvice(_ message: ChatMessage) {
         let day = Repository.localDayKey(Date())
+        savedReplyID = message.id
         Task {
             await repo.saveJournalAnswer(
                 day: day,
                 question: "Coach advice",
                 answeredYes: true,
-                notes: text
+                notes: message.text
             )
         }
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
         withAnimation(StrandMotion.fade) {
-            if coach.sending {
-                proxy.scrollTo("typing", anchor: .bottom)
-            } else if let last = coach.messages.last {
-                proxy.scrollTo(last.id, anchor: .bottom)
+            proxy.scrollTo(transcriptEndID, anchor: .bottom)
+        }
+    }
+}
+
+/// Three dots fading in turn while the coach composes (`.think b i`).
+private struct ThinkingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.35)) { context in
+            let step = reduceMotion ? 0 : Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(StrandPalette.textPrimary)
+                        .frame(width: 6, height: 6)
+                        .opacity([1, 0.55, 0.25][(i - step + 3) % 3])
+                }
             }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A horizontal line through the middle of its rect (the dashed route in the connect hero).
+private struct Line: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        }
+    }
+}
+
+extension AIProvider {
+    /// The short name the v2 Coach screens print (the full `displayName` stays in sentences).
+    var v2ShortName: String {
+        switch self {
+        case .openAI:    return "OpenAI"
+        case .anthropic: return "Anthropic"
+        case .gemini:    return "Gemini"
+        case .custom:    return String(localized: "Custom")
+        }
+    }
+
+    /// The provider row's caption on the connect screen.
+    var v2Caption: Text {
+        switch self {
+        case .anthropic: return Text("Claude models · api.anthropic.com")
+        case .openAI:    return Text("GPT models · api.openai.com")
+        case .gemini:    return Text("Google AI Studio key")
+        // A plain String, so the URL is not turned into a Markdown link.
+        case .custom:    return Text(String(localized: "OpenAI-compatible server, e.g. http://localhost:11434/v1"))
+        }
+    }
+
+    /// The provider row's icon.
+    var v2Icon: String {
+        switch self {
+        case .anthropic: return "chat-circle-text"
+        case .openAI:    return "chats-teardrop"
+        case .gemini:    return "diamond"
+        case .custom:    return "hard-drives"
         }
     }
 }

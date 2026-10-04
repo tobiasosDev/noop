@@ -14,4 +14,8 @@ enum CoachPrompts {
         String(localized: "Analyse my sleep"),
         String(localized: "Why am I run down?"),
     ]
+
+    /// The Phosphor icon drawn beside each suggestion, index for index (charge, training, sleep,
+    /// fatigue).
+    static let icons: [String] = ["lightning", "person-simple-run", "moon", "battery-low"]
 }

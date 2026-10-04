@@ -43,25 +43,23 @@ struct LiftProgramEditorSheet: View {
     }
 
     var body: some View {
-        ScreenScaffold(
-            title: isNew ? "New program" : "Edit program",
-            subtitle: "Your targets for each exercise. What you actually lift is recorded when you run it."
+        LiftSheetScaffold(
+            isNew ? "New program" : "Edit program",
+            subtitle: "Your targets for each exercise. What you actually lift is recorded when you run it.",
+            onCancel: { dismiss() }
         ) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 detailsSection
                 exercisesSection
-                if !isNew { deleteSection }
                 footer
+                if !isNew { deleteSection }
             }
         }
-        #if os(iOS)
-        .presentationDragIndicator(.visible)
-        #else
+        #if os(macOS)
         // A fixed frame, for the reason the other editor sheets document: a macOS sheet hosting a
         // ScrollView needs a definite height or every row collapses to the top.
         .frame(width: 520, height: 720)
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .dismissesKeyboardOnTap($focused)
         .task { await loadIfNeeded() }
@@ -76,7 +74,7 @@ struct LiftProgramEditorSheet: View {
 
     private var detailsSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Program", overline: "Details")
+            NoopSectionTitle("Program", captionKey: "Details", topPadding: 0)
             NoopCard {
                 VStack(alignment: .leading, spacing: 14) {
                     field("Name") {
@@ -109,7 +107,7 @@ struct LiftProgramEditorSheet: View {
 
     private var exercisesSection: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Exercises", overline: "In order")
+            NoopSectionTitle("Exercises", captionKey: "In order", topPadding: 0)
 
             if items.isEmpty {
                 NoopCard {
@@ -124,27 +122,24 @@ struct LiftProgramEditorSheet: View {
                 }
             }
 
-            Button {
+            LTActionButton("Add exercise", icon: "plus", height: 44, fontSize: 14) {
                 editingItem = ItemEditTarget(id: "new", item: nil)
-            } label: {
-                Label("Add exercise", systemImage: "plus")
             }
-            .buttonStyle(NoopButtonStyle(.secondary))
         }
     }
 
     private func itemRow(_ item: LiftProgramItemRow, index: Int) -> some View {
         NoopCard {
-            HStack(alignment: .top, spacing: NoopMetrics.gap) {
+            HStack(alignment: .center, spacing: NoopMetrics.gap) {
                 Button {
                     editingItem = ItemEditTarget(id: item.id, item: item)
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.exercise)
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(15, relativeTo: .body))
                             .foregroundStyle(StrandPalette.textPrimary)
                         Text(targetSummary(item))
-                            .font(StrandFont.caption)
+                            .font(StrandFont.light(12, relativeTo: .caption))
                             .foregroundStyle(StrandPalette.textSecondary)
                         if let note = item.note, !note.isEmpty {
                             Text(note)
@@ -158,31 +153,32 @@ struct LiftProgramEditorSheet: View {
                 }
                 .buttonStyle(.plain)
 
-                VStack(spacing: NoopMetrics.rowSpacing) {
+                HStack(spacing: 0) {
                     Button {
                         move(from: index, by: -1)
                     } label: {
-                        Image(systemName: "chevron.up")
+                        rowIcon("caret-up")
                     }
                     .disabled(index == 0)
+                    .opacity(index == 0 ? 0.38 : 1)
                     .accessibilityLabel("Move up")
 
                     Button {
                         move(from: index, by: 1)
                     } label: {
-                        Image(systemName: "chevron.down")
+                        rowIcon("caret-down")
                     }
                     .disabled(index == items.count - 1)
+                    .opacity(index == items.count - 1 ? 0.38 : 1)
                     .accessibilityLabel("Move down")
 
                     Button(role: .destructive) {
                         items.removeAll { $0.id == item.id }
                     } label: {
-                        Image(systemName: "trash")
+                        rowIcon("trash")
                     }
                     .accessibilityLabel("Remove exercise")
                 }
-                .font(.system(size: 12, weight: .semibold))
                 .buttonStyle(.plain)
                 .foregroundStyle(StrandPalette.textSecondary)
             }
@@ -218,9 +214,9 @@ struct LiftProgramEditorSheet: View {
             Button(role: .destructive) {
                 confirmingDelete = true
             } label: {
-                Label("Delete program", systemImage: "trash")
+                LiftDestructiveLabel("Delete program")
             }
-            .buttonStyle(NoopButtonStyle(.secondary))
+            .buttonStyle(.plain)
             .confirmationDialog("Delete this program?",
                                 isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {
@@ -234,23 +230,21 @@ struct LiftProgramEditorSheet: View {
 
     // MARK: - Footer
 
+    /// Save, as the sheet's one primary action; Cancel is in the sheet header.
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer()
-            Button("Save") { Task { await save() } }
-                .buttonStyle(.noopPrimary)
-                .frame(maxWidth: 160)
-                .disabled(!canSave)
-                .opacity(canSave ? 1 : NoopButtonMetrics.disabledOpacity)
-                .accessibilityLabel("Save program")
-        }
+        LTActionButton("Save", kind: .primary) { Task { await save() } }
+            .disabled(!canSave)
+            .accessibilityLabel("Save program")
     }
 
     // MARK: - Helpers
+
+    /// A 30 pt tap target for the reorder and remove controls of an exercise line.
+    private func rowIcon(_ name: String) -> some View {
+        PhIcon(name, size: 15)
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
+    }
 
     private func field<Content: View>(_ label: LocalizedStringKey,
                                       @ViewBuilder _ content: () -> Content) -> some View {

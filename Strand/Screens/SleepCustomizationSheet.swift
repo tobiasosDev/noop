@@ -34,13 +34,14 @@ struct SleepCustomizationSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            NoopSheetHeader("Customize Sleep", doneTitle: "Save", onCancel: { dismiss() }, onDone: save)
             EditableLayoutList(
                 draft: $draft,
                 shownTitle: String(localized: "Shown"),
                 hiddenTitle: String(localized: "Hidden"),
                 title: \.title,
-                subtitle: { _ in nil },
+                subtitle: \.customizationCaption,
                 icon: \.customizationIcon,
                 tint: \.customizationTint,
                 configurationLabel: { _ in nil },
@@ -50,25 +51,19 @@ struct SleepCustomizationSheet: View {
                         visible: SleepSection.defaultOrder,
                         allItems: SleepSection.defaultOrder
                     )
-                }
+                },
+                intro: String(localized: "Drag to reorder. Hidden cards stay one tap away and keep their data."),
+                countLabel: { $0 == 1 ? String(localized: "1 card") : String(localized: "\($0) cards") }
             ) {
                 EmptyView()
             }
-            .navigationTitle("Customize Sleep")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                }
-            }
         }
+        .background(NoopSheetBackground())
         .interactiveDismissDisabled(isDirty)
-        .tint(StrandPalette.accent)
+        .tint(StrandPalette.textPrimary)
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #endif
         #if os(macOS)
         .frame(
             minWidth: NoopMetrics.editorSheetMinWidth,
@@ -86,19 +81,33 @@ struct SleepCustomizationSheet: View {
     }
 }
 
-// MARK: - Per-card Arrange-sheet metadata (icon + tint), mirroring TodaySection's
+// MARK: - Per-card Arrange-sheet metadata (icon + caption + tint), mirroring TodaySection's
 
 extension SleepSection {
-    /// SF Symbol shown beside the card's name in the Arrange sheet.
+    /// The Phosphor glyph shown beside the card's name in the Arrange sheet — the same one the card
+    /// carries when it is pinned to Today.
     var customizationIcon: String {
         switch self {
-        case .sleepMarks:      return "bed.double"
-        case .stages:          return "chart.bar.xaxis"
-        case .bodyClock:       return "clock.badge.checkmark"
-        case .nightDetail:     return "square.grid.2x2"
-        case .sleepDebt:       return "arrow.down.right.circle"
-        case .stagesVsTypical: return "chart.bar"
-        case .asleepDuration:  return "clock"
+        case .sleepMarks:      return "moon-stars"
+        case .stages:          return "chart-bar"
+        case .bodyClock:       return "clock"
+        case .nightDetail:     return "squares-four"
+        case .sleepDebt:       return "scales"
+        case .stagesVsTypical: return "chart-bar-horizontal"
+        case .asleepDuration:  return "timer"
+        }
+    }
+
+    /// What the card shows, for the Arrange row's caption.
+    var customizationCaption: String? {
+        switch self {
+        case .sleepMarks:      return String(localized: "Going to sleep · I'm awake")
+        case .stages:          return String(localized: "Last night's stages and naps")
+        case .bodyClock:       return String(localized: "Your 24 h body-clock dial")
+        case .nightDetail:     return String(localized: "Metrics · vs typical")
+        case .sleepDebt:       return String(localized: "Sleep debt, night by night")
+        case .stagesVsTypical: return String(localized: "Last night against your typical")
+        case .asleepDuration:  return String(localized: "Time asleep over recent nights")
         }
     }
 

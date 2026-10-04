@@ -49,7 +49,7 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
             // Unified side margins matching the floating navigation bar so every page's cards + header line up
             // to the same edges (2026-07-02); macOS keeps the classic 28 in the #else branch.
             .padding(.horizontal, NoopMetrics.screenHPadding)
-            .padding(.top, 24)
+            .padding(.top, 8)
             // The tab bar floats over the scroll content, so the last card sat hidden behind it.
             // Reserve extra bottom scroll room so every screen's final card clears the floating bar.
             .padding(.bottom, NoopMetrics.tabBarClearance)
@@ -63,6 +63,11 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             #endif
         }
+        #if os(iOS) && DEBUG
+        // DEBUG screenshot harness: `--demo-anchor top|center|bottom` starts the scroll there, so a screen
+        // taller than the simulator can be captured in three shots. Inert without the argument.
+        .modifier(DemoScrollAnchor())
+        #endif
         #if os(iOS)
         // #697: stop a vertical scroll from drifting/bouncing the screen left-right. `.basedOnSize` only
         // permits horizontal bounce when content genuinely overflows the width (it does not here, the column
@@ -102,33 +107,37 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
     /// the previous layout. `@ViewBuilder` lets the two stack types resolve to one opaque return.
     @ViewBuilder private var column: some View {
         if lazy {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 if title != nil || subtitle != nil { header }
                 content()
             }
         } else {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 if title != nil || subtitle != nil { header }
                 content()
             }
         }
     }
 
+    /// The v2 page title: 34 pt Hanken Light, a 14 pt secondary subtitle, trailing circle buttons. The
+    /// column's 12 pt card gap sits below it, plus 10 pt so the first card does not crowd the title.
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 if let title {
-                    // Match the liquid home's title face (SF Rounded 28) so every page's header reads
-                    // identically (2026-07-02 cohesion pass).
-                    Text(title).font(StrandFont.rounded(28)).foregroundStyle(StrandPalette.textPrimary)
+                    Text(title).font(StrandFont.largeTitle).tracking(-0.7)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 if let subtitle {
-                    Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                    Text(subtitle).font(StrandFont.light(14, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textSecondary)
                 }
             }
             Spacer(minLength: 0)
             trailing()
         }
+        .padding(.bottom, 10)
     }
 }
 
@@ -163,21 +172,7 @@ struct ComingSoon: View {
     let what: LocalizedStringKey
     var symbol: String = "sparkles"
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol)
-                .font(StrandFont.headline)
-                .foregroundStyle(StrandPalette.accent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Coming together")
-                    .font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                Text(what)
-                    .font(StrandFont.body).foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-        .frostedCardSurface()
+        PendingNoteCard(title: Text("Coming together"), message: Text(what), symbol: symbol)
     }
 }
 
@@ -193,11 +188,21 @@ struct SyncingHistoryNote: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            StatePill("Syncing strap history…", tone: .accent, pulsing: true)
+            HStack(spacing: 8) {
+                ConnectionDot(tone: .neutral, pulsing: true, size: 7)
+                Text("Syncing strap history…")
+                    .font(StrandFont.book(12.5, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+            .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+            .accessibilityElement(children: .combine)
             if chunks > 0 {
                 Text("\(chunks) chunks pulled")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textSecondary)
+                    .font(StrandFont.light(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textTertiary)
             }
         }
     }
@@ -224,23 +229,50 @@ struct DataPendingNote: View {
     var symbol: String = "sparkles"
 
     var body: some View {
-        StrandCard(padding: 20) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: symbol)
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.accent)
+        PendingNoteCard(title: Text(title), message: Text(message), symbol: symbol)
+    }
+}
+
+/// The v2 card behind `ComingSoon` and `DataPendingNote`: an icon tile, a 15 pt title and a 14 pt
+/// secondary line on the neutral card.
+private struct PendingNoteCard: View {
+    let title: Text
+    let message: Text
+    let symbol: String
+
+    var body: some View {
+        NoopCard {
+            HStack(alignment: .top, spacing: 14) {
+                NoopIconTile(Self.glyph(symbol))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title)
-                        .font(StrandFont.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    title
+                        .font(StrandFont.book(15, relativeTo: .body))
                         .foregroundStyle(StrandPalette.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(message)
-                        .font(StrandFont.subhead)
+                    message
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.top, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    /// Phosphor names pass straight through; the SF Symbol names older call sites pass map to their
+    /// nearest glyph, so the `symbol` parameter keeps its meaning for every caller.
+    static func glyph(_ symbol: String) -> String {
+        if PhIcon.exists(symbol) { return symbol }
+        switch symbol {
+        case "checkmark.circle", "checkmark.circle.fill": return "check-circle"
+        case "badge.plus.radiowaves.right", "antenna.radiowaves.left.and.right": return "broadcast"
+        case "clock", "clock.fill": return "clock"
+        case "arrow.down.circle", "square.and.arrow.down": return "download-simple"
+        case "moon", "moon.fill", "bed.double.fill": return "moon"
+        default: return "sparkle"
         }
     }
 }
@@ -266,3 +298,17 @@ extension EnvironmentValues {
         set { self[ScrollToTopSignalKey.self] = newValue }
     }
 }
+
+#if os(iOS) && DEBUG
+/// Applies `--demo-anchor` (see `DemoScreensV2.scrollAnchor`) to a scroll view. Screens that run their own
+/// `ScrollView` instead of `ScreenScaffold` can attach it too: `.modifier(DemoScrollAnchor())`.
+struct DemoScrollAnchor: ViewModifier {
+    func body(content: Content) -> some View {
+        if let anchor = DemoScreensV2.scrollAnchor {
+            content.defaultScrollAnchor(anchor)
+        } else {
+            content
+        }
+    }
+}
+#endif

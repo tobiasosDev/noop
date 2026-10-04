@@ -11,8 +11,8 @@ import StrandDesign
 //      We never reimplement the request: the bridge owns the type list, the entitlement checks, and
 //      arming live ingestion once granted.
 //
-// Presented as a sheet, mirroring ScoringGuideView's idiom: a fixed header with a close button, a
-// scrollable body, and a footer action bar. macOS has no HealthKit, so the permission step there
+// Presented as a sheet in the v2 sheet idiom: an overline and a close circle, a scrollable body under a
+// 28 pt title, and the step's action pinned at the bottom. macOS has no HealthKit, so the permission step there
 // reads as "this needs an iPhone" rather than offering a button that can't work, the same honest
 // reroute AppleHealthView already uses.
 //
@@ -37,196 +37,167 @@ struct AppleWatchSetupView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .background(NoopChromeSurface())
-            Divider().overlay(StrandPalette.hairline)
             ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    titleBlock
                     switch step {
                     case .intro:      introBody
                     case .permission: permissionBody
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
             #if os(iOS)
             // #697/#horizontal-swipe parity, see ScreenScaffold.
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             #endif
-            Divider().overlay(StrandPalette.hairline)
+            #if os(iOS) && DEBUG
+            .modifier(DemoScrollAnchor())
+            #endif
             footerBar
         }
         #if os(macOS)
         .frame(width: 560, height: 640)
+        .background(NoopSheetBackground())
         #else
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .noopSheetPresentation(largeFirst: true)
         #endif
-        .background(StrandPalette.surfaceBase)
     }
 
     // MARK: - Header / footer
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("APPLE WATCH").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                Text("Use NOOP with your watch").font(StrandFont.rounded(26, weight: .bold))
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Text(step == .intro ? "What to expect" : "Connect Apple Health")
-                    .font(StrandFont.caption)
-                    .foregroundStyle(StrandPalette.textSecondary)
-            }
+        HStack {
+            NoopOverline("Apple Watch")
             Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
+            NoopCircleButton("x", size: 34, accessibilityLabel: "Close", action: onClose)
         }
-        .padding(20)
+        .padding(.leading, 24)
+        .padding(.trailing, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 10)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Use NOOP with your watch")
+                .font(StrandFont.title1)
+                .tracking(-0.56)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(step == .intro ? "What to expect" : "Connect Apple Health")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder private var footerBar: some View {
-        switch step {
-        case .intro:
-            HStack {
-                Spacer()
+        Group {
+            switch step {
+            case .intro:
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) { step = .permission }
                 } label: {
-                    Text("Continue").frame(minWidth: 120).padding(.vertical, 4)
+                    Text("Continue")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(StrandPalette.accent)
+                .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
                 .keyboardShortcut(.defaultAction)
                 .accessibilityHint("Goes to the Apple Health permission step")
-            }
-            .padding(16)
-        case .permission:
-            HStack(spacing: 12) {
-                Button("Back") {
-                    withAnimation(.easeInOut(duration: 0.2)) { step = .intro }
-                }
-                .buttonStyle(.bordered)
-                .tint(StrandPalette.accent)
-                Spacer()
-                #if os(iOS)
-                if health.auth == .authorized {
-                    Button {
-                        onClose()
-                    } label: {
-                        Text("Done").frame(minWidth: 120).padding(.vertical, 4)
+            case .permission:
+                HStack(spacing: 10) {
+                    Button("Back") {
+                        withAnimation(.easeInOut(duration: 0.2)) { step = .intro }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(StrandPalette.accent)
-                    .keyboardShortcut(.defaultAction)
-                } else {
-                    Button("Not now") { onClose() }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                    .buttonStyle(NoopButtonStyle(.secondary, fullWidth: true))
+                    #if os(iOS)
+                    if health.auth == .authorized {
+                        Button {
+                            onClose()
+                        } label: {
+                            Text("Done")
+                        }
+                        .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Not now") { onClose() }
+                            .buttonStyle(NoopButtonStyle(.tertiary, fullWidth: true))
+                    }
+                    #else
+                    Button("Close") { onClose() }
+                        .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
+                    #endif
                 }
-                #else
-                Button("Close") { onClose() }
-                    .buttonStyle(.bordered)
-                    .tint(StrandPalette.accent)
-                #endif
             }
-            .padding(16)
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
     }
 
     // MARK: - Step 1: what to expect
 
     private var introBody: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-            NoopCard(tint: StrandPalette.accent) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "applewatch")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(StrandPalette.accent)
-                            .frame(width: 34, height: 34)
-                            .background(StrandPalette.accent.opacity(0.14),
-                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .accessibilityHidden(true)
-                        Text("Your watch, NOOP's brain")
-                            .font(StrandFont.headline)
-                            .foregroundStyle(StrandPalette.textPrimary)
-                        Spacer(minLength: 0)
-                    }
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            NoopHeroCard(glow: .ink, padding: 22) {
+                VStack(alignment: .leading, spacing: 14) {
+                    NoopIconBadge("Your watch, NOOP's brain", icon: "watch")
                     Text("No chest strap? No problem. NOOP can run off only your Apple Watch. It reads your watch's data through Apple Health and works out your Charge, Rest, Effort and Fitness Age right here on your phone. Everything stays on the device.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textSecondary)
+                        .font(StrandFont.light(14, relativeTo: .subheadline))
+                        .lineSpacing(3)
+                        .foregroundStyle(Color.white.opacity(0.8))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            goodAtCard
-            lighterCard
+            NoopSectionTitle("What it's great at")
+            NoopList {
+                bullet("bed", String(localized: "Sleep & Rest"),
+                       String(localized: "Apple's sleep stages are strong, and they drive your Rest score directly."))
+                bullet("person-simple-walk", String(localized: "Steps & workouts"),
+                       String(localized: "Steps, active energy and logged workouts feed your Effort. Dense and reliable."))
+                bullet("heartbeat", String(localized: "Fitness Age"),
+                       String(localized: "Built from the watch's cardio-fitness VO₂ max, the same number the Fitness app shows."))
+            }
+
+            NoopSectionTitle("Where it's lighter than a strap")
+            NoopList {
+                bullet("heart", String(localized: "Recovery takes about a week"),
+                       String(localized: "A watch samples your heart-rate variability rather than streaming it all night, so your Charge score needs roughly seven nights to calibrate. Until then NOOP shows \u{201C}needs more data\u{201D}, never a guessed number."))
+                bullet("thermometer", String(localized: "A couple of metrics depend on your model"),
+                       String(localized: "Wrist temperature needs Series 8 or later, and the newest US units dropped the blood-oxygen sensor. Where a sensor isn't there, NOOP reads \u{201C}not available\u{201D} instead of zero."))
+            }
 
             Text("Want the full breakdown of every metric and how sure NOOP is about each one? The \u{201C}About Apple Watch data\u{201D} page in Settings has the honest table.")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
-        }
-    }
-
-    private var goodAtCard: some View {
-        NoopCard(tint: StrandPalette.statusPositive) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("WHAT IT'S GREAT AT").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.statusPositive)
-                bullet("bed.double.fill", String(localized: "Sleep & Rest"),
-                       String(localized: "Apple's sleep stages are strong, and they drive your Rest score directly."))
-                bullet("figure.walk", String(localized: "Steps & workouts"),
-                       String(localized: "Steps, active energy and logged workouts feed your Effort. Dense and reliable."))
-                bullet("bolt.heart.fill", String(localized: "Fitness Age"),
-                       String(localized: "Built from the watch's cardio-fitness VO₂ max, the same number the Fitness app shows."))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var lighterCard: some View {
-        NoopCard(tint: StrandPalette.statusWarning) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("WHERE IT'S LIGHTER THAN A STRAP").font(StrandFont.overline)
-                    .tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.statusWarning)
-                bullet("heart.fill", String(localized: "Recovery takes about a week"),
-                       String(localized: "A watch samples your heart-rate variability rather than streaming it all night, so your Charge score needs roughly seven nights to calibrate. Until then NOOP shows \u{201C}needs more data\u{201D}, never a guessed number."))
-                bullet("drop.degreesign", String(localized: "A couple of metrics depend on your model"),
-                       String(localized: "Wrist temperature needs Series 8 or later, and the newest US units dropped the blood-oxygen sensor. Where a sensor isn't there, NOOP reads \u{201C}not available\u{201D} instead of zero."))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
         }
     }
 
     private func bullet(_ icon: String, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(StrandPalette.textSecondary)
-                .frame(width: 22)
-                .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 14) {
+            NoopIconTile(icon)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(StrandFont.subhead)
+                    .font(StrandFont.book(15, relativeTo: .body))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(detail)
-                    .font(StrandFont.footnote)
+                    .font(StrandFont.light(13, relativeTo: .footnote))
+                    .lineSpacing(2)
                     .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 15)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title). \(detail)")
     }
@@ -235,23 +206,11 @@ struct AppleWatchSetupView: View {
 
     @ViewBuilder private var permissionBody: some View {
         #if os(iOS)
-        NoopCard(tint: StrandPalette.metricCyan) {
+        NoopCard {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "heart.text.square.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(StrandPalette.metricCyan)
-                        .frame(width: 30, height: 30)
-                        .background(StrandPalette.metricCyan.opacity(0.14),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .accessibilityHidden(true)
-                    Text("Connect Apple Health")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
+                NoopCardHeader("Connect Apple Health", icon: "heart") {
                     if health.auth == .authorized {
-                        StatePill(health.syncing ? "Syncing" : "Connected",
-                                  tone: .positive, pulsing: health.syncing)
+                        NoopPill(health.syncing ? "Syncing" : "Connected", compact: true)
                     }
                 }
 
@@ -286,7 +245,7 @@ struct AppleWatchSetupView: View {
                         // arming continuous live ingestion once granted. We just trigger it.
                         Task { await health.requestAuthorization() }
                     } label: {
-                        Label("Allow Apple Health access", systemImage: "heart.fill")
+                        Label { Text("Allow Apple Health access") } icon: { PhIcon("heart", weight: .fill, size: 15) }
                     }
                     .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
                     .accessibilityHint("Shows the Apple Health permission sheet")
@@ -319,17 +278,9 @@ struct AppleWatchSetupView: View {
         }
         #else
         // macOS has no HealthKit at all. Be honest: the watch path is an iPhone feature.
-        NoopCard(tint: StrandPalette.metricCyan) {
+        NoopCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "iphone")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(StrandPalette.metricCyan)
-                        .accessibilityHidden(true)
-                    Text("Set this up on your iPhone")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
+                NoopCardHeader("Set this up on your iPhone", icon: "device-mobile") { EmptyView() }
                 Text("Apple Health lives on the iPhone, not the Mac, so connecting your Apple Watch happens there. Open NOOP on your iPhone, head to Settings, and run this same Apple Watch setup. Your scores then show up across your devices.")
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)

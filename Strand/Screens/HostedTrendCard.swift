@@ -69,8 +69,9 @@ enum HostedTrendData {
 
 /// One Trends metric trend, rendered as a Today host card (#today-hosted-cards).
 ///
-/// Draws the same `ChartCard` + `TrendChart` pair the Trends tab draws, from the same resolved points,
-/// so the hosted copy cannot become a second chart of the same numbers.
+/// Built from the SAME resolved points the Trends tab plots (`HostedTrendData`), so the hosted copy cannot
+/// become a second, drifting chart of the same numbers. Drawn as the v2 chart card Today uses for its own
+/// vitals: the `.ct` header with the window average, the area line, and the latest / low / high row.
 ///
 /// What it does NOT carry is the range selector. A home-screen card has nowhere to put one and no place
 /// to persist a per-card choice, so each takes a fixed trailing month and keeps the tab's widening
@@ -87,18 +88,18 @@ struct HostedTrendCard: View {
         switch card {
         case .trendHRV:
             chart(title: "Heart rate variability", unit: "ms",
-                  colour: StrandPalette.metricPurple, fallback: 20...120, value: { $0.avgHrv },
+                  fallback: 20...120, value: { $0.avgHrv },
                   fmt: { "\(Int($0.rounded()))" })
         case .trendRestingHR:
             chart(title: "Resting heart rate", unit: "bpm",
-                  colour: StrandPalette.metricRose, fallback: 40...90, value: { $0.restingHr.map(Double.init) },
+                  fallback: 40...90, value: { $0.restingHr.map(Double.init) },
                   fmt: { "\(Int($0.rounded()))" })
         case .trendEffort:
             // Plotted on the stored 0-100 axis so the line's shape is scale-independent; only the
             // printed numbers follow the Effort-scale toggle, converted inside `fmt`, exactly as the
             // Trends tab does it (#268).
             chart(title: "Effort", unit: "/ \(UnitFormatter.effortScaleMax(effortScale))",
-                  colour: StrandPalette.effortColor, fallback: 0...100, value: { $0.strain },
+                  fallback: 0...100, value: { $0.strain },
                   fmt: { UnitFormatter.effortDisplay($0, scale: effortScale) })
         default:
             EmptyView()
@@ -106,7 +107,7 @@ struct HostedTrendCard: View {
     }
 
     @ViewBuilder
-    private func chart(title: LocalizedStringKey, unit: String, colour: Color,
+    private func chart(title: LocalizedStringKey, unit: String,
                        fallback: ClosedRange<Double>,
                        value: @escaping (DailyMetric) -> Double?,
                        fmt: @escaping (Double) -> String) -> some View {
@@ -116,17 +117,34 @@ struct HostedTrendCard: View {
         // The unit rides with the average. The Trends tab carries it in a footer of min/mean/max, which
         // a home-screen card has no room for, so without this the number would appear bare.
         let trailing = avg.map { "\(fmt($0)) \(unit)" }
-        ChartCard(title: title, subtitle: nil, trailing: trailing,
-                  height: NoopMetrics.chartHeight, tint: colour) {
-            TrendChart(points: pts,
-                       gradient: Gradient(colors: [colour.opacity(0.35), colour]),
-                       valueRange: HostedTrendData.valueRange(pts, fallback: fallback),
-                       showsArea: true,
-                       // Hover OFF. The card sits inside a NavigationLink, so a scrubbing gesture here
-                       // would compete with the tap that opens the metric — the same conflict that
-                       // keeps the tap-to-log card out of the navigation map. The Trends tab keeps the
-                       // scrub; the Today host mirrors only the display, as the hosted Stages card does.
-                       showsHover: false)
+        NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopCardHeader(title, icon: card.customizationIcon) {
+                    if let trailing { Text(verbatim: windowCaption(resolved.effective, average: trailing)) }
+                }
+                if pts.count > 1 {
+                    NoopAreaChart(values: pts.map(\.value),
+                                  range: HostedTrendData.valueRange(pts, fallback: fallback),
+                                  line: StrandPalette.metricCyan, fill: StrandPalette.effortColor,
+                                  cursor: 1)
+                        .frame(height: 70)
+                        .padding(.top, 16)
+                    axis(pts).padding(.top, 8)
+                } else {
+                    Text("Needs a second day of data to draw a line.")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.top, 14)
+                }
+                if let latest = pts.last, let lo = pts.map(\.value).min(), let hi = pts.map(\.value).max() {
+                    NoopMetricRow {
+                        NoopMetric(value: fmt(latest.value), unit: unit, label: "Latest")
+                        NoopMetric(value: fmt(lo), unit: unit, label: "Low")
+                        NoopMetric(value: fmt(hi), unit: unit, label: "High")
+                    }
+                    .padding(.top, 16)
+                }
+            }
         }
         .accessibilityElement(children: .combine)
         // The average goes into the spoken label, not just the visible corner. `children: .combine`
@@ -137,4 +155,30 @@ struct HostedTrendCard: View {
         .accessibilityLabel(trailing.map { Text(title) + Text(verbatim: ", \($0)") } ?? Text(title))
     }
 
+    /// "30-day avg · 64 ms", naming the window the tab's widening fallback actually settled on.
+    private func windowCaption(_ range: TrendsView.Range, average: String) -> String {
+        if let n = range.days { return String(localized: "\(n)-day avg · \(average)") }
+        return String(localized: "All-time avg · \(average)")
+    }
+
+    /// The first and last plotted day under the line. Days are banked in UTC, so they are printed in UTC
+    /// too, or a wearer west of Greenwich would see every label a day early.
+    private func axis(_ pts: [TrendPoint]) -> some View {
+        HStack {
+            if let first = pts.first { Text(verbatim: Self.axisFormatter.string(from: first.date)) }
+            Spacer(minLength: 8)
+            if let last = pts.last { Text(verbatim: Self.axisFormatter.string(from: last.date)) }
+        }
+        .font(StrandFont.footnote)
+        .foregroundStyle(StrandPalette.textTertiary)
+        .accessibilityHidden(true)
+    }
+
+    private static let axisFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = AppLanguage.activeLocale
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.setLocalizedDateFormatFromTemplate("dMMM")
+        return f
+    }()
 }

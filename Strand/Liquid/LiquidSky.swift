@@ -241,9 +241,26 @@ struct LiquidScaffoldSky: View {
         if backgroundStore.isActive {
             BackgroundImageBackdrop()
         } else if showDayCycleBackground {
-            LiquidSkyStatic(hour: nil, settleStrength: skyBehindCards ? 0.78 : 1)
-                .frame(maxWidth: .infinity, maxHeight: skyBehindCards ? .infinity : nil)
-                .frame(height: skyBehindCards ? nil : height, alignment: .top)
+            // v2: the ground is true black; the day-cycle setting no longer paints a sky, it only lets
+            // the ground warm slightly after sunset (the "Day-cycle background" row in Appearance).
+            V2GroundWarmth(height: height)
+        }
+    }
+}
+
+/// The v2 day-cycle treatment: between sunset and sunrise a faint ember warmth rises into the top of the
+/// black ground; by day the ground stays pure black. Static (no timeline), so it costs nothing per frame.
+struct V2GroundWarmth: View {
+    var height: CGFloat = 240
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let hour = Calendar.current.component(.hour, from: Date())
+        if scheme == .dark && (hour >= 19 || hour < 6) {
+            LinearGradient(colors: [Color(hex: "#110C07"), Color(hex: "#110C07").opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: height + 120)
+                .frame(maxWidth: .infinity, alignment: .top)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }

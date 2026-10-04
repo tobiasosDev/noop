@@ -1,93 +1,121 @@
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
-// MARK: - Strand Typography (§9.2)
+// MARK: - Strand Typography (v2)
 //
-// SF Rounded follows the supplied reference's friendly Apple-native geometry. Tabular digits keep live
-// metrics stable, while named text styles retain Dynamic Type scaling. SF Mono remains reserved for logs.
+// Two bundled faces (see `NoopFonts`):
+// - Hanken Grotesk — every word in the app. Light (300) for headlines and body, Book (400) for titles
+//   and values, Medium (500) for buttons. Weights requested through the old `Font.Weight` API are
+//   shifted one step lighter (regular → 300, medium/semibold → 400, bold → 500), which is what turns the
+//   existing call sites into the v2 voice without touching each of them.
+// - Doto — the dot-matrix face, for hero numbers (score, %, strain, stress level) and the inline status
+//   tags. Always weight 600–700 with fully round dots.
 //
-// All numeric styles use `.monospacedDigit()` so live values don't reflow.
+// Named text styles scale with Dynamic Type (`relativeTo:`). Numeric styles request tabular figures so
+// live values never reflow. SF Mono stays reserved for logs.
 
 public enum StrandFont {
 
-    // MARK: Family
+    // MARK: Weight mapping
 
-    private static func roundedSystem(_ size: CGFloat, weight: Font.Weight) -> Font {
-        .system(size: size, weight: weight, design: .rounded)
+    /// The v2 Hanken weight for a legacy `Font.Weight`: one step lighter than the name says.
+    static func sansWeight(_ weight: Font.Weight) -> CGFloat {
+        switch weight {
+        case .ultraLight, .thin: return 200
+        case .light, .regular:   return 300
+        case .medium, .semibold: return 400
+        case .bold, .heavy:      return 500
+        case .black:             return 600
+        default:                 return 300
+        }
     }
 
-    // MARK: Scale (§9.2)
+    private static func sans(_ size: CGFloat, _ weight: CGFloat, relativeTo style: Font.TextStyle? = nil,
+                             tabular: Bool = false) -> Font {
+        NoopFonts.font(.sans, size: size, weight: weight, relativeTo: style, tabular: tabular)
+    }
 
-    /// Display 64–80 / Bold — the gauge score number. Helvetica Neue 700 with tight
-    /// tracking (≈ -0.04em), tabular digits so a changing value never reflows.
+    // MARK: v2 faces — reach for these in new layouts
+
+    /// Hanken Grotesk Light (300): headlines, body copy, captions.
+    public static func light(_ size: CGFloat, relativeTo style: Font.TextStyle? = nil) -> Font {
+        sans(size, 300, relativeTo: style)
+    }
+
+    /// Hanken Grotesk Book (400): card titles, list-row titles, metric values.
+    public static func book(_ size: CGFloat, relativeTo style: Font.TextStyle? = nil) -> Font {
+        sans(size, 400, relativeTo: style)
+    }
+
+    /// Hanken Grotesk Medium (500): buttons and the few emphasised labels.
+    public static func medium(_ size: CGFloat, relativeTo style: Font.TextStyle? = nil) -> Font {
+        sans(size, 500, relativeTo: style)
+    }
+
+    /// Hanken Grotesk at an explicit v2 weight (300/400/500) with tabular figures — live numbers.
+    public static func value(_ size: CGFloat, weight: CGFloat = 400, relativeTo style: Font.TextStyle? = nil) -> Font {
+        sans(size, weight, relativeTo: style, tabular: true)
+    }
+
+    /// Doto, the dot-matrix face, with round dots: hero numbers (44–112 pt) at weight 600.
+    public static func dot(_ size: CGFloat, weight: CGFloat = 600) -> Font {
+        NoopFonts.font(.dot, size: size, weight: weight)
+    }
+
+    /// The dot-matrix letter spacing (+0.04 em) that the hero numbers carry.
+    public static func dotTracking(_ size: CGFloat) -> CGFloat { size * 0.04 }
+
+    // MARK: Scale (legacy names, v2 values)
+
+    /// Display — the hero score number, now set in the dot-matrix face. Pair with `displayTracking`.
     public static func display(_ size: CGFloat = 72) -> Font {
-        roundedSystem(size, weight: .bold).monospacedDigit()
+        dot(size)
     }
 
-    /// The tight tracking for big display numbers (≈ -0.04em). Apply alongside
-    /// `display(_:)` at the use site, e.g. `.tracking(StrandFont.displayTracking(72))`.
+    /// Tracking for `display(_:)` — the dot face reads best slightly open (+0.04 em).
     public static func displayTracking(_ size: CGFloat = 72) -> CGFloat {
-        -size * 0.04
+        dotTracking(size)
     }
 
-    /// A Helvetica-Neue numeric style at an arbitrary size/weight — the house
-    /// numeral. Tabular so live values align. Use anywhere a score/number is shown.
+    /// A numeric style at an arbitrary size/weight — Hanken, tabular, one weight step lighter.
     public static func rounded(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
-        roundedSystem(size, weight: weight).monospacedDigit()
+        sans(size, sansWeight(weight), tabular: true)
     }
 
-    /// Title1 28 / Bold. Scales with Dynamic Type.
-    public static let title1 = Font.system(.title, design: .rounded, weight: .bold)
+    /// Large title for tab roots ("Trends", "More") — 34 / Light.
+    public static var largeTitle: Font { sans(34, 300, relativeTo: .largeTitle) }
 
-    /// Title2 22 / Semibold. Scales with Dynamic Type.
-    public static let title2 = Font.system(.title2, design: .rounded, weight: .semibold)
+    /// Title1 — 28 / Light (the v2 `h1`). Scales with Dynamic Type.
+    public static var title1: Font { sans(28, 300, relativeTo: .title) }
 
-    /// Headline 17 / Semibold. Scales with Dynamic Type.
-    public static let headline = Font.system(.headline, design: .rounded, weight: .semibold)
+    /// Title2 — 21 / Book (the v2 section title). Scales with Dynamic Type.
+    public static var title2: Font { sans(21, 400, relativeTo: .title2) }
 
-    /// Body 15 / Regular. Scales with Dynamic Type.
-    public static let body = Font.system(.body, design: .rounded, weight: .regular)
+    /// Headline — 17 / Book (the v2 nav title). Scales with Dynamic Type.
+    public static var headline: Font { sans(17, 400, relativeTo: .headline) }
 
-    /// Subhead 13. Scales with Dynamic Type.
-    public static let subhead = Font.system(.subheadline, design: .rounded, weight: .regular)
+    /// Body — 15 / Light. Scales with Dynamic Type.
+    public static var body: Font { sans(15, 300, relativeTo: .body) }
 
-    /// Caption 12. Scales with Dynamic Type.
-    public static let caption = Font.system(.caption, design: .rounded, weight: .regular)
+    /// Subhead — 13.5 / Light (insight sentences, card copy). Scales with Dynamic Type.
+    public static var subhead: Font { sans(13.5, 300, relativeTo: .subheadline) }
 
-    /// Footnote 11. Scales with Dynamic Type.
-    public static let footnote = Font.system(.footnote, design: .rounded, weight: .regular)
+    /// Caption — 12 / Light. Scales with Dynamic Type.
+    public static var caption: Font { sans(12, 300, relativeTo: .caption) }
 
-    /// Overline 11 / Bold, +1.4 tracking (apply `.tracking(1.4)` at use site;
-    /// `overlineText(_:)` does it for you). Sparing ALL-CAPS labels. Scales with Dynamic Type.
+    /// Footnote — 11 / Light (the v2 `cap`). Scales with Dynamic Type.
+    public static var footnote: Font { sans(11, 300, relativeTo: .footnote) }
+
+    /// Overline — 11 / Book, worn uppercase with +0.12 em tracking (`strandOverline()` does both).
     ///
     /// Also the face for compact status copy in constrained chrome (the Today header's sync capsule),
     /// used there WITHOUT the tracking — that is sentence case, not an overline, and the letter-spacing
     /// is what makes an overline read as one.
-    public static let overline = Font.system(.caption2, design: .rounded, weight: .semibold)
+    public static var overline: Font { sans(11, 400, relativeTo: .caption2) }
 
-    /// `overline` at a custom point size — same Helvetica face, weight and Dynamic-Type scaling
-    /// (relativeTo `.caption2`), just smaller. Passing 11 returns exactly `.overline`. Lets a caller
-    /// shrink an ALL-CAPS label to fit a small container without losing accessibility text-scaling.
+    /// `overline` at a custom point size — same face, weight and Dynamic-Type scaling (relative to
+    /// `.caption2`). Lets a caller shrink an ALL-CAPS label to fit a small container.
     public static func overlineScaled(_ size: CGFloat) -> Font {
-        #if canImport(UIKit)
-        let base = UIFont.systemFont(ofSize: size, weight: .semibold)
-        let descriptor = base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor
-        let rounded = UIFont(descriptor: descriptor, size: size)
-        return Font(UIFontMetrics(forTextStyle: .caption2).scaledFont(for: rounded))
-        #elseif canImport(AppKit)
-        let base = NSFont.systemFont(ofSize: size, weight: .semibold)
-        guard let descriptor = base.fontDescriptor.withDesign(.rounded),
-              let rounded = NSFont(descriptor: descriptor, size: size) else {
-            return Font(base)
-        }
-        return Font(rounded)
-        #else
-        return roundedSystem(size, weight: .semibold)
-        #endif
+        sans(size, 400, relativeTo: .caption2)
     }
 
     /// Mono 13 (SF Mono) — raw / log views. Tabular by nature.
@@ -95,37 +123,35 @@ public enum StrandFont {
 
     // MARK: Numeric variants (tabular digits)
 
-    /// A numeric style at an arbitrary size/weight, for live values — Helvetica
-    /// Neue, tabular digits. This is the tile/value numeral.
+    /// A numeric style at an arbitrary size/weight for live values — Hanken, tabular figures.
     public static func number(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        roundedSystem(size, weight: weight).monospacedDigit()
+        sans(size, sansWeight(weight), tabular: true)
     }
 
-    /// Helvetica-Neue body number — for inline live values that should align. Scales with Dynamic
-    /// Type alongside its sibling `body`/`caption` labels so a value and its label stay matched.
-    public static let bodyNumber = Font.system(.body, design: .rounded, weight: .medium).monospacedDigit()
+    /// Body number — inline live values beside `body` labels. Scales with Dynamic Type.
+    public static var bodyNumber: Font { sans(15, 400, relativeTo: .body, tabular: true) }
 
-    /// Helvetica-Neue caption number — for small live values (sparklines, chips). Scales with Dynamic Type.
-    public static let captionNumber = Font.system(.caption, design: .rounded, weight: .medium).monospacedDigit()
+    /// Caption number — small live values (sparklines, chips). Scales with Dynamic Type.
+    public static var captionNumber: Font { sans(12, 400, relativeTo: .caption, tabular: true) }
 
     /// Mono at an arbitrary size.
     public static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
     }
 
-    /// The recommended tracking for overline text (wide ALL-CAPS labels, ≈ 0.13em).
-    public static let overlineTracking: CGFloat = 0.45
+    /// The tracking for overline text (wide ALL-CAPS labels, ≈ 0.12 em at 11 pt).
+    public static let overlineTracking: CGFloat = 1.3
 }
 
 // MARK: - Text helpers
 
 public extension Text {
-    /// Style as an overline label: ALL-CAPS, bold, +1.4 tracking, tertiary text.
+    /// Style as an overline label: ALL-CAPS, Book 11, +0.12 em tracking, tertiary ink (the v2 `.over`).
     func strandOverline() -> some View {
         self.font(StrandFont.overline)
             .tracking(StrandFont.overlineTracking)
             .textCase(.uppercase)
-            .foregroundStyle(StrandPalette.textSecondary)
+            .foregroundStyle(StrandPalette.textTertiary)
     }
 }
 
@@ -140,27 +166,26 @@ public extension View {
 #Preview("Typography") {
     ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-            Text("88").font(StrandFont.display(72)).tracking(StrandFont.displayTracking(72)).foregroundStyle(StrandPalette.textPrimary)
-            Text("Title 1 / Bold 28").font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
-            Text("Title 2 / Semibold 22").font(StrandFont.title2).foregroundStyle(StrandPalette.textPrimary)
-            Text("Headline / Semibold 17").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-            Text("Body / Regular 15 — the thread of you, read in full.")
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("78").font(StrandFont.dot(104)).tracking(StrandFont.dotTracking(104))
+                Text("%").font(StrandFont.dot(44))
+            }
+            .foregroundStyle(StrandPalette.textPrimary)
+            Text("Recovered and ready.").font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
+            Text("Health parameters").font(StrandFont.title2).foregroundStyle(StrandPalette.textPrimary)
+            Text("Sleep").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
+            Text("Body / Light 15 — the thread of you, read in full.")
                 .font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
-            Text("Subhead 13").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+            Text("Subhead 13.5").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
             Text("Caption 12").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
             Text("Footnote 11").font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
             Text("Overline").strandOverline()
             Text("0xAA 41 00 1c crc32=f3a1  mono 13").font(StrandFont.mono).foregroundStyle(StrandPalette.textSecondary)
-            HStack(spacing: 4) {
-                Text("HRV").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
-                Text("62").font(StrandFont.bodyNumber).foregroundStyle(StrandPalette.textPrimary)
-                Text("ms").font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
-            }
         }
         .padding(28)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(width: 520, height: 620)
+    .frame(width: 520, height: 680)
     .background(StrandPalette.surfaceBase)
     .preferredColorScheme(.dark)
 }

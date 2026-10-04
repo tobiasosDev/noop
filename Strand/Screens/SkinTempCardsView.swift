@@ -19,8 +19,8 @@ import StrandAnalytics
 //   • HeadsUpCard          — IllnessSignalEngine.Result. The confounder-suppressed illness
 //                            "heads-up". On-device estimate — not a diagnosis.
 //
-// DESIGN-SYSTEM ONLY: NoopCard + DomainTheme/StrandPalette tokens, StrandFont, NoopMetrics,
-// ScoreStatePill, the house buttons. No raw hex, no ad-hoc cards. Privacy-forward copy:
+// DESIGN-SYSTEM ONLY: the v2 kit (NoopCard, NoopCardHeader, PhIcon, ScoreStatePill, the house
+// buttons) on neutral grey-black cards. No raw hex, no ad-hoc cards. Privacy-forward copy:
 // there is no upload or sync path, and every sensitive surface names the user-exported
 // backup exception.
 //
@@ -40,9 +40,9 @@ private struct PrivacyNote: View {
     var text: String = skinTempPrivacyLine
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 9, weight: .semibold))
+            PhIcon("lock-simple", size: 11)
                 .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.top, 1)
                 .accessibilityHidden(true)
             Text(text)
                 .font(StrandFont.footnote)
@@ -78,7 +78,7 @@ struct CycleAwarenessCard: View {
     private var hue: Color { StrandPalette.restColor }
 
     var body: some View {
-        NoopCard(tint: hue) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 header
 
@@ -86,10 +86,9 @@ struct CycleAwarenessCard: View {
                 phaseHeadline
 
                 if !curve.isEmpty, curve.count > 1 {
-                    Sparkline(values: curve,
-                              gradient: Gradient(colors: [hue.opacity(0.4), StrandPalette.restBright]),
-                              showsHover: false)
-                        .frame(height: 30)
+                    NoopAreaChart(values: curve, line: StrandPalette.metricCyan, fill: StrandPalette.effortColor,
+                                  cursor: 1)
+                        .frame(height: 34)
                         .accessibilityHidden(true)
                 }
 
@@ -105,7 +104,7 @@ struct CycleAwarenessCard: View {
 
                 actions
 
-                Divider().overlay(StrandPalette.hairline)
+                Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
 
                 // The standing awareness-only legal line (verbatim from the engine) + privacy promise.
                 Text(String(localized: "For awareness only. Not a medical device, not contraception, not a substitute for professional care."))
@@ -130,15 +129,14 @@ struct CycleAwarenessCard: View {
     // MARK: pieces
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Cycle awareness").strandOverline()
-                Text("From your nightly temperature")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+        VStack(alignment: .leading, spacing: 4) {
+            NoopCardHeader("Cycle awareness", icon: "drop-half") {
+                ScoreStatePill(scoreState, text: confidenceLabel)
             }
-            Spacer()
-            ScoreStatePill(scoreState, text: confidenceLabel)
+            Text("From your nightly temperature")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.leading, 24)
         }
     }
 
@@ -149,7 +147,7 @@ struct CycleAwarenessCard: View {
                 .foregroundStyle(StrandPalette.textPrimary)
             if let dayText = cycleDayText {
                 Text(dayText)
-                    .font(StrandFont.bodyNumber)
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
                     .foregroundStyle(StrandPalette.textSecondary)
             }
             Spacer(minLength: 0)
@@ -160,10 +158,10 @@ struct CycleAwarenessCard: View {
 
     private func nextPeriodRow(_ window: CyclePhaseEngine.NextPeriodWindow) -> some View {
         // A probabilistic WINDOW, never a single confident date — the copy reflects that.
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "calendar")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(hue)
+        HStack(alignment: .top, spacing: 10) {
+            PhIcon("calendar", size: 15)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .padding(.top, 1)
                 .accessibilityHidden(true)
             Text("A period is likely between \(prettyDay(window.earliestDay)) and \(prettyDay(window.latestDay)) (a window, not a fixed date).")
                 .font(StrandFont.subhead)
@@ -238,35 +236,26 @@ struct CycleAwarenessCard: View {
 
 // MARK: - Cycle awareness opt-in (empty / disabled states)
 
-/// Shown in place of `CycleAwarenessCard` when the user has NOT opted in. A single calm
-/// opt-in card restating the privacy promise at the point of consent (manual-first; default OFF).
+/// Shown in place of `CycleAwarenessCard` when the user has NOT opted in: the `.insight` line at the foot
+/// of the Health skin-temperature card (hairline above), restating the privacy promise at the point of
+/// consent, with the opt-in button (manual-first; default OFF). Card-less, because it sits inside that card.
 struct CycleAwarenessOptInCard: View {
     /// Toggles cycle awareness ON (the host persists the preference, default OFF).
     var onEnable: () -> Void
 
     var body: some View {
-        NoopCard(tint: StrandPalette.restColor) {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                HStack(spacing: 8) {
-                    Image(systemName: "drop.degreesign")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(StrandPalette.restColor)
-                        .accessibilityHidden(true)
-                    Text("Cycle awareness")
-                        .font(StrandFont.headline)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    Spacer()
-                }
-                Text("NOOP can read a coarse menstrual-cycle phase from your nightly skin temperature, entirely on your device. It is awareness only: not contraception, not a fertility predictor, not a medical service.")
-                    .font(StrandFont.subhead)
-                    .foregroundStyle(StrandPalette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                PrivacyNote()
-                Button("Turn on cycle awareness", action: onEnable)
-                    .buttonStyle(.noopSecondary)
-                    .padding(.top, 2)
-            }
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            NoopInsightRow(text: Text("Cycle awareness is off.") + Text(verbatim: " ")
+                + Text("NOOP can read a coarse menstrual-cycle phase from your nightly skin temperature, entirely on your device. It is awareness only: not contraception, not a fertility predictor, not a medical service."),
+                           icon: "info")
+            PrivacyNote()
+                .padding(.leading, 30)
+            Button("Turn on cycle awareness", action: onEnable)
+                .buttonStyle(.noopSecondary)
+                .padding(.leading, 30)
         }
+        .padding(.top, 14)
+        .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
         .accessibilityElement(children: .contain)
     }
 }
@@ -296,22 +285,14 @@ struct MenstrualCycleHomeCard: View {
     var body: some View {
         Group {
             if shouldShow {
-                NoopCard(tint: StrandPalette.restColor) {
+                NoopCard {
                     VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                        HStack(spacing: NoopMetrics.space2) {
-                            Image(systemName: "drop.degreesign")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(StrandPalette.restColor)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Menstrual Cycle")
-                                    .font(StrandFont.headline)
-                                    .foregroundStyle(StrandPalette.textPrimary)
-                                Text("Private, on-device tracking")
-                                    .font(StrandFont.footnote)
-                                    .foregroundStyle(StrandPalette.textTertiary)
-                            }
-                            Spacer()
+                        VStack(alignment: .leading, spacing: 4) {
+                            NoopCardHeader("Menstrual Cycle", icon: "drop-half")
+                            Text("Private, on-device tracking")
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                                .padding(.leading, 24)
                         }
 
                         if cycleEnabled {
@@ -328,24 +309,24 @@ struct MenstrualCycleHomeCard: View {
                                     // (`~day %lld` / `~day %lld-%lld`); a ternary of Strings would take the
                                     // verbatim `Text(_:)` init and ship English regardless of locale.
                                     (lo == hi ? Text("~day \(lo)") : Text("~day \(lo)-\(hi)"))
-                                        .font(StrandFont.bodyNumber)
+                                        .font(StrandFont.light(14, relativeTo: .subheadline))
                                         .foregroundStyle(StrandPalette.textSecondary)
                                 }
                             }
                         } else {
                             Text("Log period starts locally and use them to anchor optional cycle estimates.")
-                                .font(StrandFont.subhead)
+                                .font(StrandFont.light(14, relativeTo: .subheadline))
                                 .foregroundStyle(StrandPalette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
                         HStack {
                             Text("Latest period start")
-                                .font(StrandFont.subhead)
+                                .font(StrandFont.light(13.5, relativeTo: .subheadline))
                                 .foregroundStyle(StrandPalette.textSecondary)
                             Spacer()
                             Text(starts.last.map(prettyDay) ?? String(localized: "No period starts logged yet."))
-                                .font(StrandFont.bodyNumber)
+                                .font(StrandFont.book(14, relativeTo: .subheadline))
                                 .foregroundStyle(starts.isEmpty ? StrandPalette.textTertiary : StrandPalette.textPrimary)
                                 .multilineTextAlignment(.trailing)
                         }
@@ -384,9 +365,20 @@ struct MenstrualCycleHomeCard: View {
                 if let result = model.cyclePhase {
                     CycleTrackerView(result: result, curve: model.cycleCurve)
                 } else {
-                    ProgressView("Preparing cycle tracker…")
-                        .task { await model.refreshV5Signals() }
-                        .padding(NoopMetrics.screenPadding)
+                    VStack(spacing: 12) {
+                        ProgressView().tint(StrandPalette.textSecondary)
+                        Text("Preparing cycle tracker…")
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(StrandPalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task { await model.refreshV5Signals() }
+                    .padding(NoopMetrics.screenPadding)
+                    #if os(iOS)
+                    .noopSheetPresentation(largeFirst: true)
+                    #else
+                    .background(NoopSheetBackground())
+                    #endif
                 }
             }
         }
@@ -451,58 +443,64 @@ struct CycleTrackerView: View {
     private var alreadyLogged: Bool { starts.contains(selectedDay) }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                    SectionHeader("Cycle tracker", overline: "Period-start history")
-                    statusCard
-                    logCard
-                    historyCard
-                    VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                        Text(String(localized: "For awareness only. Not a medical device, not contraception, not a substitute for professional care."))
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                        PrivacyNote()
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                // The back circle closes the sheet (the v2 convention for every presented screen).
+                NoopScreenHeader(verbatim: "") { EmptyView() }
+                NoopPageTitle("Cycle tracker", subtitle: "Period-start history")
+                    .padding(.top, 6)
+                    .padding(.bottom, 10)
+                statusCard
+                logCard
+                historySection
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    Text(String(localized: "For awareness only. Not a medical device, not contraception, not a substitute for professional care."))
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                    PrivacyNote()
                 }
-                .padding(NoopMetrics.screenPadding)
+                .padding(.horizontal, 4)
+                .padding(.top, 6)
             }
-            #if os(iOS)
-            // #697/#horizontal-swipe parity, see ScreenScaffold.
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-            #endif
-            .background(StrandPalette.surfaceBase)
-            .navigationTitle("Cycle tracker")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .task(id: repo.cycleTrackingSeq) { starts = await repo.periodStarts() }
-            .confirmationDialog("Delete all logged period starts?",
-                                isPresented: $confirmDeleteAll,
-                                titleVisibility: .visible) {
-                Button("Delete all period history", role: .destructive) {
-                    Task {
-                        await repo.deleteAllPeriodStarts()
-                        await model.refreshV5Signals()
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This permanently removes the on-device period-start history. Sensor history is not changed.")
-            }
+            .padding(.horizontal, NoopMetrics.screenHPadding)
+            .padding(.top, 12)
+            .padding(.bottom, 30)
         }
-        #if os(macOS)
+        #if os(iOS)
+        // #697/#horizontal-swipe parity, see ScreenScaffold.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
+        .noopHidesSystemNavBar()
+        .task(id: repo.cycleTrackingSeq) { starts = await repo.periodStarts() }
+        .confirmationDialog("Delete all logged period starts?",
+                            isPresented: $confirmDeleteAll,
+                            titleVisibility: .visible) {
+            Button("Delete all period history", role: .destructive) {
+                Task {
+                    await repo.deleteAllPeriodStarts()
+                    await model.refreshV5Signals()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes the on-device period-start history. Sensor history is not changed.")
+        }
+        #if os(iOS)
+        .noopSheetPresentation(largeFirst: true)
+        #else
         .frame(minWidth: NoopMetrics.detailSheetMinWidth,
                minHeight: NoopMetrics.detailSheetMinHeight)
+        .background(NoopSheetBackground())
         #endif
     }
 
     private var statusCard: some View {
-        NoopCard(tint: StrandPalette.restColor) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                Text("Current estimate").strandOverline()
+                NoopCardHeader("Current estimate", icon: "drop-half")
                 HStack(alignment: .firstTextBaseline) {
                     Text(phaseTitle)
                         .font(StrandFont.title2)
@@ -512,15 +510,13 @@ struct CycleTrackerView: View {
                         // `Text` per branch → localized (`~day %lld` / `~day %lld-%lld`); a String ternary
                         // would take the verbatim init and never localize.
                         (lo == hi ? Text("~day \(lo)") : Text("~day \(lo)-\(hi)"))
-                            .font(StrandFont.bodyNumber)
+                            .font(StrandFont.light(14, relativeTo: .subheadline))
                             .foregroundStyle(StrandPalette.textSecondary)
                     }
                 }
                 if curve.count > 1 {
-                    Sparkline(values: curve,
-                              gradient: Gradient(colors: [StrandPalette.restColor.opacity(0.4),
-                                                          StrandPalette.restBright]),
-                              showsHover: false)
+                    NoopAreaChart(values: curve, line: StrandPalette.metricCyan, fill: StrandPalette.effortColor,
+                                  cursor: 1)
                         .frame(height: NoopMetrics.space10)
                         .accessibilityHidden(true)
                 }
@@ -528,7 +524,8 @@ struct CycleTrackerView: View {
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
                 if let window = result.nextPeriodWindow {
-                    Text("Likely period window: \(prettyDay(window.earliestDay))-\(prettyDay(window.latestDay)). This is a range, not a fixed date.")
+                    // Full month names: an abbreviated one ("16 Oct." in German) ran into the sentence's own full stop.
+                    Text("Likely period window: \(prettyDay(window.earliestDay, month: .wide))-\(prettyDay(window.latestDay, month: .wide)). This is a range, not a fixed date.")
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
@@ -537,12 +534,20 @@ struct CycleTrackerView: View {
     }
 
     private var logCard: some View {
-        NoopCard(tint: StrandPalette.restColor) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                Text("Log a period start").strandOverline()
-                DatePicker("Period started on", selection: $selectedDate, in: ...Date(),
-                           displayedComponents: .date)
-                    .font(StrandFont.body)
+                NoopCardHeader("Log a period start", icon: "calendar")
+                HStack(spacing: 12) {
+                    Text("Period started on")
+                        .font(StrandFont.book(15, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Spacer(minLength: 8)
+                    DatePicker("Period started on", selection: $selectedDate, in: ...Date(),
+                               displayedComponents: .date)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(StrandPalette.textPrimary)
+                }
                 Button(alreadyLogged
                        ? String(localized: "Already logged")
                        : String(localized: "Log period start")) {
@@ -551,7 +556,7 @@ struct CycleTrackerView: View {
                         await model.refreshV5Signals()
                     }
                 }
-                .buttonStyle(.noopSecondary)
+                .buttonStyle(NoopButtonStyle(.secondary, fullWidth: true))
                 .disabled(alreadyLogged)
                 Text("This optional date anchors cycle day 1 and is checked against your nightly temperature pattern.")
                     .font(StrandFont.footnote)
@@ -560,47 +565,49 @@ struct CycleTrackerView: View {
         }
     }
 
-    private var historyCard: some View {
-        NoopCard {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                HStack {
-                    Text("Logged starts").strandOverline()
-                    Spacer()
-                    if !starts.isEmpty {
-                        Button("Delete all") { confirmDeleteAll = true }
-                            .buttonStyle(.noopGhost)
-                            .foregroundStyle(StrandPalette.statusCritical)
-                    }
+    /// The logged day-1 dates as a `.list`, newest first, each with its own delete; the destructive
+    /// "delete all" sits apart at the very end so it cannot be hit while removing one date.
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            NoopSectionTitle("Logged starts") {
+                if !starts.isEmpty { Text(verbatim: "\(starts.count)") }
+            }
+            if starts.isEmpty {
+                NoopList {
+                    NoopRow("No period starts logged yet.", icon: "drop")
                 }
-                if starts.isEmpty {
-                    Text("No period starts logged yet.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                } else {
+            } else {
+                NoopList {
                     ForEach(starts.reversed(), id: \.self) { day in
-                        HStack {
-                            Image(systemName: "drop.fill")
-                                .foregroundStyle(StrandPalette.restColor)
-                                .accessibilityHidden(true)
-                            Text(prettyDay(day))
-                                .font(StrandFont.bodyNumber)
-                                .foregroundStyle(StrandPalette.textPrimary)
-                            Spacer()
+                        NoopRow(verbatim: prettyDay(day), icon: "drop") {
                             Button {
                                 Task {
                                     await repo.deletePeriodStart(day: day)
                                     await model.refreshV5Signals()
                                 }
                             } label: {
-                                Label("Delete \(prettyDay(day))", systemImage: "trash")
-                                    .labelStyle(.iconOnly)
+                                PhIcon("trash", size: 18)
+                                    .foregroundStyle(StrandPalette.textSecondary)
+                                    .frame(width: 34, height: 34)
+                                    .padding(5)
+                                    .contentShape(Rectangle())
+                                    .padding(-5)
                             }
-                            .buttonStyle(.noopGhost)
-                            .foregroundStyle(StrandPalette.statusCritical)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(Text("Delete \(prettyDay(day))"))
                         }
-                        if day != starts.first { Divider().overlay(StrandPalette.hairline) }
                     }
                 }
+                Button(role: .destructive) { confirmDeleteAll = true } label: {
+                    HStack(spacing: 8) {
+                        PhIcon("trash", size: 18)
+                        Text("Delete all period history").font(StrandFont.book(15))
+                    }
+                    .foregroundStyle(StrandPalette.statusCritical)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
             }
         }
     }
@@ -632,7 +639,7 @@ struct BodyClockCard: View {
     private var hue: Color { StrandPalette.restColor }
 
     var body: some View {
-        NoopCard(tint: hue) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                 header
 
@@ -645,9 +652,8 @@ struct BodyClockCard: View {
 
                 // The estimated temperature-minimum clock time — the canonical phase marker.
                 HStack(spacing: 6) {
-                    Image(systemName: "moon.stars")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(hue)
+                    PhIcon("moon-stars", size: 13)
+                        .foregroundStyle(StrandPalette.textSecondary)
                         .accessibilityHidden(true)
                     Text("Estimated body-clock low around \(clockString(estimate.tempMinHour))")
                         .font(StrandFont.footnote)
@@ -656,7 +662,7 @@ struct BodyClockCard: View {
                 .accessibilityElement(children: .combine)
 
                 if let plan, plan.direction != .none, let firstDay = plan.days.first {
-                    Divider().overlay(StrandPalette.hairline)
+                    Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
                     planSummary(plan, firstDay: firstDay)
                 }
 
@@ -675,15 +681,14 @@ struct BodyClockCard: View {
     // MARK: pieces
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Body clock").strandOverline()
-                Text("Light + sleep timing only")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+        VStack(alignment: .leading, spacing: 4) {
+            NoopCardHeader("Body clock", icon: "moon-stars") {
+                ScoreStatePill(scoreState, text: confidenceLabel)
             }
-            Spacer()
-            ScoreStatePill(scoreState, text: confidenceLabel)
+            Text("Light + sleep timing only")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.leading, 24)
         }
     }
 
@@ -697,8 +702,7 @@ struct BodyClockCard: View {
 
     private func planSummary(_ plan: CircadianEngine.JetLagPlan, firstDay: CircadianEngine.DayPlan) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Plan · \(plan.estimatedDays)-day shift")
-                .strandOverline()
+            NoopOverline("Plan · \(plan.estimatedDays)-day shift")
             // Day 1's concrete light + lights-out cue — light + sleep timing only.
             Text("Day 1: bright light \(clockString(firstDay.brightLightStartHour))-\(clockString(firstDay.brightLightEndHour)), lights-out around \(clockString(firstDay.targetSleepHour)).")
                 .font(StrandFont.subhead)
@@ -777,18 +781,18 @@ struct HeadsUpCard: View {
     var distance: IllnessDistance.Result? = nil
 
     var body: some View {
-        NoopCard(padding: 14, tint: hue) {
+        NoopCard {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: glyph)
-                        .font(.system(size: 15, weight: .semibold))
+                HStack(alignment: .top, spacing: 14) {
+                    PhIcon(glyph, size: 17)
                         .foregroundStyle(hue)
-                        .frame(width: 30, height: 30)
-                        .background(hue.opacity(0.16), in: Circle())
+                        .frame(width: 34, height: 34)
+                        .background(RoundedRectangle(cornerRadius: NoopVisualStyle.tileRadius, style: .continuous)
+                            .fill(NoopVisualStyle.raised))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title)
-                            .font(StrandFont.headline)
+                            .font(StrandFont.book(15, relativeTo: .body))
                             .foregroundStyle(StrandPalette.textPrimary)
                         Text(localizedIllnessCopy(result))
                             .font(StrandFont.subhead)
@@ -800,7 +804,7 @@ struct HeadsUpCard: View {
 
                 // The visible "why": which signals fired. Explainability is what earns trust.
                 if !result.firedSignals.isEmpty {
-                    whyRow(label: "Signals up", values: result.firedSignals, tint: hue)
+                    whyRow(label: "Signals up", values: result.firedSignals, tint: chipTint)
                 }
                 // ...and what was ruled out (the differentiating part vs a black-box warning).
                 if !result.suppressedBy.isEmpty {
@@ -826,7 +830,7 @@ struct HeadsUpCard: View {
 
     private func whyRow(label: LocalizedStringKey, values: [String], tint: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).strandOverline()
+            NoopOverline(label)
             // Each fired signal / confounder as a quiet chip.
             FlowChips(values: values, tint: tint)
             Spacer(minLength: 0)
@@ -836,23 +840,31 @@ struct HeadsUpCard: View {
 
     // MARK: derived presentation
 
-    /// The card hue follows the level: raised/already-unwell = amber warning (matches the
-    /// shipped banner); suppressed/mild = a calmer neutral so it never scares.
+    /// The glyph's colour follows the level: raised/already-unwell carry the alert accent (the card's one
+    /// active state); suppressed/mild stay in plain ink so it never scares.
     private var hue: Color {
         switch result.level {
-        case .raised, .alreadyUnwell: return StrandPalette.statusWarning
-        case .suppressed, .mild:      return StrandPalette.restColor
-        case .quiet:                  return StrandPalette.restColor
+        case .raised, .alreadyUnwell: return NoopGlow.low.tint
+        case .suppressed, .mild:      return StrandPalette.textPrimary
+        case .quiet:                  return StrandPalette.textPrimary
+        }
+    }
+
+    /// The tone of the "Signals up" chips — the alert accent only while the level is raised.
+    private var chipTint: Color {
+        switch result.level {
+        case .raised, .alreadyUnwell: return NoopGlow.low.tint
+        default:                      return StrandPalette.textSecondary
         }
     }
 
     private var glyph: String {
         switch result.level {
-        case .raised:        return "exclamationmark.triangle.fill"
-        case .alreadyUnwell: return "bed.double.fill"
-        case .suppressed:    return "info.circle.fill"
-        case .mild:          return "waveform.path"
-        case .quiet:         return "checkmark.circle.fill"
+        case .raised:        return "warning"
+        case .alreadyUnwell: return "bed"
+        case .suppressed:    return "info"
+        case .mild:          return "wave-sine"
+        case .quiet:         return "check-circle"
         }
     }
 
@@ -912,10 +924,12 @@ private struct FlowChips: View {
     @ViewBuilder private var chips: some View {
         ForEach(values, id: \.self) { v in
             Text(v)
-                .font(StrandFont.captionNumber)
+                .font(StrandFont.book(12, relativeTo: .caption))
                 .foregroundStyle(tint)
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(tint.opacity(0.14), in: Capsule(style: .continuous))
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+                .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
         }
     }
 }
@@ -923,14 +937,14 @@ private struct FlowChips: View {
 // MARK: - Day formatting
 
 /// "12 Jun" from a "yyyy-MM-dd" key (locale-aware for display only; the engine math stays UTC).
-private func prettyDay(_ key: String) -> String {
+private func prettyDay(_ key: String, month: Date.FormatStyle.Symbol.Month = .abbreviated) -> String {
     let parser = DateFormatter()
     parser.calendar = Calendar(identifier: .gregorian)
     parser.locale = Locale(identifier: "en_US_POSIX")
     parser.dateFormat = "yyyy-MM-dd"
     guard let date = parser.date(from: key) else { return key }
     return date.formatted(
-        .dateTime.day().month(.abbreviated).locale(AppLanguage.activeLocale)
+        .dateTime.day().month(month).locale(AppLanguage.activeLocale)
     )
 }
 

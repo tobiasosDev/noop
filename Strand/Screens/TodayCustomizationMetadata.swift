@@ -2,19 +2,53 @@ import SwiftUI
 import StrandDesign
 
 extension TodaySection {
+    /// The Phosphor glyph for the editor row.
     var customizationIcon: String {
         switch self {
-        case .hero: return "gauge.with.dots.needle.67percent"
-        case .liveSession: return "figure.run.circle"
-        case .synthesis: return "sparkles"
-        case .keyMetrics: return "square.grid.2x2"
-        case .workouts: return "figure.run"
-        case .heartRate: return "waveform.path.ecg"
-        case .recoveryVitals: return "heart.text.square"
-        case .yourCards: return "rectangle.stack"
-        case .menstrualCycle: return "drop.degreesign"
-        case .journal: return "book.closed"
-        case .addedCards: return "rectangle.stack.badge.plus"
+        case .hero: return "gauge"
+        case .liveSession: return "play-circle"
+        case .synthesis: return "sparkle"
+        case .keyMetrics: return "squares-four"
+        case .workouts: return "person-simple-run"
+        case .heartRate: return "heartbeat"
+        case .recoveryVitals: return "heart"
+        case .yourCards: return "cards"
+        case .menstrualCycle: return "drop-half"
+        case .journal: return "notebook"
+        case .addedCards: return "plus-square"
+        }
+    }
+
+    /// The v2 editor label. `title` stays the stored, Android-shared label; this is what the Customize
+    /// sheet shows, named the way the Today screen titles each block.
+    var customizationTitle: String {
+        switch self {
+        case .hero: return String(localized: "Scores")
+        case .liveSession: return String(localized: "Start session")
+        case .synthesis: return String(localized: "Synthesis")
+        case .keyMetrics: return String(localized: "Key metrics")
+        case .workouts: return String(localized: "Last workouts")
+        case .heartRate: return String(localized: "Heart rate · Live")
+        case .recoveryVitals: return String(localized: "Recovery vitals")
+        case .yourCards: return String(localized: "Your cards")
+        case .menstrualCycle: return String(localized: "Menstrual cycle")
+        case .journal: return String(localized: "Journal")
+        case .addedCards: return String(localized: "Added cards")
+        }
+    }
+
+    /// What the block shows, for the editor row's caption. nil where the sheet supplies a live count.
+    var customizationCaption: String? {
+        switch self {
+        case .hero: return String(localized: "Charge · Effort · Rest")
+        case .liveSession: return String(localized: "Silent strap coaching against today's Charge")
+        case .synthesis: return String(localized: "Your day in one sentence")
+        case .workouts: return String(localized: "The two most recent, with the total")
+        case .heartRate: return String(localized: "Streams while the strap is in range")
+        case .recoveryVitals: return String(localized: "HRV · resting HR · respiration")
+        case .menstrualCycle: return String(localized: "Phase and next period estimate")
+        case .journal: return String(localized: "Weekly check-in strip")
+        case .keyMetrics, .yourCards, .addedCards: return nil
         }
     }
 
@@ -36,22 +70,8 @@ extension TodaySection {
 }
 
 extension KeyMetric {
-    var customizationIcon: String {
-        switch self {
-        case .charge: return "bolt.heart"
-        case .effort: return "figure.run"
-        case .rest: return "moon.stars"
-        case .hrv: return "waveform.path.ecg"
-        case .restingHr: return "heart.fill"
-        case .bloodOxygen: return "drop.fill"
-        case .respiratory: return "lungs.fill"
-        case .steps: return "figure.walk"
-        case .weight: return "scalemass"
-        case .calories: return "flame.fill"
-        // Same glyph the sibling "Your Cards" tile (`DashboardCard.skinTemp`) already uses.
-        case .skinTemp: return "thermometer.medium"
-        }
-    }
+    /// The Phosphor glyph for the editor row — the same one the Today tile draws.
+    var customizationIcon: String { phIcon }
 
     var customizationTint: Color {
         switch self {

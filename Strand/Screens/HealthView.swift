@@ -1,16 +1,16 @@
 import SwiftUI
+import Combine
 import Charts
 import StrandDesign
 import StrandAnalytics
+import StrandImport
 import WhoopStore
 
 /// NOOP — Health Monitor.
-/// Live heart rate hero (ChartCard with a streaming sparkline + HR-zone footer),
-/// then a uniform LazyVGrid of the body's vital signs (respiratory rate, blood
-/// oxygen, resting HR, HRV, skin temp) as fixed-height StatTiles, each tinted and
-/// captioned with its in-range state. Re-skinned to the locked NOOP component
-/// system: every surface is a NoopCard, every metric is a StatTile, every chart is
-/// a ChartCard — no ad-hoc card heights or paddings.
+/// The live heart-rate hero (the screen's one glow), then the weekly scores (Fitness Age, Vitality), the
+/// recovery contributors against baseline, the body's vital signs as a two-column grid, the nightly
+/// skin-temperature suite, and the records/sources links. Every section is its own leaf view owning only
+/// what it reads, so the ~1 Hz live HR stream re-renders the hero and nothing else.
 struct HealthView: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var profile: ProfileStore
@@ -23,17 +23,24 @@ struct HealthView: View {
 
     // MARK: - Body
 
+    /// The lazy column (see `body`). The DEBUG screenshot harness turns it off when it anchors the scroll
+    /// mid-screen, where a lazy stack has not realised the rows it is asked to show yet.
+    private static var lazyColumn: Bool {
+        #if DEBUG
+        return !CommandLine.arguments.contains("--demo-anchor")
+        #else
+        return true
+        #endif
+    }
+
     var body: some View {
-        ScreenScaffold(title: "Health Monitor",
-                       subtitle: "Live vitals, streamed from the strap.",
-                       // PERF (scroll): lazy column — byte-identical layout (LazyVStack == eager VStack
-                       // alignment/spacing/header); builds the trailing vitals/skin-temp/age sections on
-                       // demand instead of all up-front.
+        ScreenScaffold(title: nil,
                        onRefresh: { await repo.refresh() },
-                       lazy: true,
-                       // The day-of-sky liquid backdrop, matching Today / Sleep / Trends: a fixed,
-                       // full-bleed time-of-day sky behind the scroll content (does not scroll).
-                       topBackground: liquidScaffoldSky()) {
+                       // PERF (scroll): lazy column — builds the trailing vitals/skin-temp/records sections
+                       // on demand instead of all up-front.
+                       lazy: Self.lazyColumn) {
+            // The screen's own v2 header: back/menu circles, the page title and the sync status (#364).
+            HealthHeader()
             if repo.days.isEmpty {
                 // First run / no history: whether to show the empty state or the full live stack depends
                 // on whether a strap is streaming live HR — a `live`-dependent choice. It's isolated to
@@ -46,53 +53,40 @@ struct HealthView: View {
                 HealthSectionsStack()
             }
         }
+        .noopHidesSystemNavBar()
     }
 }
 
 // MARK: - Content stacks
 
-/// The full Health section stack (live HR hero + the static vitals/age/skin-temp sections). Each section
-/// is its own leaf owning exactly what it needs, so only the `HeartRateSection` hero re-renders on a ~1 Hz
-/// HR tick — the static sections depend on `repo`/`profile`/`model` snapshots only. Shared by the
-/// history-present path and the first-run live path so the stack is defined once.
+/// The full Health section stack (live HR hero + the static weekly/contributor/vitals/skin-temp sections).
+/// Each section is its own leaf owning exactly what it needs, so only the `HeartRateSection` hero
+/// re-renders on a ~1 Hz HR tick. Shared by the history-present path and the first-run live path so the
+/// stack is defined once.
 private struct HealthSectionsStack: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-            // Manual "Sync now" + honest sync status (#364). Its own view so the ~1Hz HR stream
-            // doesn't re-render it; depends on `live` (connection/backfill state) + `model`.
-            SyncStatusSection()
-            // The live HR section is its own view: it owns `live`/`profile`,
-            // so the ~1Hz HR stream re-renders only this subtree — the static
-            // vitals grid below does not re-render on each HR tick.
-            HeartRateSection()
-            // Fitness Age (weekly, computed by IntelligenceEngine and read back from the
-            // "fitness_age" metricSeries). Its own view depending only on `repo`/`profile`,
-            // so the live HR stream never re-renders it.
-            FitnessAgeSection()
-            // Vitality / Body Age (weekly, computed by IntelligenceEngine from the mortality-
-            // hazard model). Its own view depending only on repo/profile.
-            VitalitySection()
-            // Screen-5 recovery detail: the CONTRIBUTORS to today's recovery as
-            // labelled progress bars (HRV / Resting HR / Sleep / Respiratory), each
-            // scored against the on-device baseline. Depends only on `repo`.
-            RecoveryContributorsSection()
-            // The static vitals grid is its own view depending only on `repo`,
-            // so it is unaffected by live HR ticks.
-            VitalsSection()
-            // v5 skin-temperature suite: the illness "heads-up", body clock, and (opt-in) cycle
-            // awareness, each driven by a pure StrandAnalytics engine result the analytics pass
-            // computed and AppModel publishes. Its own view depending on `model` + `repo`.
-            SkinTempSection()
-            // v5 deep-links: the records logbook + the multi-device fused record, reachable
-            // from their honest Health home as drill-in rows (not their own destinations).
-            HealthHubLinksSection()
-        }
+        // The live HR hero owns `live`/`profile`, so the ~1 Hz HR stream re-renders only this subtree.
+        HeartRateSection()
+            .padding(.top, 8)
+        // Fitness Age + Vitality (weekly, computed by IntelligenceEngine and read back from the
+        // metricSeries). Their own views depending only on `repo`/`profile`.
+        FitnessAgeSection()
+        VitalitySection()
+        // The CONTRIBUTORS to today's recovery, each scored against the on-device baseline.
+        RecoveryContributorsSection()
+        // The vitals grid depends only on `repo`, so it is unaffected by live HR ticks.
+        VitalsSection()
+        // v5 skin-temperature suite: the nightly chart, the illness "heads-up", body clock and (opt-in)
+        // cycle awareness, each driven by a pure StrandAnalytics engine result AppModel publishes.
+        SkinTempSection()
+        // v5 deep-links: the records logbook + the multi-device fused record, reachable from their
+        // honest Health home as drill-in rows (not their own destinations).
+        HealthHubLinksSection()
     }
 }
 
 /// First-run content (no history yet). Owns `live`/`model` so the live-HR-gated choice between the empty
-/// state and the full live stack ticks here, in isolation, instead of re-rendering HealthView. Renders
-/// byte-for-byte what the parent's inline `repo.days.isEmpty && !hasLiveHR` branch did.
+/// state and the full live stack ticks here, in isolation, instead of re-rendering HealthView.
 private struct HealthFirstRunContent: View {
     @EnvironmentObject var repo: Repository
     @EnvironmentObject var live: LiveState
@@ -110,27 +104,26 @@ private struct HealthFirstRunContent: View {
 
     var body: some View {
         if !hasLiveHR {
-            VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
-                // Even with no history yet, a freshly-connected strap can be told to sync now (#364) —
-                // so the control is reachable before the screen has any data to show.
-                SyncStatusSection()
-                ComingSoon(what: "No biometrics yet. Import your WHOOP export (and Apple Health if you have it) in Data Sources to fill this in.")
-            }
+            // The sync control in the header stays reachable (#364), so a freshly-connected strap can be
+            // told to sync before the screen has any data to show.
+            G5EmptyCard(icon: "heartbeat",
+                        message: Text("No biometrics yet. Import your WHOOP export (and Apple Health if you have it) in Data Sources to fill this in."))
+                .padding(.top, 8)
         } else {
             HealthSectionsStack()
         }
     }
 }
 
-// MARK: - Sync status + "Sync now" (#364)
+// MARK: - Header + sync status (#364)
 
-/// Manual "Sync now" control + honest sync status, mirroring the Android Sync-now button. Its own view
-/// depending only on `live` (connection + backfill state) and `model` (the BLE pass-through), so the
-/// ~1Hz live HR stream never re-renders it. Honesty rules (CLAUDE.md): the button is disabled and the
-/// copy explains itself when no strap is connected; while a sync runs it shows the in-progress pill +
-/// the live chunk count (never a fabricated percent — total pending is unknowable from the protocol);
-/// otherwise it shows when history last synced.
-private struct SyncStatusSection: View {
+/// The v2 header: the back circle (when pushed/presented) and a "more" menu, the page title, and the
+/// manual "Sync now" status pill mirroring the Android Sync-now button. Its own view depending only on
+/// `live` (connection + backfill state) and `model` (the BLE pass-through). Honesty rules: the pill only
+/// acts when a strap can actually sync; while a sync runs it shows the live chunk count (never a
+/// fabricated percent — total pending is unknowable from the protocol); otherwise it shows when history
+/// last synced.
+private struct HealthHeader: View {
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var model: AppModel
 
@@ -141,60 +134,81 @@ private struct SyncStatusSection: View {
     private var canSync: Bool { live.connected && live.bonded && live.historyReady && !live.backfilling }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Sync", overline: "Strap history",
-                          trailing: live.connected ? (live.bonded ? String(localized: "Connected") : String(localized: "Pairing…")) : String(localized: "Offline"))
-
-            NoopCard(tint: StrandPalette.chargeColor) {
-                VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {
-                    statusRow
-
-                    // Route the manual offload kick through the unified NOOP button system so the
-                    // label sits centred at controlHeight like every other primary control. Reaches
-                    // the BLE engine's gated entry point directly (same idiom as SettingsView's
-                    // `model.ble.enableWhoop5DeepData()`); BLEManager.syncNow() is the honest gate —
-                    // a no-op when no strap is connected or a sync is already running.
-                    NoopButton(live.backfilling ? "Syncing…" : "Sync now",
-                               systemImage: "arrow.triangle.2.circlepath",
-                               kind: .secondary, fullWidth: true) {
+        VStack(alignment: .leading, spacing: 0) {
+            NoopScreenHeader(verbatim: "") {
+                G5MoreMenu {
+                    // Reaches the BLE engine's gated entry point directly (same idiom as SettingsView's
+                    // `model.ble.enableWhoop5DeepData()`); BLEManager.syncNow() is the honest gate — a
+                    // no-op when no strap is connected or a sync is already running.
+                    Button {
                         model.ble.syncNow()
+                    } label: {
+                        Label(live.backfilling ? "Syncing…" : "Sync now", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(!canSync)
-                    .accessibilityLabel("Sync now")
-                    .accessibilityHint(canSync
-                        ? "Pulls your strap's stored history immediately, without waiting for the next automatic sync."
-                        : (live.backfilling ? "A sync is already in progress." : "Connect your strap first."))
-
-                    Text(helperText)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .padding(.bottom, 18)
+
+            Text("Health")
+                .font(StrandFont.title1)
+                .tracking(-0.56)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Text("Live vitals, streamed from the strap.")
+                .font(StrandFont.light(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .padding(.top, 6)
+            syncPill
+                .padding(.top, 16)
         }
     }
 
-    /// The status line above the button: an in-progress pill while syncing (with the live chunk count),
-    /// else a last-synced read-out, else an honest "not connected".
-    @ViewBuilder private var statusRow: some View {
-        if live.backfilling {
-            // Reuse the shared in-progress affordance so this matches every other "syncing history" surface.
-            SyncingHistoryNote(chunks: live.syncChunksThisSession)
-        } else if !live.connected {
-            StatePill("No strap connected", tone: .neutral, showsDot: false)
-        } else if let last = live.lastSyncedAt {
-            HStack(spacing: 8) {
-                StatePill("History synced", tone: .positive)
-                Text(relativeAgo(last))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textSecondary)
-            }
-        } else {
-            // Same condition as the button below it. Keyed on `bonded` this said "Ready to sync" directly
-            // above a DISABLED Sync now, on exactly the strap that cannot sync.
-            StatePill(live.historyReady ? "Ready to sync" : "Pairing…",
-                      tone: .accent, showsDot: true, pulsing: !live.historyReady)
+    /// The status pill under the title. Tapping it syncs when a sync is possible; otherwise it is a plain
+    /// read-out whose spoken hint says why the button is unavailable.
+    @ViewBuilder private var syncPill: some View {
+        let pill = HStack(spacing: 8) {
+            PhIcon(live.connected ? "arrows-clockwise" : "bluetooth-slash", size: 14)
+                .opacity(0.8)
+            statusText.lineLimit(1)
         }
+        .font(StrandFont.book(12, relativeTo: .caption))
+        .foregroundStyle(StrandPalette.textSecondary)
+        .padding(.leading, 11)
+        .padding(.trailing, 14)
+        .frame(height: 32)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+
+        if canSync {
+            Button { model.ble.syncNow() } label: { pill }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sync now")
+                .accessibilityValue(statusText)
+                .accessibilityHint("Pulls your strap's stored history immediately, without waiting for the next automatic sync.")
+        } else {
+            pill
+                .accessibilityElement(children: .combine)
+                .accessibilityHint(helperText)
+        }
+    }
+
+    /// The status line: in-progress (with the live chunk count) while syncing, else a last-synced read-out,
+    /// else an honest "not connected" / pairing state.
+    private var statusText: Text {
+        if live.backfilling {
+            let chunks = live.syncChunksThisSession
+            return chunks > 0
+                ? Text("Syncing strap history…") + Text(verbatim: " · ") + Text("\(chunks) chunks pulled")
+                : Text("Syncing strap history…")
+        }
+        if !live.connected { return Text("No strap connected") }
+        if let last = live.lastSyncedAt {
+            return Text("History synced") + Text(verbatim: " · \(relativeAgo(last))")
+        }
+        // Same condition as the sync gate. Keyed on `bonded` this said "Ready to sync" above an action that
+        // could not run, on exactly the strap that cannot sync.
+        return live.historyReady ? Text("Ready to sync") : Text("Pairing…")
     }
 
     private var helperText: String {
@@ -204,10 +218,8 @@ private struct SyncStatusSection: View {
         if !live.connected {
             return String(localized: "Connect your strap to sync its stored history. Until then, only imported data shows here.")
         }
-        // historyReady, not `bonded`. This branch already said the right thing and simply never fired on
-        // the strap that needed it: `bonded` is set by the live-HR path, so a 5/MG that never completed a
-        // handshake fell through to the "syncs right away" line, under a Sync-now button that had just
-        // been disabled. Same condition as the button and the pill, so all three agree.
+        // historyReady, not `bonded`: `bonded` is set by the live-HR path, so a 5/MG that never completed a
+        // handshake would read "syncs right away" next to an action that cannot run.
         if !live.historyReady {
             return String(localized: "Finishing the pairing handshake. Sync now becomes available once the strap is paired.")
         }
@@ -218,28 +230,31 @@ private struct SyncStatusSection: View {
 // MARK: - Heart rate hero (live)
 
 /// Live HR hero, split into its own view so the ~1Hz HR stream only re-renders this
-/// subtree — the static vitals grid does not. Depends on `live` and `profile` only.
+/// subtree — the static sections do not. Depends on `live`, `profile` and today's HR buckets.
 private struct HeartRateSection: View {
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var profile: ProfileStore
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var repo: Repository
 
     /// Rolling buffer of recently-streamed live HR (newest last), so the hero graph builds a real
     /// continuous time-series instead of collapsing to a 2-point flat line when the strap streams HR
     /// but little/no R-R (the #105 case — Live HR works, but the Health graph showed only 2 samples).
-    /// Each sample now carries the wall-clock time it arrived so the hero renders a real time x-axis
-    /// (#198 — the chart had no time axis, so an iPhone user with no hover had no time context).
+    /// Each sample carries the wall-clock time it arrived so the hero can say how far back the trace
+    /// reaches (#198 — an iPhone user with no hover needs time context on the chart).
     /// Sampled on a fixed 1 Hz clock (#941), so the 180-sample cap is a strict rolling 3 minutes;
     /// resets when the view is recreated, which is fine for a live trace.
     @State private var hrHistory: [LiveHRSample] = []
+
+    /// Today's low / average / high from the stored HR buckets (min/max read from the SAMPLES inside each
+    /// bucket, not from the bucket means — the #2032 rule Today's footer follows). nil until loaded.
+    @State private var today: TodayHRStats?
 
     /// The 1 Hz sampling clock for the hero trace (#941, reimplemented from ryanbr's PR). The buffer
     /// used to append only when `displayHR` CHANGED, but AppModel deliberately republishes `bpm` only
     /// when the smoothed median actually moves, so a steady heart rate banked ZERO points and the
     /// time-axis chart drew one long phantom ramp from the last change to the next. Banking the current
-    /// median once a second draws steady HR flat. Same let-property pattern as HRVSnapshotView's
-    /// `secondTimer` (parent re-init resetting the tick phase is a non-issue here: this section is
-    /// isolated and observes via @EnvironmentObject, per the perf note above).
+    /// median once a second draws steady HR flat.
     private let sampleTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     /// HR to display: the spike-filtered median (model.bpm, #39) when available — raw live.heartRate
@@ -274,8 +289,7 @@ private struct HeartRateSection: View {
     /// Prefers the accumulated live-HR time-series — that's what a "live" graph should show, and it
     /// keeps growing even when the strap streams HR but sparse R-R (#105). Falls back to R-R-derived
     /// beats, then a flat line at the current HR. The R-R / flat fallbacks have no real per-sample
-    /// timestamps, so we synthesise a 1 Hz trailing window ending "now" — the x-axis still reads as
-    /// clock time and scrolls, matching the live buffer's behaviour (#198).
+    /// timestamps, so we synthesise a 1 Hz trailing window ending "now" (#198).
     private func hrSeries(_ hr: Int?) -> [LiveHRSample] {
         if hrHistory.count > 1 { return hrHistory }
         let beats = live.rr.suffix(60).compactMap { rr -> Double? in
@@ -305,32 +319,28 @@ private struct HeartRateSection: View {
         let zone = hrZone(fraction)
         let series = hrSeries(displayHR)
 
-        return VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Heart Rate", overline: "Live", trailing: hrIsDerived ? String(localized: "from R-R") : nil)
-
-            // The live HR hero is a flat WHOOP card tinted rose — heart-rate's metric accent.
-            // No scenic starfield / bloom: fill contrast carries the edge (Apple-flat).
-            ChartCard(
-                title: "Heart Rate",
-                subtitle: hrIsDerived ? String(localized: "Estimated from R-R interval")
-                    : (hasLiveHR ? String(localized: "Streaming live") : String(localized: "Awaiting strap")),
-                trailing: hasLiveHR ? "\(displayHR!) bpm" : "—",
-                tint: StrandPalette.metricRose
-            ) {
-                heroChart(displayHR: displayHR, hasLiveHR: hasLiveHR,
-                          fraction: fraction, zone: zone, series: series)
-            } footer: {
-                ChartFooter([
-                    ("Zone", hasLiveHR ? "Z\(zone)" : "—"),
-                    ("% Max", hasLiveHR ? "\(Int((fraction * 100).rounded()))%" : "—"),
-                    ("Max HR", "\(profile.hrMax)"),
-                    ("State", hasLiveHR ? String(localized: "STREAMING") : String(localized: "IDLE")),
-                ])
+        NoopHeroCard(glow: .heart, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge("Heart rate", icon: "heartbeat")
+                    Spacer(minLength: 8)
+                    G5LivePill(text: livePillText(hasLiveHR: hasLiveHR), live: hasLiveHR)
+                }
+                readout(displayHR: displayHR, hasLiveHR: hasLiveHR, zone: zone)
+                    .padding(.top, 30)
+                trace(series: series, hasLiveHR: hasLiveHR, displayHR: displayHR, zone: zone)
+                    .frame(height: 56)
+                    .padding(.top, 22)
+                traceCaptions(series: series, hasLiveHR: hasLiveHR, fraction: fraction)
+                    .padding(.top, 8)
+                todayRow
+                    .padding(.top, 20)
             }
+            .padding(.top, -2)
         }
         .onReceive(sampleTimer) { now in
             // Bank the CURRENT spike-filtered HR once a second, stamped with the tick's real wall-clock
-            // time: this feeds the time x-axis (#198) and the #105 trace without the phantom ramp that
+            // time: this feeds the trace (#198) and the #105 series without the phantom ramp that
             // on-change sampling drew through steady stretches (#941). The 30...220 physiological guard
             // mirrors the Android chart's existing range check; nil banks nothing (disconnect clears the
             // median on both platforms), so a stale value never flat-lines a dead trace.
@@ -338,54 +348,119 @@ private struct HeartRateSection: View {
             hrHistory.append(LiveHRSample(date: now, bpm: Double(v)))
             if hrHistory.count > 180 { hrHistory.removeFirst(hrHistory.count - 180) }
         }
+        .task(id: repo.refreshSeq) { await loadToday() }
     }
 
-    /// The hero chart body: a tall, time-aware HR line tinted to the current zone, with a
-    /// status pill floated top-trailing. Fixed to NoopMetrics.chartHeight via ChartCard.
-    private func heroChart(displayHR: Int?, hasLiveHR: Bool,
-                           fraction: Double, zone: Int, series: [LiveHRSample]) -> some View {
-        ZStack(alignment: .topTrailing) {
-            if series.count > 1 {
-                LiveTimeChart(
-                    samples: series,
-                    gradient: Gradient(colors: [
-                        StrandPalette.hrZoneColor(max(1, zone - 1)),
-                        StrandPalette.hrZoneColor(zone),
-                    ])
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func livePillText(hasLiveHR: Bool) -> Text {
+        guard hasLiveHR else { return Text("Awaiting strap") }
+        return hrIsDerived ? Text("from R-R") : Text("Live")
+    }
+
+    /// The dot-matrix number, its unit and the zone tag.
+    private func readout(displayHR: Int?, hasLiveHR: Bool, zone: Int) -> some View {
+        HStack(alignment: .lastTextBaseline, spacing: 10) {
+            NoopDotNumber(displayHR.map(String.init) ?? "—", size: 100,
+                          color: hasLiveHR ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                .layoutPriority(1)
+            Text("bpm")
+                .font(StrandFont.book(15, relativeTo: .subheadline))
+                .foregroundStyle(Color.white.opacity(0.7))
+                .padding(.bottom, 8)
+            Spacer(minLength: 8)
+            NoopTag(hasLiveHR ? "Zone \(zone)" : "Idle")
+                .fixedSize()
+                .padding(.bottom, 10)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hasLiveHR
+            ? Text("Heart rate \(displayHR ?? 0) beats per minute, zone \(zone)")
+            : Text("Heart rate: awaiting strap"))
+    }
+
+    @ViewBuilder
+    private func trace(series: [LiveHRSample], hasLiveHR: Bool, displayHR: Int?, zone: Int) -> some View {
+        if series.count > 1 {
+            LiveTimeChart(samples: series)
                 .accessibilityLabel("Live heart rate over time")
                 .accessibilityValue(hasLiveHR ? "\(displayHR ?? 0) beats per minute, zone \(zone)" : "no data")
-            } else {
-                VStack(spacing: NoopMetrics.space2) {
-                    // The big fallback numeral ticks up to the live value (the hero number) — under
-                    // Reduce Motion it snaps. When there's no HR yet we show a crisp em-dash instead.
-                    if let hr = displayHR {
-                        CountUpText(value: Double(hr),
-                                    format: { "\(Int($0.rounded()))" },
-                                    font: StrandFont.display(72),
-                                    color: hasLiveHR ? StrandPalette.hrZoneColor(zone) : StrandPalette.textTertiary)
-                            .tracking(StrandFont.displayTracking(72))
-                    } else {
-                        Text("—")
-                            .font(StrandFont.display(72))
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    Text("bpm").font(StrandFont.subhead).foregroundStyle(StrandPalette.textTertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // No trace yet: an empty dashed baseline, so the hero keeps its shape without implying data.
+            Canvas { ctx, size in
+                var p = Path()
+                p.move(to: CGPoint(x: 0, y: size.height / 2))
+                p.addLine(to: CGPoint(x: size.width, y: size.height / 2))
+                ctx.stroke(p, with: .color(.white.opacity(0.18)), style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
             }
-
-            StatePill("\(zoneLabel(hasLiveHR: hasLiveHR, zone: zone, fraction: fraction))",
-                      tone: hasLiveHR ? .accent : .neutral,
-                      showsDot: hasLiveHR,
-                      pulsing: hasLiveHR)
+            .accessibilityHidden(true)
         }
     }
 
-    private func zoneLabel(hasLiveHR: Bool, zone: Int, fraction: Double) -> String {
-        guard hasLiveHR else { return String(localized: "Idle") }
-        return String(localized: "Zone \(zone) · \(Int((fraction * 100).rounded()))%")
+    /// "3 min ago … now · 34 % of max 187": how far back the live trace reaches, and where the current
+    /// beat sits against the profile's HR-max.
+    private func traceCaptions(series: [LiveHRSample], hasLiveHR: Bool, fraction: Double) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            if series.count > 1, let first = series.first {
+                Text(verbatim: relativeAgo(first.date.timeIntervalSince1970))
+                    .foregroundStyle(Color.white.opacity(0.55))
+            } else {
+                Text("Waiting for live heart rate")
+                    .foregroundStyle(Color.white.opacity(0.55))
+            }
+            Spacer(minLength: 8)
+            if hasLiveHR {
+                (Text("now") + Text(verbatim: " · ")
+                    + Text("\(Int((fraction * 100).rounded())) % of max \(profile.hrMax)"))
+                    .foregroundStyle(StrandPalette.textPrimary)
+            } else {
+                Text("Max HR \(profile.hrMax)")
+                    .foregroundStyle(Color.white.opacity(0.55))
+            }
+        }
+        .font(StrandFont.footnote)
+        .lineLimit(1)
+    }
+
+    /// Today's low / average / high, each with the clock time of its 5-minute bucket.
+    private var todayRow: some View {
+        let low: LocalizedStringKey = today.map { t -> LocalizedStringKey in
+            "Today's low · \(AppClock.hourMinute(unix: t.lowAt))" } ?? "Today's low"
+        let high: LocalizedStringKey = today.map { t -> LocalizedStringKey in
+            "Today's high · \(AppClock.hourMinute(unix: t.highAt))" } ?? "Today's high"
+        return NoopMetricRow {
+            NoopMetric(value: today.map { "\(Int($0.low.rounded()))" } ?? "—", unit: "bpm",
+                       label: low, labelColor: NoopMetric.heroLabel)
+            NoopMetric(value: today.map { "\(Int($0.average.rounded()))" } ?? "—", unit: "bpm",
+                       label: "Average today", labelColor: NoopMetric.heroLabel)
+            NoopMetric(value: today.map { "\(Int($0.high.rounded()))" } ?? "—", unit: "bpm",
+                       label: high, labelColor: NoopMetric.heroLabel)
+        }
+    }
+
+    /// Read today's 5-minute HR buckets (local midnight → now) and keep the extremes + the mean of the
+    /// bucket means — the same Min/Avg/Max arithmetic Today's HR card footer shows.
+    private func loadToday() async {
+        let start = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        let end = Int(Date().timeIntervalSince1970)
+        let buckets = await repo.hrBuckets(from: start, to: end, bucketSeconds: 300)
+        today = TodayHRStats(buckets)
+    }
+}
+
+/// Today's heart-rate extremes and mean from the stored 5-minute buckets. `lowAt`/`highAt` are the start
+/// of the bucket holding the extreme sample.
+private struct TodayHRStats: Equatable {
+    let low: Double, lowAt: Int
+    let high: Double, highAt: Int
+    let average: Double
+
+    init?(_ buckets: [HRBucket]) {
+        guard let lo = buckets.min(by: { $0.minBpm < $1.minBpm }),
+              let hi = buckets.max(by: { $0.maxBpm < $1.maxBpm }) else { return nil }
+        low = lo.minBpm
+        lowAt = lo.ts
+        high = hi.maxBpm
+        highAt = hi.ts
+        average = buckets.map(\.bpm).reduce(0, +) / Double(buckets.count)
     }
 }
 
@@ -399,20 +474,16 @@ struct LiveHRSample: Identifiable, Equatable {
     let bpm: Double
 }
 
-/// The live HR hero chart: a zone-gradient line + soft area over a real **time** x-axis
-/// (hour:minute:second), so the trace visibly scrolls as new samples arrive. Replaces the
-/// axis-less Sparkline on this hero (#198) — an iPhone user has no hover, so the visible
-/// clock axis is the fix. Built on Swift Charts; the strict rolling 3-minute window comes
-/// from the caller's 1 Hz-sampled, 180-capped buffer (HeartRateSection.hrHistory, #941).
+/// The live HR hero trace: a thin white line brightening toward "now" over a soft white wash, a dashed
+/// rule at the current beat and a haloed end dot, on a real time x-axis so the trace scrolls as samples
+/// arrive. The strict rolling 3-minute window comes from the caller's 1 Hz-sampled, 180-capped buffer
+/// (HeartRateSection.hrHistory, #941).
 ///
-/// Hover/tooltip (previously missing): reuses the same `CrosshairRule`/`HighlightDot`/`PositionedTooltip`/
-/// `ChartTooltip` components `TrendChart`'s `chartOverlay` uses — no new mechanism. No downsampling here:
-/// the buffer is already capped at 180 samples (#941) and this IS the live, in-progress trace, so every
-/// sample stays significant.
+/// Hover/tooltip: reuses the same `CrosshairRule`/`HighlightDot`/`PositionedTooltip`/`ChartTooltip`
+/// components `TrendChart`'s `chartOverlay` uses — no new mechanism. No downsampling here: the buffer is
+/// already capped at 180 samples (#941) and this IS the live, in-progress trace.
 private struct LiveTimeChart: View {
     var samples: [LiveHRSample]
-    /// The gradient the line/area is stroked with (the current HR-zone band).
-    var gradient: Gradient
 
     /// The x-position the cursor is hovering, in chart-local coordinates.
     @State private var hoverX: CGFloat? = nil
@@ -426,16 +497,6 @@ private struct LiveTimeChart: View {
         return (lo - pad)...(hi + pad)
     }
 
-    /// A vertical gradient keyed bottom→top so the stroke colour tracks the zone band.
-    private var lineGradient: LinearGradient {
-        LinearGradient(gradient: gradient, startPoint: .bottom, endPoint: .top)
-    }
-
-    /// The lightest stop of the zone gradient, used to tint the area wash.
-    private var areaTint: Color {
-        StrandPalette.sample(stops: gradient.stops, at: 0.85)
-    }
-
     /// The sample nearest a given chart-local x, matching `TrendChart.nearestPoint`.
     private func nearestSample(toX x: CGFloat, proxy: ChartProxy, plot: CGRect) -> LiveHRSample? {
         guard !samples.isEmpty else { return nil }
@@ -444,74 +505,59 @@ private struct LiveTimeChart: View {
         return samples.min(by: { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) })
     }
 
-    // Map a bpm value onto the unit interval for gradient sampling, same idiom as `TrendChart.unit`.
-    private func unit(_ value: Double) -> Double {
-        let lo = yDomain.lowerBound, hi = yDomain.upperBound
-        guard hi > lo else { return 0 }
-        return min(max((value - lo) / (hi - lo), 0), 1)
-    }
-
     var body: some View {
-        Chart(samples) { s in
-            AreaMark(
-                x: .value("Time", s.date),
-                y: .value("BPM", s.bpm)
-            )
-            .interpolationMethod(.catmullRom)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [areaTint.opacity(0.24), Color.clear],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-
-            LineMark(
-                x: .value("Time", s.date),
-                y: .value("BPM", s.bpm)
-            )
-            .interpolationMethod(.catmullRom)
-            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-            .foregroundStyle(lineGradient)
+        Chart {
+            if let last = samples.last {
+                RuleMark(y: .value("Now", last.bpm))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                    .foregroundStyle(Color.white.opacity(0.18))
+            }
+            ForEach(samples) { s in
+                AreaMark(x: .value("Time", s.date), y: .value("BPM", s.bpm))
+                    .foregroundStyle(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0)],
+                                                    startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Time", s.date), y: .value("BPM", s.bpm))
+                    .lineStyle(StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(LinearGradient(
+                        stops: [.init(color: .white.opacity(0.25), location: 0),
+                                .init(color: .white.opacity(0.8), location: 0.6),
+                                .init(color: .white, location: 1)],
+                        startPoint: .leading, endPoint: .trailing))
+            }
         }
         .chartYScale(domain: yDomain)
-        // catmullRom overshoots on sharp HR turns and the area fill draws unclipped — clip the
-        // plot so nothing bleeds below the card (mirrors TrendChart's fix for #104).
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
         .chartPlotStyle { plotArea in plotArea.clipped() }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                AxisGridLine().foregroundStyle(StrandPalette.hairline.opacity(0.4))
-                AxisValueLabel(format: .dateTime.hour().minute().second())
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .font(StrandFont.footnote)
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                AxisGridLine().foregroundStyle(StrandPalette.hairline.opacity(0.4))
-                AxisValueLabel().foregroundStyle(StrandPalette.textTertiary)
-                    .font(StrandFont.footnote)
-            }
-        }
         .chartOverlay { proxy in
             GeometryReader { geo in
                 let plot = proxy.plotRectCompat(in: geo)
                 ZStack(alignment: .topLeading) {
+                    // The haloed "now" dot, drawn here (outside the clipped plot) so it never gets cut.
+                    if let last = samples.last,
+                       let px = proxy.position(forX: last.date),
+                       let py = proxy.position(forY: last.bpm) {
+                        Circle().fill(Color.white.opacity(0.18)).frame(width: 14, height: 14)
+                            .position(x: px + plot.minX, y: py + plot.minY)
+                        Circle().fill(Color.white).frame(width: 7, height: 7)
+                            .position(x: px + plot.minX, y: py + plot.minY)
+                    }
                     if let hx = hoverX,
                        let s = nearestSample(toX: hx, proxy: proxy, plot: plot),
                        let px = proxy.position(forX: s.date),
                        let py = proxy.position(forY: s.bpm) {
                         let cx = px + plot.minX
                         let cy = py + plot.minY
-                        let color = StrandPalette.sample(stops: gradient.stops, at: unit(s.bpm))
                         CrosshairRule(x: cx, height: geo.size.height)
-                        HighlightDot(color: color).position(x: cx, y: cy)
+                        HighlightDot(color: StrandPalette.textPrimary).position(x: cx, y: cy)
                         PositionedTooltip(
                             anchor: CGPoint(x: cx, y: cy),
                             container: geo.size,
                             tooltip: ChartTooltip(
                                 value: String(localized: "\(Int(s.bpm.rounded())) bpm"),
                                 label: s.date.formatted(.dateTime.hour().minute().second()),
-                                accent: color
+                                accent: NoopGlow.heart.tint
                             )
                         )
                     }
@@ -533,62 +579,120 @@ private struct LiveTimeChart: View {
                 }
             }
         }
-        .clipped()
     }
 }
 
-// MARK: - Recovery contributors (screen-5: labelled progress bars)
+// MARK: - Recovery contributors (distance from baseline)
 
-/// The README "Recovery detail · CONTRIBUTORS" section: the inputs to today's recovery
-/// (HRV, Resting HR, Sleep, Respiratory) as labelled zone/stage progress bars, each scored
-/// 0–100 against the user's on-device baseline. Depends only on `repo`, so the ~1Hz live HR
-/// stream never re-renders it. Presentation-only — every value reads off the latest
+/// The recovery CONTRIBUTORS: the inputs to today's recovery (HRV, Resting HR, Sleep, Respiratory), each
+/// shown as its reading, its baseline and a bar for the distance between them. Depends only on `repo`, so
+/// the ~1Hz live HR stream never re-renders it. Presentation-only — every value reads off the latest
 /// `DailyMetric` and the baseline mean of prior nights; nothing here changes data or scoring.
 private struct RecoveryContributorsSection: View {
     @EnvironmentObject var repo: Repository
 
-    /// One contributor row's resolved read-out: its 0–100 strength, the qualitative word,
-    /// the metric hue, and the right-aligned raw value.
+    /// One contributor row's resolved read-out.
     private struct Contributor {
         let label: LocalizedStringKey
-        let strength: Double?      // 0…100, nil while calibrating / no value
+        let strength: Double?      // 0…100 (baseline ≈ 70), nil while calibrating / no value
         let word: String
-        let detail: String         // right-aligned raw reading ("64 ms")
-        let tint: Color
+        let value: String          // "68"
+        let unit: String?          // "ms"
+        let baseline: String?      // "62 ms"
+        let direction: Int?        // +1 / 0 / −1 raw reading vs baseline; nil without both
     }
 
     var body: some View {
         let latest = repo.days.last
         // A contributor needs at least the recovery seed depth of prior nights to score against
-        // a baseline; below that we show CALIBRATING and leave the bars unfilled but honest.
+        // a baseline; below that the bars stay empty and the caption says calibrating.
         let priorCount = repo.days.dropLast().compactMap(\.avgHrv).filter { $0 > 0 }.count
         let ready = priorCount >= Baselines.minNightsSeed
         let contributors = buildContributors(latest)
 
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                SectionHeader("Contributors", overline: "Recovery", trailing: nil)
+            NoopSectionTitle("Contributors") {
                 if ready {
-                    ScoreStatePill(.solid)
+                    if let charge = latest?.recovery {
+                        Text("Recovery · Charge \(Int(charge.rounded())) %")
+                    } else {
+                        Text("Recovery")
+                    }
                 } else {
                     ScoreStatePill(.calibrating, text: "Calibrating (\(priorCount) of \(Baselines.minNightsSeed))")
                 }
             }
-            NoopCard(tint: StrandPalette.chargeColor) {
-                VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+            NoopCard(padding: 0) {
+                VStack(spacing: 0) {
                     ForEach(Array(contributors.enumerated()), id: \.offset) { idx, c in
-                        ContributorBar(label: c.label, strength: ready ? c.strength : nil,
-                                       word: ready ? c.word : String(localized: "Calibrating"),
-                                       detail: c.detail, tint: c.tint)
-                            .staggeredAppear(index: idx)
+                        if idx > 0 { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
+                        row(c, ready: ready)
+                            .padding(.top, idx == 0 ? 2 : 13)
+                            .padding(.bottom, 13)
                     }
                 }
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 6)
             }
-            Text("Baselines are learned on-device over your first 14 days. Until then, typical ranges apply.")
+            Group {
+                if ready {
+                    Text("Bar = distance from your baseline. Lower resting HR counts as a gain.")
+                } else {
+                    Text("Baselines are learned on-device over your first 14 days. Until then, typical ranges apply.")
+                }
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.top, -2)
+        }
+    }
+
+    private func row(_ c: Contributor, ready: Bool) -> some View {
+        let word = ready ? c.word : String(localized: "Calibrating")
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(c.label)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Group {
+                    if ready, let base = c.baseline {
+                        Text("Baseline \(base)")
+                    } else {
+                        Text("Calibrating")
+                    }
+                }
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            G5DivergingBar(offset: ready ? c.strength.map { ($0 - 70) / 30 } : nil)
+                .frame(width: 84)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(verbatim: c.value)
+                    .font(StrandFont.book(15, relativeTo: .body))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let unit = c.unit {
+                    Text(verbatim: unit)
+                        .font(StrandFont.book(10))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+                if ready, let d = c.direction {
+                    PhIcon(d > 0 ? "arrow-up" : (d < 0 ? "arrow-down" : "minus"), size: 11)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .padding(.leading, 4)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(width: 74, alignment: .trailing)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(c.label) + Text(verbatim: ", \(c.value)\(c.unit.map { " \($0)" } ?? ""), \(word)"))
     }
 
     /// Resolve each contributor from the latest day against the baseline mean of prior nights.
@@ -599,32 +703,37 @@ private struct RecoveryContributorsSection: View {
         let rhrBase  = baseline { $0.restingHr.map(Double.init) }
         let sleepBase = baseline { $0.totalSleepMin }
         let respBase = baseline { $0.respRateBpm }
+        let rhr = latest?.restingHr.map(Double.init)
 
         return [
             Contributor(
                 label: "HRV",
                 strength: higherIsBetter(latest?.avgHrv, base: hrvBase),
                 word: word(higherIsBetter(latest?.avgHrv, base: hrvBase)),
-                detail: latest?.avgHrv.map { "\(Int($0.rounded())) ms" } ?? "—",
-                tint: StrandPalette.metricCyan),       // HRV = teal
+                value: latest?.avgHrv.map { "\(Int($0.rounded()))" } ?? "—", unit: "ms",
+                baseline: hrvBase.map { "\(Int($0.rounded())) ms" },
+                direction: direction(latest?.avgHrv, base: hrvBase)),
             Contributor(
                 label: "Resting HR",
-                strength: lowerIsBetter(latest?.restingHr.map(Double.init), base: rhrBase),
-                word: word(lowerIsBetter(latest?.restingHr.map(Double.init), base: rhrBase)),
-                detail: latest?.restingHr.map { "\($0) bpm" } ?? "—",
-                tint: StrandPalette.chargeColor),       // recovery contributor = WHOOP green
+                strength: lowerIsBetter(rhr, base: rhrBase),
+                word: word(lowerIsBetter(rhr, base: rhrBase)),
+                value: latest?.restingHr.map { "\($0)" } ?? "—", unit: "bpm",
+                baseline: rhrBase.map { "\(Int($0.rounded())) bpm" },
+                direction: direction(rhr, base: rhrBase)),
             Contributor(
                 label: "Sleep",
                 strength: higherIsBetter(latest?.totalSleepMin, base: sleepBase),
                 word: word(higherIsBetter(latest?.totalSleepMin, base: sleepBase)),
-                detail: latest?.totalSleepMin.map { sleepText($0) } ?? "—",
-                tint: StrandPalette.sleepLight),       // sleep = blue
+                value: latest?.totalSleepMin.map { sleepText($0) } ?? "—", unit: nil,
+                baseline: sleepBase.map { sleepText($0) },
+                direction: direction(latest?.totalSleepMin, base: sleepBase)),
             Contributor(
                 label: "Respiratory",
                 strength: lowerIsBetter(latest?.respRateBpm, base: respBase),
                 word: word(lowerIsBetter(latest?.respRateBpm, base: respBase)),
-                detail: latest?.respRateBpm.map { String(format: "%.1f rpm", $0) } ?? "—",
-                tint: StrandPalette.sleepLight),       // respiratory shares the blue world
+                value: latest?.respRateBpm.map { String(format: "%.1f", $0) } ?? "—", unit: "rpm",
+                baseline: respBase.map { String(format: "%.1f rpm", $0) },
+                direction: direction(latest?.respRateBpm, base: respBase)),
         ]
     }
 
@@ -634,6 +743,15 @@ private struct RecoveryContributorsSection: View {
         let prior = repo.days.dropLast().compactMap(key).filter { $0 > 0 }
         guard prior.count >= Baselines.minNightsSeed else { return nil }
         return prior.reduce(0, +) / Double(prior.count)
+    }
+
+    /// Which way the raw reading sits from its baseline: within ±2 % reads as level.
+    private func direction(_ value: Double?, base: Double?) -> Int? {
+        guard let value, let base, base > 0 else { return nil }
+        let ratio = value / base
+        if ratio > 1.02 { return 1 }
+        if ratio < 0.98 { return -1 }
+        return 0
     }
 
     /// Centre a "higher is better" reading on a 0…100 strength: at baseline → 70, scaling up to
@@ -651,7 +769,7 @@ private struct RecoveryContributorsSection: View {
     }
     private func clampStrength(_ v: Double) -> Double { min(100, max(0, v)) }
 
-    /// The qualitative word under the bar's right edge — banded like the contributor strengths.
+    /// The qualitative word for the spoken label — banded like the contributor strengths.
     private func word(_ strength: Double?) -> String {
         guard let s = strength else { return "—" }
         switch s {
@@ -668,51 +786,18 @@ private struct RecoveryContributorsSection: View {
     }
 }
 
-/// One README "zone / stage bar": a label + qualitative word on top, the signature liquid `LiquidTube`
-/// (a metric-tinted horizontal tube that fills to the 0…100 strength, matching Today's Key-Metrics and
-/// Last-Workouts tubes), and a right-aligned raw reading. Used for the recovery contributors. A nil
-/// strength (calibrating) renders an empty tube — no fabricated fill.
-private struct ContributorBar: View {
-    let label: LocalizedStringKey
-    /// 0…100 strength; nil renders an empty (calibrating) track.
-    let strength: Double?
-    let word: String
-    let detail: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(label).strandOverline()
-                Text("· \(word)")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(strength == nil ? StrandPalette.textTertiary : tint)
-                Spacer()
-                Text(detail)
-                    .font(StrandFont.captionNumber)
-                    .foregroundStyle(StrandPalette.textSecondary)
-            }
-            // The signature liquid tube: fills to the 0…1 strength, tinted to the contributor's world.
-            // Static (posed) — a row of small bars shouldn't each run a live 30fps Canvas. Calibrating
-            // (nil) reads as an empty 0 tube.
-            LiquidTube(frac: (strength ?? 0) / 100, tint: tint, height: 10, animated: false)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(detail), \(word)")
-    }
-}
-
 // MARK: - Fitness Age
 
-/// The "Fitness Age" section: a weekly, on-device fitness comparison (NOT a biological age) computed by
-/// IntelligenceEngine from the Nes/HUNT model and read back from the "fitness_age" metricSeries under the
-/// strap source. Depends only on `repo` (the weekly value + the recent dailies that drive the readiness
-/// checklist) and `profile` (age/sex/waist), so the ~1Hz live HR stream never re-renders it.
+/// The "Fitness Age" card under "Weekly scores": a weekly, on-device fitness comparison (NOT a biological
+/// age) computed by IntelligenceEngine from the Nes/HUNT model and read back from the "fitness_age"
+/// metricSeries under the strap source. Depends only on `repo` (the weekly value + the recent dailies that
+/// drive the readiness checklist) and `profile` (age/sex/waist), so the ~1Hz live HR stream never
+/// re-renders it.
 ///
 /// Two states, both honest about coverage:
-///   • a value exists → a scenic hero "Fitness Age N" + a younger/older-than-your-age subtitle and a faint
-///     ±band caption, tappable through to the metric's full trend, with an "ⓘ How accurate is this?"
-///     affordance that reveals the readiness checklist.
+///   • a value exists → the dot-matrix age, the distance from the calendar age, a tick scale marking both,
+///     VO₂max and the 8-week change; tappable through to the metric's full trend, with an "How accurate
+///     is this?" disclosure that reveals the readiness checklist.
 ///   • no value yet → the checklist card directly, with required-missing inputs deep-linking to Settings.
 ///
 /// The checklist groups inputs by ROLE exactly as the engine reports them: "Drives your Fitness Age"
@@ -726,6 +811,10 @@ private struct FitnessAgeSection: View {
 
     /// Latest weekly Fitness Age (years) read from the "fitness_age" metricSeries, nil until loaded/computed.
     @State private var fitnessAge: Double?
+    /// The day key of that latest weekly value (the "Week of …" caption).
+    @State private var fitnessAgeDay: String?
+    /// The weekly value about eight weeks before the latest one, for the change metric. nil without history.
+    @State private var fitnessAgeEightWeeksAgo: Double?
     /// Latest estimated VO₂max (ml/kg/min) from "vo2max_est" — present even without a waist (the Uth
     /// HR-ratio fallback, #1391); a waist upgrades it to the more accurate Nes waist-based estimate.
     @State private var vo2max: Double?
@@ -736,14 +825,13 @@ private struct FitnessAgeSection: View {
     /// True while a manual "refresh Fitness Age" recompute is running (spinner in the readiness card).
     @State private var refreshing = false
 
-    /// Reveal the readiness checklist (the "ⓘ How accurate is this?" disclosure under a shown value).
+    /// Reveal the readiness checklist (the "How accurate is this?" disclosure under a shown value).
     @State private var showReadiness = false
 
     /// The two drill-downs this section can present, as ONE enum-driven sheet — two stacked
     /// `.sheet` modifiers race on macOS (only one wins) and neither carried a fixed frame, so a
     /// single item-driven sheet (mirrors WorkoutsView / FusedRecordView) is the reliable idiom.
-    /// - `.trend`: the full metric trend (existing MetricDetailView for "fitness_age"). These shared
-    ///   screens aren't hosted in a per-screen NavigationStack, so a sheet is the in-app drill-down.
+    /// - `.trend`: the full metric trend (existing MetricDetailView for "fitness_age").
     /// - `.settings`: Settings (the profile card) so a required-missing input can be filled in place.
     private enum FitnessSheet: String, Identifiable {
         case trend, settings
@@ -779,8 +867,11 @@ private struct FitnessAgeSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Fitness Age", overline: "Weekly",
-                          trailing: fitnessAge != nil ? String(localized: "vs age \(profile.age)") : nil)
+            NoopSectionTitle("Weekly scores") {
+                if let day = fitnessAgeDay, let label = weekOfLabel(day) {
+                    Text("Week of \(label)")
+                }
+            }
             content
         }
         .sheet(item: $fitnessSheet) { which in
@@ -801,45 +892,33 @@ private struct FitnessAgeSection: View {
 
     @ViewBuilder private var content: some View {
         if let age = fitnessAge {
-            heroCard(age: age)
-            // Nudge on WAIST being unset (the sole gate). VO₂max is already shown (the Uth fallback), so
-            // the prompt offers to sharpen it to the Nes waist-based estimate, not to reveal a missing number.
-            if profile.waistCm <= 0 { vo2maxSharpenPrompt }
-            if showReadiness {
-                ReadinessChecklistCard(readiness: readiness,
-                                       lead: nil,
-                                       onFix: { fitnessSheet = .settings })
-                    .transition(.opacity)
-            }
+            valueCard(age: age)
         } else if loaded {
             // No value yet: lead with a concrete countdown ("N more nights of wear…") so the user knows
             // how far off it is, then the checklist shows exactly what's still needed.
-            ReadinessChecklistCard(
-                readiness: readiness,
-                lead: fitnessReadyLead(),
-                onFix: { fitnessSheet = .settings },
-                onRefresh: {
-                    guard !refreshing else { return }
-                    refreshing = true
-                    Task {
-                        _ = await intelligence.recomputeFitnessAgeOnly()
-                        await load()
-                        refreshing = false
-                    }
-                },
-                refreshing: refreshing)
+            NoopCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    NoopCardHeader("Fitness age", icon: "hourglass", captionKey: "Weekly")
+                    ReadinessChecklist(
+                        readiness: readiness,
+                        lead: fitnessReadyLead(),
+                        onFix: { fitnessSheet = .settings },
+                        onRefresh: {
+                            guard !refreshing else { return }
+                            refreshing = true
+                            Task {
+                                _ = await intelligence.recomputeFitnessAgeOnly()
+                                await load()
+                                refreshing = false
+                            }
+                        },
+                        refreshing: refreshing)
+                }
+            }
         } else {
             // Brief read of the weekly value; honest placeholder rather than an empty gap.
-            ComingSoon(what: "Reading your Fitness Age…", symbol: "figure.run")
+            G5EmptyCard(icon: "hourglass", message: Text("Reading your Fitness Age…"))
         }
-    }
-
-    /// The hero vessel's fill (0…1): younger reads FULLER. Maps a fitness age across a 20…70-year span
-    /// onto a full→empty gauge, so a 30-year fitness age fills high and a 65 fills low. Purely a visual
-    /// anchor for the gauge — the number and the ± band carry the real read-out.
-    private func fitnessAgeFraction(_ age: Double) -> Double {
-        let lo = 20.0, hi = 70.0
-        return max(0.05, min(1, (hi - age) / (hi - lo)))
     }
 
     /// The younger/older-than-your-age subtitle as whole-phrase variants per count and direction, so
@@ -868,24 +947,122 @@ private struct FitnessAgeSection: View {
         }
     }
 
-    /// The shown-value hero: a scenic Charge-world backdrop, the big Fitness Age number, a
-    /// younger/older-than-your-age subtitle, the optional VO₂max, the ±band disclaimer, and the two
-    /// affordances (tap-through to the trend + the "How accurate is this?" disclosure).
+    /// The short distance read-out beside the number ("4 years below"), whole phrases per count and
+    /// direction. A bounded reading falls back to the full bound sentence for the same reason as above.
+    private func shortDeltaLine(years: Int, younger: Bool, bound: String) -> String {
+        if !bound.isEmpty { return ageDeltaLine(years: years, younger: younger, bound: bound) }
+        if years == 0 { return String(localized: "About your age") }
+        switch (younger, years == 1) {
+        case (true, true):   return String(localized: "1 year below")
+        case (true, false):  return String(localized: "\(years) years below")
+        case (false, true):  return String(localized: "1 year above")
+        case (false, false): return String(localized: "\(years) years above")
+        }
+    }
+
+    /// The shown-value card: the tappable score block (header, number, distance, tick scale) opens the
+    /// full "fitness_age" trend; below it VO₂max and the 8-week change, the waist nudge, and the
+    /// "How accurate is this?" disclosure.
+    private func valueCard(age: Double) -> some View {
+        let shown = Int(age.rounded())
+        let bound = fitnessAgeBoundSymbol(age)
+        let delta = Double(profile.age) - age        // +ve = fitness age younger than chronological
+        let years = Int(abs(delta).rounded())
+        let younger = delta >= 0
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                Button { fitnessSheet = .trend } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoopCardHeader("Fitness age", icon: "hourglass", captionKey: "Weekly")
+                            .padding(.bottom, 14)
+                        HStack(alignment: .lastTextBaseline, spacing: 10) {
+                            NoopDotNumber("\(bound)\(shown)", size: 58)
+                            Text("yrs ± \(Int(FitnessAgeEngine.displayBandYears))")
+                                .font(StrandFont.light(13, relativeTo: .footnote))
+                                .foregroundStyle(StrandPalette.textSecondary)
+                                .padding(.bottom, 5)
+                            Spacer(minLength: 8)
+                            if profile.age > 0 {
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(shortDeltaLine(years: years, younger: younger, bound: bound))
+                                        .font(StrandFont.book(15, relativeTo: .body))
+                                        .foregroundStyle(StrandPalette.textPrimary)
+                                        .multilineTextAlignment(.trailing)
+                                    Text("your age of \(profile.age)")
+                                        .font(StrandFont.footnote)
+                                        .foregroundStyle(StrandPalette.textTertiary)
+                                }
+                                .padding(.bottom, 4)
+                            }
+                        }
+                        if profile.age > 0 {
+                            FitnessAgeScale(fitnessAge: age, actualAge: Double(profile.age))
+                                .padding(.top, 22)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                // The spoken label carries the bound too, so a screen reader is not told a floored reading is exact.
+                .accessibilityLabel("Fitness Age \(bound)\(shown), \(ageDeltaLine(years: years, younger: younger, bound: bound)). Tap to see the trend.")
+
+                metricsRow
+                    .padding(.top, 14)
+                    .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
+                    .padding(.top, 18)
+
+                // At a bound the age has stopped carrying information: every model output past the end of
+                // the scale banks as the same number, so someone still improving sees nothing move (#2184).
+                // The VO₂max beside it is NOT clamped and is the same estimate this age derives from, so it
+                // keeps resolving where the age cannot.
+                if !bound.isEmpty, vo2max != nil {
+                    Text("Fitness Age stops here. VO₂max keeps moving.")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .padding(.top, 10)
+                }
+
+                // Nudge on WAIST being unset (the sole gate). VO₂max is already shown (the Uth fallback), so
+                // the prompt offers to sharpen it to the Nes waist-based estimate, not to reveal a missing number.
+                if profile.waistCm <= 0 { vo2maxSharpenPrompt.padding(.top, 14) }
+
+                disclosure
+                    .padding(.top, 14)
+            }
+        }
+    }
+
+    /// VO₂max (with its estimator) and the change against the weekly value about eight weeks earlier.
+    @ViewBuilder private var metricsRow: some View {
+        NoopMetricRow {
+            if let vo2 = vo2max {
+                NoopMetric(value: String(format: "%.0f", vo2), unit: "ml/kg/min",
+                           labelText: "VO₂max · \(vo2MaxEstimatorDisplayName(vo2maxEstimator))")
+            } else {
+                NoopMetric(value: "—", unit: nil, label: "VO₂max estimate")
+            }
+            if let now = fitnessAge, let then = fitnessAgeEightWeeksAgo {
+                let change = now - then
+                NoopMetric(value: (change < 0 ? "−" : (change > 0 ? "+" : "±")) + String(format: "%.1f", abs(change)),
+                           unit: String(localized: "yrs"), label: "vs 8 weeks ago")
+            }
+        }
+    }
+
     /// VO₂max is already shown from heart rate alone (the Uth fallback), so this nudges the user to add a
     /// waist to upgrade it to the more accurate Nes waist-based estimate. Tapping opens Settings — a
     /// one-step sharpen, shown only while no waist is set.
     private var vo2maxSharpenPrompt: some View {
         Button { fitnessSheet = .settings } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "lungs.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(StrandPalette.metricCyan)
+            HStack(spacing: 10) {
+                PhIcon("ruler", size: 15)
+                    .foregroundStyle(StrandPalette.textSecondary)
                 Text("Add your waist for a more accurate VO₂max")
-                    .font(StrandFont.footnote)
+                    .font(StrandFont.light(12.5, relativeTo: .footnote))
                     .foregroundStyle(StrandPalette.textSecondary)
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                PhIcon("caret-right", size: 13)
                     .foregroundStyle(StrandPalette.textTertiary)
             }
             .contentShape(Rectangle())
@@ -894,118 +1071,57 @@ private struct FitnessAgeSection: View {
         .accessibilityHint("Opens Settings to add your waist measurement")
     }
 
-    private func heroCard(age: Double) -> some View {
-        let shown = Int(age.rounded())
-        let bound = fitnessAgeBoundSymbol(age)
-        let delta = Double(profile.age) - age        // +ve = fitness age younger than chronological
-        let years = Int(abs(delta).rounded())
-        let younger = delta >= 0
-        return VStack(alignment: .leading, spacing: NoopMetrics.space4) {
-            // Tap the hero body to open the full "fitness_age" trend.
-            Button { fitnessSheet = .trend } label: {
-                HStack(alignment: .center, spacing: NoopMetrics.space5) {
-                    // The signature liquid gauge anchors the hero: a vessel tinted to the Charge world,
-                    // filled by how young the fitness age reads (younger = fuller), with the age counting
-                    // up over it. Same HeroScoreCell idiom as Today. tapPassesThrough is what actually makes
-                    // taps reach the trend Button: a plain splash gesture on the vessel swallows them.
-                    ZStack {
-                        LiquidVessel(value: fitnessAgeFraction(age), tint: StrandPalette.chargeColor,
-                                     animated: true, tapPassesThrough: true)
-                            .frame(width: 96, height: 96)
-                        CountUpNumber(value: Double(shown), font: StrandFont.rounded(30), prefix: bound)
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                            .allowsHitTesting(false)
-                    }
-                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                        Text("Fitness Age").strandOverline()
-                        Text(ageDeltaLine(years: years, younger: younger, bound: bound))
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(younger ? StrandPalette.statusPositive : StrandPalette.statusWarning)
-                    }
-                    Spacer(minLength: 0)
-                    if let vo2 = vo2max {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("VO₂max").strandOverline()
-                            Text(String(format: "%.0f", vo2))
-                                .font(StrandFont.number(30))
-                                .foregroundStyle(StrandPalette.metricCyan)
-                            Text("ml/kg/min")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                            Text("\(String(localized: "On-device")) · \(vo2MaxEstimatorDisplayName(vo2maxEstimator))")
-                                .font(StrandFont.footnote)
-                                .foregroundStyle(StrandPalette.textTertiary)
-                        }
-                    }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .accessibilityHidden(true)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(LiquidPressStyle())
-            .accessibilityElement(children: .ignore)
-            // The spoken label carries the bound too, so a screen reader is not told a floored reading is exact.
-            .accessibilityLabel("Fitness Age \(bound)\(shown), \(ageDeltaLine(years: years, younger: younger, bound: bound)). Tap to see the trend.")
-
-            // At a bound the age has stopped carrying information: every model output past the end of
-            // the scale banks as the same number, so someone still improving sees nothing move (#2184).
-            // The VO₂max in the row above is NOT clamped and is the same estimate this age derives from,
-            // so it keeps resolving where the age cannot. Pointing at it asserts nothing the model cannot
-            // support, which an extended reporting floor could not manage: two more years of range would
-            // still sit inside the ±5 band the line below states.
-            //
-            // FULL WIDTH, beside that band line, rather than inside the VStack holding the vessel and the
-            // delta: that column shares an HStack with the VO₂max readout, so a 44-character sentence
-            // would wrap in half a card and crowd the number it explains.
-            if !bound.isEmpty, vo2max != nil {
-                Text("Fitness Age stops here. VO₂max keeps moving.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-
-            Text("± \(Int(FitnessAgeEngine.displayBandYears)) yr · a fitness comparison, not a biological age")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-
-            Divider().overlay(StrandPalette.hairline)
-
-            // The honest disclosure: what we have / what we still need, grouped by what it unlocks.
+    /// The honest disclosure: what we have / what we still need, grouped by what it unlocks.
+    @ViewBuilder private var disclosure: some View {
+        VStack(alignment: .leading, spacing: 14) {
             Button {
                 withAnimation(StrandMotion.interactive) { showReadiness.toggle() }
             } label: {
-                HStack(spacing: NoopMetrics.space2) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(StrandPalette.accent)
-                        .accessibilityHidden(true)
+                HStack(spacing: 10) {
+                    PhIcon("info", size: 15)
+                        .foregroundStyle(StrandPalette.textSecondary)
                     Text("How accurate is this?")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textPrimary)
+                        .font(StrandFont.light(12.5, relativeTo: .footnote))
+                        .foregroundStyle(StrandPalette.textSecondary)
                     Spacer()
-                    Image(systemName: showReadiness ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
+                    PhIcon(showReadiness ? "caret-up" : "caret-down", size: 13)
                         .foregroundStyle(StrandPalette.textTertiary)
-                        .accessibilityHidden(true)
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(LiquidPressStyle())
+            .buttonStyle(.plain)
             // Whole-string key per variant (never a stitched Hide/Show fragment).
             .accessibilityLabel(showReadiness
                 ? "How accurate is this? Hide the data behind your Fitness Age"
                 : "How accurate is this? Show the data behind your Fitness Age")
+
+            if showReadiness {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("± \(Int(FitnessAgeEngine.displayBandYears)) yr · a fitness comparison, not a biological age")
+                        .font(StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                    ReadinessChecklist(readiness: readiness, lead: nil, onFix: { fitnessSheet = .settings })
+                }
+                .transition(.opacity)
+            }
         }
-        .padding(NoopMetrics.space5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Apple-flat WHOOP card: a plain frosted surface tinted to the Charge (green) world —
-        // no scenic starfield / bloom, no gold border. Fill contrast carries the edge.
-        .background {
-            FrostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: NoopMetrics.cardRadius)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+        .padding(.top, 14)
+        .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
     }
+
+    /// "28 Sep" — the first day of the week holding the latest weekly value.
+    private func weekOfLabel(_ day: String) -> String? {
+        guard let date = Self.dayParser.date(from: day),
+              let start = Calendar.current.dateInterval(of: .weekOfYear, for: date)?.start else { return nil }
+        return start.formatted(.dateTime.day().month(.abbreviated).locale(AppLanguage.activeLocale))
+    }
+
+    private static let dayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     /// Load the latest weekly Fitness Age (+ optional VO₂max) from the strap's metricSeries. Uses the
     /// same `exploreSeries(key:source:)` path every other metric on this screen reads, with source
@@ -1015,6 +1131,15 @@ private struct FitnessAgeSection: View {
         let faPts = await repo.exploreSeries(key: "fitness_age", source: "my-whoop")
         let vo2Resolution = await repo.resolvedSeries(key: "vo2max_est", source: "my-whoop")
         fitnessAge = faPts.last?.value
+        fitnessAgeDay = faPts.last?.day
+        // The weekly value nearest to (at or before) eight weeks before the latest one.
+        if let last = faPts.last, let lastDate = Self.dayParser.date(from: last.day),
+           let target = Calendar.current.date(byAdding: .day, value: -56, to: lastDate) {
+            let targetKey = Self.dayParser.string(from: target)
+            fitnessAgeEightWeeksAgo = faPts.last(where: { $0.day <= targetKey })?.value
+        } else {
+            fitnessAgeEightWeeksAgo = nil
+        }
         if let latest = vo2Resolution.points.last {
             vo2max = latest.value
             let tag = await repo.scoreProvenanceTag(
@@ -1028,9 +1153,89 @@ private struct FitnessAgeSection: View {
     }
 }
 
+/// The Fitness Age tick scale: 1 pt ticks across a span around both ages, a glowing marker at the
+/// fitness age and a dashed marker at the calendar age, with both labelled underneath.
+private struct FitnessAgeScale: View {
+    let fitnessAge: Double
+    let actualAge: Double
+
+    /// The span shown: at least ±6 years beyond both ages, snapped out to multiples of five.
+    private var span: ClosedRange<Double> {
+        var lo = ((min(fitnessAge, actualAge) - 6) / 5).rounded(.down) * 5
+        var hi = ((max(fitnessAge, actualAge) + 6) / 5).rounded(.up) * 5
+        if hi - lo < 20 { lo -= 5; hi += 5 }
+        return lo...hi
+    }
+
+    private func position(_ v: Double) -> Double {
+        let s = span
+        return min(max((v - s.lowerBound) / (s.upperBound - s.lowerBound), 0), 1)
+    }
+
+    var body: some View {
+        let pf = position(fitnessAge), pa = position(actualAge)
+        VStack(spacing: 8) {
+            NoopTickScale(marker: pf, height: 20)
+                .overlay {
+                    GeometryReader { geo in
+                        Path { p in
+                            let x = geo.size.width * pa
+                            p.move(to: CGPoint(x: x, y: -6))
+                            p.addLine(to: CGPoint(x: x, y: geo.size.height + 6))
+                        }
+                        .stroke(Color.white.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                    }
+                }
+            GeometryReader { geo in
+                let w = geo.size.width
+                // Two marker labels closer than this would overlap, so they merge into one.
+                let close = abs(pf - pa) * w < 70
+                let half: CGFloat = close ? 62 : 30
+                let centres = close ? [clampX((pf + pa) / 2 * w, w: w, half: half)]
+                                    : [clampX(pf * w, w: w, half: half), clampX(pa * w, w: w, half: half)]
+                let leftEdge = (centres.min() ?? 0) - half
+                let rightEdge = (centres.max() ?? w) + half
+                ZStack(alignment: .topLeading) {
+                    // End labels, dropped where a marker label would collide with them.
+                    if leftEdge > 24 {
+                        Text(verbatim: "\(Int(span.lowerBound))").fixedSize()
+                    }
+                    if w - rightEdge > 24 {
+                        Text(verbatim: "\(Int(span.upperBound))").fixedSize()
+                            .frame(width: w, alignment: .trailing)
+                    }
+                    if close {
+                        (Text("\(Int(fitnessAge.rounded())) fitness") + Text(verbatim: " · ")
+                            + Text("\(Int(actualAge)) actual"))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .fixedSize()
+                            .position(x: centres[0], y: 7)
+                    } else {
+                        Text("\(Int(fitnessAge.rounded())) fitness")
+                            .foregroundStyle(StrandPalette.textPrimary)
+                            .fixedSize()
+                            .position(x: centres[0], y: 7)
+                        Text("\(Int(actualAge)) actual")
+                            .fixedSize()
+                            .position(x: centres[1], y: 7)
+                    }
+                }
+            }
+            .frame(height: 14)
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func clampX(_ x: CGFloat, w: CGFloat, half: CGFloat) -> CGFloat {
+        min(max(x, half), w - half)
+    }
+}
+
 /// The Fitness Age not-ready lead: a concrete countdown of nights-of-wear still needed (from the shared
 /// `nightsUntilReady`), noting the profile basics only when they're actually missing. File-scope (not a
-/// view method) so BOTH the Health hub's `FitnessAgeCard` and the Today card's `MetricDetailView`
+/// view method) so BOTH the Health hub's Fitness Age card and the Today card's `MetricDetailView`
 /// tap-through render the SAME copy from one source. Kept WORD-FOR-WORD identical to the Android
 /// `fitnessReadyLead` so the two platforms match.
 func fitnessReadyLeadCopy(rhrDays: Int, hasAge: Bool, hasSex: Bool) -> String {
@@ -1046,11 +1251,12 @@ func fitnessReadyLeadCopy(rhrDays: Int, hasAge: Bool, hasSex: Bool) -> String {
     }
 }
 
-/// The readiness checklist card: an optional lead line, then the engine's `items` as ✓/⚠/○ rows with
-/// their `detail` text, GROUPED by `.role` into "Drives your Fitness Age" and "Sharpens your VO₂max".
+/// The readiness checklist: an optional lead line, then the engine's `items` as status rows with their
+/// `detail` text, GROUPED by `.role` into "Drives your Fitness Age" and "Sharpens your VO₂max".
 /// A required-but-missing input shows a "Fix in Settings" affordance (the engine's required+missing
 /// rows are age/sex; resting-HR can only be earned by wearing the strap, so it gets no fix button).
-private struct ReadinessChecklistCard: View {
+/// Card-less, so it reads inside the Fitness Age card both as the disclosure and as the not-ready state.
+private struct ReadinessChecklist: View {
     let readiness: FitnessAgeReadiness
     /// Optional intro line shown above the groups (e.g. the "a few more days" no-value message).
     /// Already-localized text (from `fitnessReadyLead()`, which returns `String(localized:)`), so it's a
@@ -1067,40 +1273,33 @@ private struct ReadinessChecklistCard: View {
     private var unlocksVO2: [FitnessReadinessItem] { readiness.items.filter { $0.role == .unlocksVO2max } }
 
     var body: some View {
-        NoopCard(tint: StrandPalette.chargeColor) {
-            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
-                HStack(spacing: NoopMetrics.rowSpacing) {
-                    confidencePill
-                    Spacer(minLength: 0)
-                    // Force-recompute affordance: NOOP scores Fitness Age weekly, so this applies it NOW
-                    // from stored data. Spinner while it runs.
-                    if let onRefresh {
-                        if refreshing {
-                            ProgressView().controlSize(.small).tint(StrandPalette.accent)
-                        } else {
-                            Button(action: onRefresh) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(StrandFont.subhead)
-                                    .foregroundStyle(StrandPalette.accent)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Refresh Fitness Age now")
-                        }
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                confidencePill
+                Spacer(minLength: 0)
+                // Force-recompute affordance: NOOP scores Fitness Age weekly, so this applies it NOW
+                // from stored data. Spinner while it runs.
+                if let onRefresh {
+                    if refreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        NoopCircleButton("arrows-clockwise", size: 34,
+                                         accessibilityLabel: "Refresh Fitness Age now", action: onRefresh)
                     }
                 }
-                if let lead {
-                    Text(lead)
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                group(title: "Drives your Fitness Age", items: drivesAge)
-                group(title: "Sharpens your VO₂max", items: unlocksVO2)
-                Text("Built from published methods (Nes/HUNT) on \(Platform.deviceNounPhrase). It's a fitness comparison against an average peer your age, not a biological or medical age.")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            if let lead {
+                Text(lead)
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            group(title: "Drives your Fitness Age", items: drivesAge)
+            group(title: "Sharpens your VO₂max", items: unlocksVO2)
+            Text("Built from published methods (Nes/HUNT) on \(Platform.deviceNounPhrase). It's a fitness comparison against an average peer your age, not a biological or medical age.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1116,8 +1315,8 @@ private struct ReadinessChecklistCard: View {
     @ViewBuilder
     private func group(title: LocalizedStringKey, items: [FitnessReadinessItem]) -> some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
-                Text(title).strandOverline()
+            VStack(alignment: .leading, spacing: 10) {
+                NoopOverline(title)
                 ForEach(items, id: \.key) { item in
                     readinessRow(item)
                 }
@@ -1132,15 +1331,15 @@ private struct ReadinessChecklistCard: View {
         // coverage come from wearing the strap, so those get no fix button.
         let fixable = item.status != .satisfied
             && (item.key == "age" || item.key == "sex" || item.key == "bodyMetrics" || item.key == "waist")
-        let row = HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Image(systemName: statusIcon(item.status))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(statusColor(item.status))
+        let row = HStack(alignment: .top, spacing: 12) {
+            PhIcon(statusIcon(item.status), weight: item.status == .missing ? .light : .fill, size: 16)
+                .foregroundStyle(item.status == .missing ? StrandPalette.textTertiary : StrandPalette.textPrimary)
                 .frame(width: 18)
+                .padding(.top, 1)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.label)
-                    .font(StrandFont.body)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
                     .foregroundStyle(StrandPalette.textPrimary)
                 Text(item.detail)
                     .font(StrandFont.footnote)
@@ -1150,8 +1349,12 @@ private struct ReadinessChecklistCard: View {
             if fixable {
                 Button(action: onFix) {
                     Text("Fix in Settings")
-                        .font(StrandFont.footnote.weight(.semibold))
-                        .foregroundStyle(StrandPalette.accent)
+                        .font(StrandFont.book(12, relativeTo: .caption))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+                        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(item.label): \(item.detail). Fix in Settings.")
@@ -1170,16 +1373,9 @@ private struct ReadinessChecklistCard: View {
 
     private func statusIcon(_ s: FitnessReadinessStatus) -> String {
         switch s {
-        case .satisfied: return "checkmark.circle.fill"
-        case .partial:   return "exclamationmark.triangle.fill"
+        case .satisfied: return "check-circle"
+        case .partial:   return "warning-circle"
         case .missing:   return "circle"
-        }
-    }
-    private func statusColor(_ s: FitnessReadinessStatus) -> Color {
-        switch s {
-        case .satisfied: return StrandPalette.statusPositive
-        case .partial:   return StrandPalette.statusWarning
-        case .missing:   return StrandPalette.textTertiary
         }
     }
     private func statusWord(_ s: FitnessReadinessStatus) -> String {
@@ -1193,7 +1389,7 @@ private struct ReadinessChecklistCard: View {
 
 // MARK: - Vitality / Body Age
 
-/// The "Vitality" section: a weekly wellness score (0–100) + a Body Age in years, computed by
+/// The "Vitality" card: a weekly wellness score (0–100) + a Body Age in years, computed by
 /// IntelligenceEngine from the published mortality-hazard model and read back from the metricSeries.
 /// A wellness trend from your habits — NOT a clinical biological age. Recomputes the live best/worst
 /// factor the same way the engine does, for the plain-English "why".
@@ -1214,8 +1410,7 @@ private struct VitalitySection: View {
         // Aggregate EXACTLY as the stored headline does (IntelligenceEngine), so this "what's driving it"
         // breakdown reconciles with the Vitality / Body Age number it explains rather than being recomputed
         // on different statistics: resting HR + HRV are MEDIANED (robust to one outlier night), sleep +
-        // steps are MEANED. Using the mean for all four let a single bad RHR/HRV reading drift the breakdown
-        // out of step with the median-based headline (code review).
+        // steps are MEANED.
         return VitalityEngine.contributions(.init(
             chronoAge: Double(profile.age),
             restingHR: rhrs.isEmpty ? nil : IntelligenceEngine.medianOf(rhrs),
@@ -1227,82 +1422,102 @@ private struct VitalitySection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Vitality", overline: "Weekly",
-                          trailing: bodyAge != nil ? String(localized: "Body Age \(Int((bodyAge ?? 0).rounded()))") : nil)
+        Group {
             if let v = vitality, let ba = bodyAge {
-                hero(vitality: v, bodyAge: ba)
+                card(vitality: v, bodyAge: ba)
             } else if loaded {
-                ComingSoon(what: "A few more days and we can show your Vitality.", symbol: "sparkles")
+                G5EmptyCard(icon: "heart-half", message: Text("A few more days and we can show your Vitality."))
             } else {
-                ComingSoon(what: "Reading your Vitality…", symbol: "sparkles")
+                G5EmptyCard(icon: "heart-half", message: Text("Reading your Vitality…"))
             }
         }
         .task(id: repo.refreshSeq) { await load() }
     }
 
-    private func hero(vitality v: Double, bodyAge ba: Double) -> some View {
+    private func card(vitality v: Double, bodyAge ba: Double) -> some View {
         let delta = Double(profile.age) - ba
         let younger = delta >= 0
         let yrs = Int(abs(delta).rounded())
         let sorted = contributions.sorted { $0.lnHazard < $1.lnHazard }
-        let best = sorted.first
-        let worst = sorted.last
-        return VStack(alignment: .leading, spacing: NoopMetrics.space4) {
-            HStack(alignment: .center, spacing: NoopMetrics.space5) {
-                // The weekly Vitality score (0…100) as the signature liquid gauge: a vessel tinted to the
-                // Charge world, filled to the score, with the number counting up over it (Today's
-                // HeroScoreCell idiom). Taps splash the gauge; the number is hit-transparent.
-                VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                    Text("Vitality").strandOverline()
-                    ZStack {
-                        LiquidVessel(value: max(0, min(1, v / 100)), tint: StrandPalette.chargeColor, animated: true)
-                            .frame(width: 108, height: 108)
-                        VStack(spacing: 0) {
-                            CountUpNumber(value: v, font: StrandFont.rounded(38))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
-                            Text("of 100").font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+        let best = sorted.first.flatMap { $0.lnHazard < 0 ? $0 : nil }
+        let worst = sorted.last.flatMap { $0.lnHazard > 0 ? $0 : nil }
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopCardHeader("Vitality", icon: "heart-half", captionKey: "Weekly")
+                    .padding(.bottom, 14)
+                HStack(alignment: .lastTextBaseline, spacing: 10) {
+                    NoopDotNumber("\(Int(v.rounded()))", size: 58)
+                        .accessibilityLabel("Vitality \(Int(v.rounded())) out of 100")
+                    Text("of 100")
+                        .font(StrandFont.light(13, relativeTo: .footnote))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .padding(.bottom, 5)
+                    Spacer(minLength: 8)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(verbatim: "\(Int(ba.rounded()))")
+                                .font(StrandFont.value(21))
+                                .tracking(-0.42)
+                            Text("yrs")
+                                .font(StrandFont.book(10))
+                                .foregroundStyle(StrandPalette.textSecondary)
                         }
-                        .allowsHitTesting(false)
+                        Text("Body Age")
+                            .font(StrandFont.light(10.5))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                        Text(bodyAgeDeltaLine(yrs: yrs, younger: younger))
+                            .font(StrandFont.light(10.5))
+                            .foregroundStyle(StrandPalette.textTertiary)
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Vitality \(Int(v.rounded())) out of 100")
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .padding(.bottom, 4)
+                    .accessibilityElement(children: .combine)
                 }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: NoopMetrics.space1) {
-                    Text("Body Age").strandOverline()
-                    CountUpText(value: ba,
-                                format: { "\(Int($0.rounded()))" },
-                                font: StrandFont.number(34),
-                                color: StrandPalette.textPrimary)
-                    Text(bodyAgeDeltaLine(yrs: yrs, younger: younger))
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(younger ? StrandPalette.statusPositive : StrandPalette.statusWarning)
+                NoopTrack(fraction: v / 100, height: 10)
+                    .padding(.top, 18)
+                if best != nil || worst != nil {
+                    // Two equal columns even when only one factor applies, so a lone tile keeps its size.
+                    HStack(alignment: .top, spacing: 10) {
+                        if let best { factorTile(best, helping: true) }
+                        if let worst { factorTile(worst, helping: false) }
+                        if best == nil || worst == nil { Color.clear.frame(maxWidth: .infinity, maxHeight: 1) }
+                    }
+                    .padding(.top, 16)
                 }
+                Text("A wellness estimate from your habits, not a clinical biological age.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .padding(.top, 14)
             }
-            if (best?.lnHazard ?? 0) < 0 || (worst?.lnHazard ?? 0) > 0 {
-                Divider().overlay(StrandPalette.hairline)
-                if let best, best.lnHazard < 0 {
-                    Text("Helping most: \(best.label)")
-                        .font(StrandFont.footnote).foregroundStyle(StrandPalette.statusPositive)
-                }
-                if let worst, worst.lnHazard > 0 {
-                    Text("Holding you back: \(worst.label)")
-                        .font(StrandFont.footnote).foregroundStyle(StrandPalette.statusWarning)
-                }
-            }
-            Text("A wellness estimate from your habits, not a clinical biological age.")
-                .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
         }
-        .padding(NoopMetrics.space5)
+    }
+
+    /// One "Helping most" / "Holding you back" tile.
+    private func factorTile(_ c: VitalityEngine.Contribution, helping: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PhIcon(helping ? "arrow-up-right" : "arrow-down-right", size: 13)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.08)))
+                .padding(.bottom, 10)
+            Group { helping ? Text("Helping most") : Text("Holding you back") }
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+            // The engine's label is a fixed English name; routed through the catalogue so it reads in the
+            // app's language.
+            Text(LocalizedStringKey(c.label))
+                .font(StrandFont.book(14, relativeTo: .subheadline))
+                .foregroundStyle(StrandPalette.textPrimary)
+                .padding(.top, 2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Apple-flat WHOOP card: a plain frosted surface tinted to the Charge (green) world —
-        // no scenic starfield / bloom, no gold border. Fill contrast carries the edge.
-        .background {
-            FrostedCardSurface(tint: StrandPalette.chargeColor, cornerRadius: NoopMetrics.cardRadius)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+        .accessibilityElement(children: .combine)
     }
 
     /// The Body Age delta as whole-phrase variants per count and direction, so translators see
@@ -1324,10 +1539,10 @@ private struct VitalitySection: View {
     }
 }
 
-// MARK: - Vitals grid (uniform StatTiles)
+// MARK: - Vital signs grid
 
-/// Static vitals grid, split into its own view so it depends only on `repo` and is
-/// not re-rendered by the ~1Hz live HR stream.
+/// The vital-signs grid, split into its own view so it depends only on `repo` and is
+/// not re-rendered by the ~1Hz live HR stream. Each tile opens the metric's detail.
 private struct VitalsSection: View {
     @EnvironmentObject var repo: Repository
 
@@ -1347,6 +1562,9 @@ private struct VitalsSection: View {
     @State private var spo2CandidateByDay: [String: Double] = [:]
     @State private var hrvOverCountByDay: [String: Double] = [:]   // #1118
 
+    /// The vital whose detail sheet is open.
+    @State private var detail: VitalDetailTarget?
+
     var body: some View {
         let readings = BodyVitalSigns.readings(
             sourceRows: repo.vitalMetricRows,
@@ -1356,26 +1574,35 @@ private struct VitalsSection: View {
             skinTempPreferred: SkinTempDisplay.Kind(rawValue: skinTempDisplayRaw) ?? .absolute   // #1846
         )
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Vital Signs", overline: "Latest", trailing: BodyVitalSigns.latestDayLabel(readings))
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 168), spacing: NoopMetrics.gap)],
-                alignment: .leading,
-                spacing: NoopMetrics.gap
-            ) {
-                ForEach(Array(readings.enumerated()), id: \.element.id) { idx, v in
-                    // Each headline vital is now a liquid tile: the signature LiquidVessel gauge tinted
-                    // to the metric's colour world (rose RHR, purple HRV, cyan SpO₂, amber skin temp),
-                    // filled to the metric's fraction, with the value counting up beside it and the same
-                    // banding caption + sparkline the classic tile carried. Every binding + accessibility
-                    // label is preserved — this is the liquid restyle of the flat StatTile.
-                    LiquidVitalTile(reading: v)
-                        .staggeredAppear(index: idx)
+            NoopSectionTitle("Vital signs") {
+                if let day = BodyVitalSigns.latestDayLabel(readings) {
+                    Text("Latest") + Text(verbatim: " · \(day)")
+                }
+            }
+            Grid(horizontalSpacing: NoopMetrics.gap, verticalSpacing: NoopMetrics.gap) {
+                ForEach(Array(stride(from: 0, to: readings.count, by: 2)), id: \.self) { i in
+                    GridRow {
+                        tile(readings[i])
+                        if i + 1 < readings.count {
+                            tile(readings[i + 1])
+                        } else {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
+                    }
                 }
             }
             Text("Once NOOP has 14 nights of history, in-range compares each vital to your own baseline (approximate, not medical advice); until then, typical adult ranges apply.")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+                .padding(.top, -2)
+        }
+        .sheet(item: $detail) { target in
+            NavigationStack { MetricDetailView(metric: target.metric) }
+            #if os(macOS)
+            .frame(width: 900, height: 820)
+            #endif
         }
         .task(id: PuffinExperiment.spo2CandidateDisplayEnabled) {
             // #1118: load the per-night HRV over-count flags (always — no toggle) so the HRV tile can
@@ -1398,88 +1625,125 @@ private struct VitalsSection: View {
             spo2CandidateByDay = Dictionary(pts.map { ($0.day, $0.value) }, uniquingKeysWith: { a, _ in a })
         }
     }
+
+    /// A tile, tappable through to the metric detail when the catalog carries that vital.
+    @ViewBuilder private func tile(_ reading: BodyVitalReading) -> some View {
+        if let metric = VitalDetailTarget.metric(forVital: reading.key) {
+            Button { detail = VitalDetailTarget(metric: metric) } label: { VitalTile(reading: reading) }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the trend")
+        } else {
+            VitalTile(reading: reading)
+        }
+    }
 }
 
-// MARK: - Liquid vital tile (vessel gauge + count-up value + banding caption + spark trail)
+/// The metric a vital tile opens.
+private struct VitalDetailTarget: Identifiable {
+    let metric: MetricDescriptor
+    var id: String { metric.id }
 
-/// One headline vital sign rendered in the liquid finish: a metric-tinted `LiquidVessel` gauge (filled
-/// to the vital's physiological fraction), the value counting up beside it, the banded state caption, and
-/// the same sparkline trail the classic StatTile drew. A frosted `NoopCard` tinted to the metric's accent,
-/// matching Today's Key-Metrics tiles. Presentation-only: value, banding and source are unchanged — this
-/// just gives each vital a real liquid gauge instead of a flat tile.
-private struct LiquidVitalTile: View {
+    /// The catalog metric for a `BodyVitalReading.key` (strap source). Raw SpO₂ has no catalog entry.
+    static func metric(forVital key: String) -> MetricDescriptor? {
+        let catalogKey: String
+        switch key {
+        case "resp": catalogKey = "resp_rate"
+        case "spo2": catalogKey = "spo2"
+        case "rhr":  catalogKey = "rhr"
+        case "hrv":  catalogKey = "hrv"
+        case "skin": catalogKey = "skin_temp"
+        default:     return nil
+        }
+        return MetricCatalog.all.first { $0.key == catalogKey }
+    }
+}
+
+// MARK: - Vital tile
+
+/// One vital sign: an icon + label header, the value, a dot-matrix state tag and the reading's caption
+/// (day · source · state, plus any caveat). Presentation-only: value, banding and source are unchanged.
+private struct VitalTile: View {
     let reading: BodyVitalReading
 
     var body: some View {
-        NoopCard(padding: 14, tint: reading.accent) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("\(reading.label)").strandOverline()
-                Spacer(minLength: 8)
-                HStack(alignment: .center, spacing: 10) {
-                    // The signature liquid gauge — static (posed) so a grid of them doesn't each run a live
-                    // 30fps Canvas. nil fraction (no value) reads as an empty vessel, no fabricated fill.
-                    LiquidVessel(value: vesselFraction, tint: reading.metricColor, animated: false)
-                        .frame(width: 34, height: 34)
-                    if let value = reading.value {
-                        // The value counts up on appear (snaps under Reduce Motion), formatted exactly as
-                        // the classic tile did (the reading's own formatter + unit), so it's byte-identical.
-                        CountUpText(value: value,
-                                    format: { "\(reading.format($0)) \(reading.unit)" },
-                                    font: StrandFont.number(24),
-                                    color: reading.accent)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                    } else {
-                        Text("—").font(StrandFont.number(24)).foregroundStyle(reading.accent)
-                    }
-                    Spacer(minLength: 0)
-                }
-                #if !os(watchOS)
-                if let sparkline = reading.sparkline, sparkline.count > 1 {
-                    Sparkline(values: sparkline, gradient: Gradient(colors: [reading.metricColor.opacity(0.5), reading.metricColor]))
-                        .frame(height: 22).padding(.top, 6)
-                        .accessibilityHidden(true)
-                }
-                #endif
-                Text(reading.stateCaption)
-                    .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary).lineLimit(1)
-                    .padding(.top, 4)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                PhIcon(icon, size: 15).opacity(0.9)
+                Text(verbatim: reading.label)
+                    .font(StrandFont.book(13, relativeTo: .footnote))
+                    .lineLimit(1)
             }
+            .foregroundStyle(StrandPalette.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(verbatim: reading.value.map { reading.format($0) } ?? "—")
+                    .font(StrandFont.value(27, weight: 300))
+                    .tracking(-0.54)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if reading.value != nil {
+                    Text(verbatim: reading.unit)
+                        .font(StrandFont.book(11))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.top, 12)
+            NoopTag(verbatim: tagWord, size: 10.5)
+                .fixedSize()
+                .padding(.top, 12)
+            Text(verbatim: reading.stateCaption)
+                .font(StrandFont.light(10.5, relativeTo: .caption2))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
+            Spacer(minLength: 0)
         }
-        .frame(minHeight: NoopMetrics.tileHeight, maxHeight: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.top, 15)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .noopPanel()
+        .contentShape(RoundedRectangle(cornerRadius: NoopVisualStyle.cardRadius, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.accessibilityText)
     }
 
-    /// The vessel's fill (0…1): the vital's value mapped onto its physiological span, matching Today's
-    /// per-metric `fracOver` denominators (HRV/120, RHR/100, respiratory/24, SpO₂ across 90…100, absolute
-    /// skin temp across 33…38 °C). nil when there's no value, so the gauge reads empty rather than faked.
-    private var vesselFraction: Double? {
-        guard let v = reading.value else { return nil }
-        func over(_ span: Double) -> Double { max(0.02, min(1, v / span)) }
-        func across(_ lo: Double, _ hi: Double) -> Double { max(0.02, min(1, (v - lo) / (hi - lo))) }
+    private var icon: String {
         switch reading.key {
-        case "hrv":        return over(120)
-        case "rhr":        return over(100)
-        case "resp_rate":  return over(24)
-        case "spo2":       return across(90, 100)
-        case "spo2raw":    return across(0, 65535)   // raw PPG ADC mean over the u16 sensor span (#93)
-        case "skin_temp":
-            // Absolute skin temp (>= 20 °C) maps across a plausible wrist band; a small ±deviation
-            // maps around a half-full centre so a normal night reads mid-gauge, not empty.
-            return VitalBands.isAbsoluteSkinTemp(v) ? across(33, 38) : max(0.02, min(1, 0.5 + v / 4))
-        default:           return across(0, max(1, v * 1.5))
+        case "resp":    return "wind"
+        case "spo2":    return "drop"
+        case "spo2raw": return "drop-half"
+        case "rhr":     return "heart"
+        case "hrv":     return "wave-sine"
+        case "skin":    return "thermometer-simple"
+        default:        return "pulse"
+        }
+    }
+
+    /// The short state word for the tag — the same verdict the caption states, from the same banding.
+    private var tagWord: String {
+        // Raw SpO₂ is a device-dependent ADC, never judged in or out of range (#93).
+        if reading.key == "spo2raw" {
+            return reading.banding.band == .noData ? String(localized: "No data") : String(localized: "Uncalibrated")
+        }
+        switch (reading.banding.band, reading.banding.basis) {
+        case (.noData, _):               return String(localized: "No data")
+        case (.inRange, .personal):      return String(localized: "In range")
+        case (.outOfRange, .personal):   return String(localized: "Off baseline")
+        case (.inRange, .population):    return String(localized: "Typical")
+        case (.outOfRange, .population): return String(localized: "Outside range")
         }
     }
 }
 
-// MARK: - Skin-temperature suite (v5: illness heads-up · body clock · cycle awareness)
+// MARK: - Skin-temperature suite (v5: nightly chart · illness heads-up · body clock · cycle awareness)
 
-/// The v5 skin-temperature section: the confounder-suppressed illness "heads-up", the body-clock
-/// estimate, and the OPT-IN cycle awareness card — each rendered from a pure StrandAnalytics engine
-/// result the analytics pass computed and `AppModel` publishes. Honest throughout: the heads-up only
-/// shows when the engine returns a non-quiet level; cycle awareness shows the opt-in card until the user
-/// turns it on (default OFF); the body clock shows nil-state copy until it can read a rhythm.
+/// The v5 skin-temperature section: the last nights' deviation chart, the confounder-suppressed illness
+/// "heads-up", the body-clock estimate, and the OPT-IN cycle awareness — each rendered from a pure
+/// StrandAnalytics engine result the analytics pass computed and `AppModel` publishes. Honest throughout:
+/// the heads-up only shows when the engine returns a non-quiet level; cycle awareness shows the opt-in
+/// until the user turns it on (default OFF); the body clock shows nil-state copy until it can read a rhythm.
 private struct SkinTempSection: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var repo: Repository
@@ -1491,14 +1755,30 @@ private struct SkinTempSection: View {
     @AppStorage(AppModel.cycleAwarenessHiddenKey) private var cycleHidden = false
     @State private var cycleTrackerPresented = false
 
+    @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    private var fahrenheit: Bool {
+        let system = UnitSystem(rawValue: unitSystemRaw) ?? .metric
+        return UnitPrefs.resolveTemperature(system: system, override: temperatureRaw) == .fahrenheit
+    }
+
     /// Whether the cycle-awareness opt-in is offered for this profile (#801). Delegates to the shared
     /// ``ProfileStore/cycleAwarenessApplies`` gate so Health + Automations stay in lockstep: cycle phase
     /// is read from the menstrual skin-temperature shift, so the opt-in is NOT shown for male profiles.
     private var cycleOptInApplies: Bool { model.profile.cycleAwarenessApplies && !cycleHidden }
 
+    /// The last 30 days' nightly skin-temperature DEVIATIONS (the on-device ±°C vs baseline). Imported
+    /// absolute temperatures are left out: they have no baseline to sit against.
+    private var nights: [(day: String, dev: Double)] {
+        repo.days.suffix(30).compactMap { d in
+            guard let v = d.skinTempDevC, !VitalBands.isAbsoluteSkinTemp(v) else { return nil }
+            return (day: d.day, dev: v)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Skin temperature", overline: "From your nightly sensor")
+            chartCard
 
             // 1. Illness heads-up — only when the engine returned something worth surfacing.
             if let illness = model.illnessSignal, illness.level != .quiet {
@@ -1510,11 +1790,9 @@ private struct SkinTempSection: View {
                 BodyClockCard(estimate: phase)
             }
 
-            // 3. Cycle awareness: opt-in, and gated on profile sex (#801). Cycle phase is derived
-            // from the menstrual temperature shift, so the opt-in is only offered to profiles it can
-            // apply to (female / nonbinary); it is NOT rendered for male profiles. If a profile that
-            // previously enabled it later switches to male, we still honour the existing awareness card
-            // rather than silently hiding their data; only the OPT-IN invitation is gated.
+            // 3. Cycle awareness: opt-in, and gated on profile sex (#801). If a profile that previously
+            // enabled it later switches to male, we still honour the existing awareness card rather than
+            // silently hiding their data; only the OPT-IN invitation (in the chart card) is gated.
             if cycleEnabled, let cycle = model.cyclePhase {
                 CycleAwarenessCard(result: cycle, curve: model.cycleCurve,
                                    onLogPeriod: {
@@ -1531,22 +1809,6 @@ private struct SkinTempSection: View {
                                        model.cycleAwarenessEnabled = false
                                        Task { await model.refreshV5Signals() }
                                    })
-            } else if !cycleEnabled && cycleOptInApplies {
-                CycleAwarenessOptInCard(onEnable: {
-                    cycleEnabled = true
-                    model.cycleAwarenessEnabled = true
-                    Task { await model.refreshV5Signals() }
-                })
-            }
-
-            // Honest empty state when the suite has nothing to show yet. The opt-in card normally fills
-            // the section when cycle is OFF, but it is gated off for male profiles (#801), so the
-            // section can also be blank when the opt-in doesn't apply AND nothing else has data. Show
-            // the empty state in either case (cycle ON but thin, OR opt-in hidden with no other signal).
-            if (cycleEnabled || !cycleOptInApplies)
-                && model.illnessSignal == nil && model.circadianPhase == nil && model.cyclePhase == nil {
-                ComingSoon(what: "Wear the strap overnight and these read from your nightly skin temperature.",
-                           symbol: "thermometer.medium")
             }
         }
         .sheet(isPresented: $cycleTrackerPresented) {
@@ -1557,57 +1819,190 @@ private struct SkinTempSection: View {
             }
         }
     }
+
+    /// The nightly chart card, with the cycle-awareness opt-in (or the honest empty note) at its foot.
+    private var chartCard: some View {
+        let nights = self.nights
+        let unit = SkinTempDisplay.unitSymbol(kind: .deviation, fahrenheit: fahrenheit)
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopCardHeader("Skin temperature", icon: "thermometer-simple") {
+                    if nights.count > 1 {
+                        Text("\(nights.count) nights") + Text(verbatim: " · \(unit) ") + Text("vs baseline")
+                    }
+                }
+                if nights.count > 1 {
+                    SkinTempNightsChart(values: nights.map(\.dev), fahrenheit: fahrenheit)
+                        .frame(height: 104)
+                        .padding(.top, 6)
+                    axisLabels(nights)
+                        .padding(.leading, 24)
+                        .padding(.top, 8)
+                }
+
+                // The cycle-awareness opt-in lives at the foot of the chart it would annotate. Shown only
+                // while OFF and offered to this profile (#801).
+                if !cycleEnabled && cycleOptInApplies {
+                    CycleAwarenessOptInCard(onEnable: {
+                        cycleEnabled = true
+                        model.cycleAwarenessEnabled = true
+                        Task { await model.refreshV5Signals() }
+                    })
+                    .padding(.top, nights.count > 1 ? 16 : 0)
+                } else if nights.count < 2 && model.illnessSignal == nil && model.circadianPhase == nil
+                            && model.cyclePhase == nil {
+                    // Honest empty state when the suite has nothing to show yet.
+                    NoopInsightRow("Wear the strap overnight and these read from your nightly skin temperature.",
+                                   icon: "info")
+                        .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    /// Date captions under the chart: three evenly spaced nights, then the last.
+    private func axisLabels(_ nights: [(day: String, dev: Double)]) -> some View {
+        let n = nights.count
+        let picks = [0, n / 3, (2 * n) / 3].filter { $0 < n - 1 }
+        return HStack {
+            ForEach(Array(picks.enumerated()), id: \.offset) { i, idx in
+                if i > 0 { Spacer(minLength: 4) }
+                Text(verbatim: Self.shortDay(nights[idx].day))
+            }
+            Spacer(minLength: 4)
+            Group {
+                if nights[n - 1].day == BodyVitalSigns.logicalDayKey(Date()) {
+                    Text("Last night")
+                } else {
+                    Text(verbatim: Self.shortDay(nights[n - 1].day))
+                }
+            }
+            .foregroundStyle(StrandPalette.textPrimary)
+        }
+        .font(StrandFont.footnote)
+        .foregroundStyle(StrandPalette.textTertiary)
+        .lineLimit(1)
+    }
+
+    private static func shortDay(_ key: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: key) else { return key }
+        return date.formatted(.dateTime.day().month(.abbreviated).locale(AppLanguage.activeLocale))
+    }
+}
+
+/// The nightly skin-temperature deviation chart: a ±1 °C scale with the typical band shaded (the same
+/// ±0.6 °C population range the vital tile bands a deviation against), a dashed zero line, the nights as
+/// a line + fill, and a cursor on the latest night.
+private struct SkinTempNightsChart: View {
+    let values: [Double]
+    let fahrenheit: Bool
+
+    /// The ±0.6 °C range the skin-temp vital tile uses as its population band for a deviation.
+    private static let typicalBand = 0.6
+
+    var body: some View {
+        let scale = fahrenheit ? 1.8 : 1.0
+        let band = Self.typicalBand * scale
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading) {
+                Text(verbatim: SkinTempDisplay.numberString(1, kind: .deviation, fahrenheit: fahrenheit, decimals: fahrenheit ? 1 : 0))
+                Spacer()
+                Text(verbatim: "0")
+                Spacer()
+                Text(verbatim: SkinTempDisplay.numberString(-1, kind: .deviation, fahrenheit: fahrenheit, decimals: fahrenheit ? 1 : 0))
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .frame(width: 24, alignment: .leading)
+            .padding(.bottom, 2)
+            GeometryReader { geo in
+                let h = geo.size.height
+                let bandTop = h * (0.5 - CGFloat(Self.typicalBand / 2))
+                let bandHeight = h * CGFloat(Self.typicalBand)
+                ZStack(alignment: .topLeading) {
+                    Rectangle().fill(Color.white.opacity(0.045))
+                        .frame(height: bandHeight)
+                        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.14)).frame(height: 1) }
+                        .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.14)).frame(height: 1) }
+                        .offset(y: bandTop)
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: h / 2))
+                        p.addLine(to: CGPoint(x: geo.size.width, y: h / 2))
+                    }
+                    .stroke(Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                    Text("Typical range ±\(SkinTempDisplay.numberString(band, kind: .absolute, fahrenheit: false, decimals: 1))")
+                        .font(StrandFont.light(9.5))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .offset(x: 4, y: bandTop - 14)
+                    NoopAreaChart(values: values.map { min(max($0, -1), 1) }, range: -1...1,
+                                  line: StrandPalette.metricCyan, fill: StrandPalette.effortColor, cursor: 1)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Skin temperature deviation over \(values.count) nights"))
+    }
 }
 
 // MARK: - Health hub deep-links (Lab Book · Your Data, Fused)
 
-/// Two drill-in rows that give the records logbook (Lab Book) and the multi-device fused record their
+/// The records/sources list: the records logbook (Lab Book) and the multi-device fused record get their
 /// honest Health home without making either its own top-level destination — they route via `NavRouter`
 /// (the macOS sidebar selects the item; iOS presents the pillar sheet).
 private struct HealthHubLinksSection: View {
     @EnvironmentObject var router: NavRouter
+    @EnvironmentObject var repo: Repository
+
+    /// Lab Book coverage for the row caption: distinct markers and the latest reading. nil until read.
+    @State private var lab: (markers: Int, latest: Int?)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Records & sources", overline: "On \(Platform.deviceNounPhrase)")
-            linkRow(title: String(localized: "Lab Book"),
-                    subtitle: String(localized: "Keep your bloods, BP and body numbers private, on \(Platform.deviceNounPhrase)."),
-                    symbol: "books.vertical.fill", tint: StrandPalette.metricCyan) { router.openLabBook() }
-            linkRow(title: String(localized: "Your Data, Fused"),
-                    subtitle: String(localized: "The best-sourced number per metric across every band you use."),
-                    symbol: "square.stack.3d.up.fill", tint: StrandPalette.accent) { router.openFusedRecord() }
-        }
-    }
-
-    private func linkRow(title: String, subtitle: String, symbol: String, tint: Color,
-                         action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            NoopCard {
-                HStack(spacing: 12) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 30, height: 30)
-                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
-                        Text(subtitle)
-                            .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .accessibilityHidden(true)
+            NoopSectionTitle("Records & sources", caption: String(localized: "On \(Platform.deviceNounPhrase)"))
+            NoopList {
+                Button { router.openLabBook() } label: {
+                    NoopRow(title: Text("Lab Book"), caption: labCaption, icon: "flask", chevron: true) { EmptyView() }
                 }
+                .buttonStyle(.plain)
+                Button { router.openFusedRecord() } label: {
+                    // No trailing "Fused": the title already says it, and in German the repeat squeezed the
+                    // title onto two lines.
+                    NoopRow(title: Text("Your Data, Fused"),
+                            caption: Text("The best-sourced number per metric across every band you use."),
+                            icon: "git-merge", chevron: true) { EmptyView() }
+                }
+                .buttonStyle(.plain)
             }
         }
-        // Liquid press response — every tappable liquid card settles inward on touch (matches Today).
-        .buttonStyle(LiquidPressStyle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title). \(subtitle)")
+        .task(id: repo.refreshSeq) { await loadLab() }
+    }
+
+    private var labCaption: Text {
+        guard let lab, lab.markers > 0 else {
+            return Text("Keep your bloods, BP and body numbers private, on \(Platform.deviceNounPhrase).")
+        }
+        let count = lab.markers == 1 ? Text("1 marker") : Text("\(lab.markers) markers")
+        guard let latest = lab.latest else { return count }
+        return count + Text(verbatim: " · ") + Text("last reading \(LabBookFormat.day(latest))")
+    }
+
+    /// Count the logbook's markers through the same store reads Lab Book itself uses.
+    private func loadLab() async {
+        guard let store = await repo.storeHandle() else { return }
+        var keys = Set<String>()
+        var latest: Int?
+        for category in LabMarkerCategory.allCases {
+            let rows = (try? await store.labMarkers(deviceId: repo.deviceId, category: category.rawValue)) ?? []
+            for r in rows {
+                keys.insert(r.markerKey)
+                latest = max(latest ?? r.takenAt, r.takenAt)
+            }
+        }
+        lab = (keys.count, latest)
     }
 }
 

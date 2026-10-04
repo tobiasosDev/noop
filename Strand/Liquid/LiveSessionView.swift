@@ -1,13 +1,12 @@
 //  LiveSessionView.swift
 //  NOOP · Live Sessions (silent guardian) — the in-session screen + summary sheet.
 //
-//  Deliberately near-empty: one breathing ring, one line of intent, one honest Charge
-//  sentence that fades, an End button. The ring is the whole language — lit teal and
-//  breathing in band, dimmed below, hot above, grey when the stream is stale (coaching
-//  paused, nothing claimed). NO live HR number by default; a long-press on the ring
-//  reveals the engine's smoothed bpm. A thin outer arc fills with time held in band,
-//  toward an hour. Every value on screen is the engine's `Output`, verbatim — this
-//  file renders, it never decides.
+//  Deliberately near-empty: one gauge in the hero glow, the band it guards and why, three plain reads,
+//  an End button. The gauge is the whole language — the knob rides the engine's smoothed position
+//  across the scale, the lit arc is today's band, the glow turns hot above it and grey when the stream
+//  is stale (coaching paused, nothing claimed). NO live HR number by default; a long-press on the gauge
+//  reveals the engine's smoothed bpm (until then its centre carries the time held in band). Every value
+//  on screen is the engine's `Output`, verbatim — this file renders, it never decides.
 //
 //  Design contract: docs/superpowers/specs/2026-07-04-live-sessions-design.md.
 
@@ -26,10 +25,10 @@ struct LiveSessionView: View {
     /// The Android twin gated `LiveSessionScreen`'s breath under battery saver in #911.
     @ObservedObject private var motion = NoopMotionState.shared
 
-    /// "Card transparency" (0–100, default 100): fades the live-session cards in lockstep with the frosted
-    /// cards; content stays readable. Mirrors Kotlin `NoopPrefs.cardOpacityPercent`.
-    @AppStorage(CardAppearancePrefs.opacityKey) private var cardOpacityPercent = CardAppearancePrefs.defaultPercent
-    private var cardOpacity: Double { max(0, min(1, Double(cardOpacityPercent) / 100)) }
+    /// The strap-cue opt-in (#1115), the same key the Haptics settings bind. The header's vibrate circle
+    /// flips it mid-session; the runner reads it at each cue, so the wrist goes quiet from the next one
+    /// while cues keep counting toward the session record.
+    @AppStorage(HapticPrefs.liveSession) private var strapCuesEnabled = true
 
     /// One runner per presentation — created here, started on appear, never restarted.
     @StateObject private var runner = LiveSessionRunner()
@@ -37,45 +36,63 @@ struct LiveSessionView: View {
 
     /// Long-press reveal for the live (smoothed) bpm — off by default, per the contract.
     @State private var showBpm = false
-    /// The one Charge sentence: shown for 6 s, then fades and stays gone.
-    @State private var chargeLineVisible = true
-    /// Caller-owned draw for BevelGauge: eases to each new smoothed position. HOLDS the last position
-    /// while stale — the grey tint says "no reading"; snapping to zero would invent a collapse.
+    /// Caller-owned gauge position: eases to each new smoothed position. HOLDS the last position while
+    /// stale — the grey glow says "no reading"; snapping to zero would invent a collapse.
     @State private var ringFraction: Double = 0
-    /// The thin outer "time held in band" arc, filling toward an hour.
-    @State private var heldFraction: Double = 0
+    /// False until the engine has produced its first smoothed reading: the knob only appears once there
+    /// is a position to show, rather than parking at the scale's start as if that were one.
+    @State private var hasReading = false
     /// The slow in-band breathing scale (the only motion on screen).
     @State private var breathe = false
     @State private var showSummary = false
     /// "N sessions guarded" for the summary streak line, read from the store when the session ends.
     @State private var guardedCount: Int?
 
-    private let ringDiameter: CGFloat = 250
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    #if DEBUG
+    /// DEBUG screenshot harness: start with the bpm already revealed.
+    init(onClose: @escaping () -> Void, demoRevealBpm: Bool) {
+        self.onClose = onClose
+        _showBpm = State(initialValue: demoRevealBpm)
+    }
+    #endif
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.top, NoopMetrics.space6)
-            Spacer()
-            ring
-            Text(guardianLine)
-                .font(StrandFont.subhead)
-                .foregroundStyle(StrandPalette.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, NoopMetrics.space6)
-                .padding(.horizontal, NoopMetrics.space6)
-            chargeSentence
-                .padding(.top, NoopMetrics.space3)
-                .padding(.horizontal, NoopMetrics.space6)
-            Spacer()
-            NoopButton("End session", systemImage: "stop.fill", kind: .destructive, fullWidth: true) {
-                endSession()
+        ScrollView {
+            VStack(spacing: 0) {
+                header
+                titleRow
+                    .padding(.top, 10)
+                hero
+                    .padding(.top, 20)
+                statsRow
+                    .padding(.top, 22)
+                Text(guardianLine)
+                    .font(StrandFont.light(13))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 18)
+                    .padding(.horizontal, 12)
+                endButton
+                    .padding(.top, 20)
             }
+            .padding(.horizontal, NoopMetrics.screenHPadding)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
         }
-        .screenPadding()
-        .padding(.vertical, NoopMetrics.space6)
+        #if os(iOS)
+        .scrollBounceBehavior(.basedOnSize)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(StrandPalette.surfaceBase.ignoresSafeArea())
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
+        .noopHidesTabBar()
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 640)
         #endif
@@ -96,8 +113,7 @@ struct LiveSessionView: View {
             showSummary = true
         }
         .onChangeCompat(of: runner.output) { out in advance(to: out) }
-        .task { await fadeChargeSentenceLater() }
-        .sheet(isPresented: $showSummary, onDismiss: { onClose() }) {
+        .summaryPresentation(isPresented: $showSummary, onDismiss: { onClose() }) {
             if let row = runner.finalRow {
                 LiveSessionSummarySheet(row: row, guardedCount: guardedCount) {
                     showSummary = false   // onDismiss closes the whole session screen
@@ -109,65 +125,123 @@ struct LiveSessionView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("SILENT GUARDIAN")
-                .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                .foregroundStyle(StrandPalette.metricCyan)
-            HStack(spacing: NoopMetrics.space2) {
-                Text("Live Session")
-                    .font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
-                betaPill
+        HStack(spacing: 12) {
+            // A cover has no back gesture; the close circle ends the session the same way End does, so
+            // leaving always banks the totals and shows the summary.
+            NoopCircleButton("x", accessibilityLabel: "End session") { endSession() }
+            Spacer(minLength: 8)
+            NoopOverline("Silent guardian")
+            Spacer(minLength: 8)
+            NoopCircleButton("vibrate", accessibilityLabel: "Strap cues") { strapCuesEnabled.toggle() }
+                .opacity(strapCuesEnabled ? 1 : 0.4)
+                .accessibilityValue(strapCuesEnabled ? Text("On") : Text("Off"))
+        }
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 10) {
+            Text("Live Session")
+                .font(StrandFont.title1)
+                .tracking(-0.56)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            NoopTag("BETA", size: 12)
+                .accessibilityLabel("Beta feature")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Hero (the gauge)
+
+    /// The glow carries the engine's position: the Effort blue on track or under, hot above the band,
+    /// the neutral glow while there is no reading.
+    private var heroGlow: NoopGlow {
+        guard let out = runner.output, out.smoothedBpm != nil else { return .ink }
+        return out.position == .above ? .low : .strain
+    }
+
+    private var hero: some View {
+        NoopHeroCard(glow: heroGlow, padding: 0, minHeight: 442) {
+            VStack(spacing: 0) {
+                gauge
+                Text(bandLineText)
+                    .font(StrandFont.light(13))
+                    .foregroundStyle(Color.white.opacity(0.66))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                    .padding(.horizontal, 12)
+                HStack(spacing: 8) {
+                    PhIcon("hand-tap", size: 18)
+                    Text("Long press to show or hide your heart rate.")
+                        .font(StrandFont.light(13))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.white.opacity(0.84))
+                .padding(.top, 22)
+                .padding(.horizontal, 12)
+                .accessibilityHidden(true)   // the gauge carries the same hint for VoiceOver
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 30)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 22)
+        }
+        .animation(.easeInOut(duration: 0.6), value: heroGlow)
+    }
+
+    /// The whole instrument: the scale with today's band lit, the knob at the smoothed position, the
+    /// bpm (or, until revealed, the time held in band) at its centre. Breathes only while in band and
+    /// active. Long-press toggles the bpm read-out.
+    private var gauge: some View {
+        let scale = gaugeScale
+        return GuardianGauge(
+            scaleLow: scale.lowerBound, scaleHigh: scale.upperBound,
+            band: (runner.output?.band ?? runner.baseBand).map { ($0.floorBpm, $0.ceilingBpm) },
+            fraction: hasReading ? ringFraction : nil,
+            live: runner.output?.smoothedBpm != nil
+        ) {
+            VStack(spacing: 12) {
+                NoopDotNumber(showBpm ? bpmText : heldText, size: showBpm ? 96 : 72)
+                    .fixedSize()
+                    .padding(.vertical, -6)
+                // Stays inside the ring: on one line when it fits, else the tag drops under the words
+                // (German "im Zielbereich gehalten ·" ran over the scale's ticks).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { gaugeCaption(stacked: false); NoopTag(verbatim: stateTag, size: 12) }
+                    VStack(spacing: 6) { gaugeCaption(stacked: true); NoopTag(verbatim: stateTag, size: 12) }
+                }
+                .frame(maxWidth: 210)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var betaPill: some View {
-        Text("BETA")
-            .font(StrandFont.overlineScaled(8.5)).tracking(1.2)
-            .foregroundStyle(StrandPalette.textSecondary)
-            .padding(.horizontal, 8).padding(.vertical, 2.5)
-            .background(Capsule().fill(StrandPalette.surfaceInset)
-                .overlay(Capsule().strokeBorder(StrandPalette.hairline, lineWidth: 1)))
-            .accessibilityLabel("Beta feature")
-    }
-
-    // MARK: - Ring
-
-    /// The whole instrument: BevelGauge showing the smoothed position across [floor−20, ceiling+20],
-    /// a thin outer arc of time held in band, tinted by the engine's position, breathing only while
-    /// in band and active. Long-press toggles the bpm read-out.
-    private var ring: some View {
-        ZStack {
-            // Thin outer arc: time held in band this session, filling toward 60 min. Same 240° open
-            // geometry as the gauge (start 150°, span 240°) so the two read as one instrument.
-            Circle()
-                .trim(from: 0, to: heldFraction * (240.0 / 360.0))
-                .rotation(.degrees(150))
-                .stroke(StrandPalette.metricCyan.opacity(0.55),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .frame(width: ringDiameter + 26, height: ringDiameter + 26)
-            BevelGauge(
-                fraction: ringFraction,
-                stops: [Gradient.Stop(color: ringTint.opacity(0.7), location: 0),
-                        Gradient.Stop(color: ringTint, location: 1)],
-                tipColor: ringTint,
-                numberText: bpmText,
-                captionText: showBpm ? "bpm" : nil,
-                stateText: nil,
-                diameter: ringDiameter,
-                showsLabel: showBpm,
-                animatedFraction: ringFraction,
-                bloomActive: false
-            )
-        }
+        .frame(width: 330, height: 275)
         .scaleEffect(breathe ? 1.03 : 1.0)
-        .contentShape(Circle())
+        .contentShape(Rectangle())
         .onLongPressGesture { showBpm.toggle() }
         .onChangeCompat(of: isBreathing) { on in setBreathing(on) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(ringAccessibilityLabel))
+        .accessibilityValue(showBpm ? Text(verbatim: "\(bpmText) bpm") : Text(verbatim: ""))
         .accessibilityHint(Text("Long press to show or hide your heart rate."))
+        .accessibilityAction(named: Text("Show or hide heart rate")) { showBpm.toggle() }
+    }
+
+    /// "bpm ·" / "held in band ·"; stacked over the tag, the joining dot has nothing to join and goes.
+    private func gaugeCaption(stacked: Bool) -> some View {
+        let text = showBpm ? String(localized: "bpm ·") : String(localized: "held in band ·")
+        return Text(verbatim: stacked ? text.trimmingCharacters(in: CharacterSet(charactersIn: "· ")) : text)
+            .font(StrandFont.light(14))
+            .foregroundStyle(Color.white.opacity(0.7))
+            .fixedSize()
+    }
+
+    /// The bpm range the gauge spans: the classic 60–200 face, widened (in steps of ten) only when
+    /// today's band sits closer than 20 bpm to either end.
+    private var gaugeScale: ClosedRange<Double> {
+        guard let band = runner.output?.band ?? runner.baseBand else { return 60...200 }
+        let lo = min(60, ((band.floorBpm - 20) / 10).rounded(.down) * 10)
+        let hi = max(200, ((band.ceilingBpm + 20) / 10).rounded(.up) * 10)
+        return lo...hi
     }
 
     /// Breathing is the "on track" signal: only in band, only once active, never when anything is
@@ -193,14 +267,19 @@ struct LiveSessionView: View {
         return "\(Int(s.rounded()))"
     }
 
-    private var ringTint: Color {
-        guard let out = runner.output, out.smoothedBpm != nil else {
-            return StrandPalette.textTertiary   // stale / no reading yet: grey, no coaching claims
-        }
+    /// Time held in band so far (m:ss), the engine's own accrual.
+    private var heldText: String {
+        LiveSessionSummarySheet.clock(runner.output?.inBandSeconds ?? 0)
+    }
+
+    /// The one-word state on the gauge, honest per engine status: a stale stream never claims a position.
+    private var stateTag: String {
+        guard let out = runner.output, out.smoothedBpm != nil else { return String(localized: "No reading") }
+        if out.status == .warmup { return String(localized: "Warming up") }
         switch out.position {
-        case .inBand: return StrandPalette.metricCyan               // lit: on track
-        case .below:  return StrandPalette.metricCyan.opacity(0.3)  // dim: too easy for today
-        case .above:  return StrandPalette.statusCritical           // hot: today can't pay for this
+        case .inBand: return String(localized: "In band")
+        case .below:  return String(localized: "Below")
+        case .above:  return String(localized: "Above")
         }
     }
 
@@ -215,19 +294,16 @@ struct LiveSessionView: View {
         }
     }
 
-    /// Ease the arc to each new smoothed position across [floor−20, ceiling+20]; hold while stale.
+    /// Ease the knob to each new smoothed position across the gauge's scale; hold while stale.
     private func advance(to out: LiveSessionEngine.Output?) {
-        guard let out else { return }
-        if let s = out.smoothedBpm {
-            let lo = out.band.floorBpm - 20
-            let hi = out.band.ceilingBpm + 20
-            if hi > lo {
-                let f = min(max((s - lo) / (hi - lo), 0), 1)
-                withAnimation(.easeOut(duration: 0.9)) { ringFraction = f }
-            }
-        }
-        withAnimation(.linear(duration: 1.0)) {
-            heldFraction = min(out.inBandSeconds / 3600, 1)
+        guard let out, let s = out.smoothedBpm else { return }
+        let scale = gaugeScale
+        let f = min(max((s - scale.lowerBound) / (scale.upperBound - scale.lowerBound), 0), 1)
+        if !hasReading {
+            ringFraction = f
+            hasReading = true
+        } else {
+            withAnimation(.easeOut(duration: 0.9)) { ringFraction = f }
         }
     }
 
@@ -245,37 +321,74 @@ struct LiveSessionView: View {
         }
     }
 
-    /// The one honest Charge sentence — what the band is and why — shown for 6 s, then gone.
-    private var chargeSentence: some View {
-        Text(chargeLineText)
-            .font(StrandFont.footnote)
-            .foregroundStyle(StrandPalette.textTertiary)
-            .multilineTextAlignment(.center)
-            .opacity(chargeLineVisible ? 1 : 0)
-            .accessibilityHidden(!chargeLineVisible)
-    }
-
-    private var chargeLineText: String {
-        guard let band = runner.baseBand else { return "" }
+    /// What the band is and why — today's Charge, or the careful default when none is banked.
+    private var bandLineText: String {
+        guard let band = runner.output?.band ?? runner.baseBand else { return "" }
         let floor = Int(band.floorBpm.rounded()), ceiling = Int(band.ceilingBpm.rounded())
         if let charge = runner.chargeAtStart {
-            return String(localized: "Charge \(Int(charge.rounded())) today, so your band is \(floor)–\(ceiling) bpm.")
+            return String(localized: "Band \(floor)–\(ceiling) bpm, set by today's Charge \(Int(charge.rounded())) %")
         }
-        return String(localized: "No Charge banked today, so your band takes a careful middle course: \(floor)–\(ceiling) bpm.")
+        return String(localized: "Band \(floor)–\(ceiling) bpm, a careful middle course with no Charge banked today")
     }
 
-    /// 6 s on screen, then a slow fade — the sentence said its piece; the ring carries it from here.
-    /// Runs inside `.task`, so a torn-down screen cancels the sleep and skips the (now moot) fade.
-    private func fadeChargeSentenceLater() async {
-        try? await Task.sleep(nanoseconds: 6_000_000_000)
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 1.2)) { chargeLineVisible = false }
+    // MARK: - Stats
+
+    /// Elapsed · cues · time in band, ticking once a second off the wall clock.
+    private var statsRow: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let elapsed = runner.startTs > 0
+                ? max(0, context.date.timeIntervalSince1970 - Double(runner.startTs)) : 0
+            let inBand = runner.output?.inBandSeconds ?? 0
+            HStack(spacing: 0) {
+                G1bCenteredMetric(value: Self.hms(elapsed), label: Text("Elapsed"),
+                                  labelColor: StrandPalette.textTertiary)
+                divider
+                G1bCenteredMetric(value: "\(runner.pushCount + runner.easeCount)",
+                                  unit: String(localized: "cues"),
+                                  label: Text(verbatim: cueBreakdown),
+                                  labelColor: StrandPalette.textTertiary)
+                divider
+                G1bCenteredMetric(value: elapsed >= 1 ? "\(Int((min(inBand / elapsed, 1) * 100).rounded()))" : "—",
+                                  unit: elapsed >= 1 ? "%" : nil,
+                                  label: Text("Time in band"),
+                                  labelColor: StrandPalette.textTertiary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(NoopVisualStyle.border).frame(width: 1)
+    }
+
+    private var cueBreakdown: String {
+        if runner.pushCount == 0 && runner.easeCount == 0 { return String(localized: "None yet") }
+        var parts: [String] = []
+        if runner.pushCount > 0 { parts.append(String(localized: "\(runner.pushCount) push")) }
+        if runner.easeCount > 0 { parts.append(String(localized: "\(runner.easeCount) ease-off")) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "00:18:40".
+    static func hms(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded(.down)))
+        return String(format: "%02d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
     }
 
     // MARK: - End
 
+    private var endButton: some View {
+        Button { endSession() } label: {
+            HStack(spacing: 8) {
+                PhIcon("stop", weight: .fill, size: 16)
+                Text("End session")
+            }
+        }
+        .buttonStyle(NoopButtonStyle(.primary, fullWidth: true))
+    }
+
     private func endSession() {
-        runner.end()   // finalRow lands via onChangeCompat → summary sheet
+        runner.end()   // finalRow lands via onChangeCompat → summary
     }
 
     /// "N sessions guarded" — completed sessions in the recent look-back, this one included (its final
@@ -290,11 +403,128 @@ struct LiveSessionView: View {
     }
 }
 
-// MARK: - Summary sheet
+private extension View {
+    /// The summary takes the whole screen on iOS (the session itself is a cover); macOS has no
+    /// fullScreenCover, so it is a sheet there.
+    @ViewBuilder
+    func summaryPresentation<Content: View>(isPresented: Binding<Bool>, onDismiss: @escaping () -> Void,
+                                            @ViewBuilder content: @escaping () -> Content) -> some View {
+        #if os(iOS)
+        fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #else
+        sheet(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #endif
+    }
+}
 
-/// The end-of-session read-out: time in / below / above the band, the cues sent, a plain verdict, and
-/// the streak line. Everything comes off the banked `LiveSessionRow` — the same record the look-back
-/// reads, so this sheet and history can never disagree.
+// MARK: - Gauge
+
+/// The guardian gauge: a 270° scale of 61 ticks (every tenth longer) over a hairline track, today's band
+/// as a lit arc with its edges labelled above, the scale's ends labelled below, and a haloed white knob at
+/// the current position. `centre` is laid over the middle of the dial.
+private struct GuardianGauge<Centre: View>: View {
+    let scaleLow: Double
+    let scaleHigh: Double
+    let band: (floor: Double, ceiling: Double)?
+    /// The knob's position on the scale (0…1); nil draws no knob.
+    let fraction: Double?
+    let live: Bool
+    @ViewBuilder var centre: () -> Centre
+
+    /// The kit's band arc ink: a pale Effort blue that reads on the blue glow.
+    private static var bandInk: Color { Color(light: "#5872F2", dark: "#B9C6FF") }
+
+    private static var start: Double { 135 }
+    private static var sweep: Double { 270 }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let k = w / 360                       // the frame's 360-unit drawing, scaled to fit
+            let c = CGPoint(x: 180 * k, y: 170 * k)
+            let r = 125 * k
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, _ in
+                    drawTicks(ctx, c: c, k: k)
+                    var track = Path()
+                    track.addArc(center: c, radius: r, startAngle: .degrees(Self.start),
+                                 endAngle: .degrees(Self.start + Self.sweep), clockwise: false)
+                    ctx.stroke(track, with: .color(.white.opacity(0.12)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    if let band {
+                        var arc = Path()
+                        arc.addArc(center: c, radius: r, startAngle: angle(band.floor),
+                                   endAngle: angle(band.ceiling), clockwise: false)
+                        ctx.stroke(arc, with: .color(Self.bandInk), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    }
+                    if let fraction {
+                        let a = Angle.degrees(Self.start + Self.sweep * min(max(fraction, 0), 1)).radians
+                        let p = CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a)))
+                        ctx.fill(Path(ellipseIn: CGRect(x: p.x - 15, y: p.y - 15, width: 30, height: 30)),
+                                 with: .color(.white.opacity(live ? 0.16 : 0.06)))
+                        ctx.fill(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
+                                 with: .color(.white.opacity(live ? 1 : 0.35)))
+                    }
+                }
+                // Scale ends, below the dial.
+                label("\(Int(scaleLow))", at: CGPoint(x: (34.7 + 30) * k, y: (266 + 20) * k), strong: false)
+                label("\(Int(scaleHigh))", at: CGPoint(x: (265.3 + 30) * k, y: (266 + 20) * k), strong: false)
+                // Band edges, just outside the arc.
+                if let band {
+                    bandLabel(band.floor, c: c, r: r + 30 * k, nudge: -3)
+                    bandLabel(band.ceiling, c: c, r: r + 30 * k, nudge: 3)
+                }
+                centre()
+                    .frame(width: w)
+                    .position(x: c.x, y: 159 * k)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func angle(_ bpm: Double) -> Angle {
+        let f = min(max((bpm - scaleLow) / max(scaleHigh - scaleLow, 1), 0), 1)
+        return .degrees(Self.start + Self.sweep * f)
+    }
+
+    private func drawTicks(_ ctx: GraphicsContext, c: CGPoint, k: CGFloat) {
+        for i in 0...60 {
+            let deg = Self.start + 4.5 * Double(i)
+            let a = Angle.degrees(deg).radians
+            let major = i % 10 == 0
+            let bpm = scaleLow + (scaleHigh - scaleLow) * Double(i) / 60
+            let inBand = band.map { bpm >= $0.floor && bpm <= $0.ceiling } ?? false
+            let r0 = 137 * k, r1 = (major ? 147 : 143) * k
+            var p = Path()
+            p.move(to: CGPoint(x: c.x + r0 * CGFloat(cos(a)), y: c.y + r0 * CGFloat(sin(a))))
+            p.addLine(to: CGPoint(x: c.x + r1 * CGFloat(cos(a)), y: c.y + r1 * CGFloat(sin(a))))
+            let opacity = inBand ? 0.7 : (major ? 0.45 : 0.22)
+            ctx.stroke(p, with: .color(.white.opacity(opacity)), lineWidth: 1)
+        }
+    }
+
+    private func label(_ text: String, at p: CGPoint, strong: Bool) -> some View {
+        Text(verbatim: text)
+            .font(StrandFont.light(12))
+            .monospacedDigit()
+            .foregroundStyle(Color.white.opacity(strong ? 0.9 : 0.55))
+            .fixedSize()
+            .position(p)
+    }
+
+    private func bandLabel(_ bpm: Double, c: CGPoint, r: CGFloat, nudge: Double) -> some View {
+        let a = (angle(bpm).degrees + nudge) * .pi / 180
+        return label("\(Int(bpm.rounded()))",
+                     at: CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a))), strong: true)
+    }
+}
+
+// MARK: - Summary
+
+/// The end-of-session read-out: the session's length and how much of it sat inside the band, the cues
+/// sent, the band and where it came from, how the time split, a plain verdict, and the streak line.
+/// Everything comes off the banked `LiveSessionRow` — the same record the look-back reads, so this
+/// screen and history can never disagree.
 struct LiveSessionSummarySheet: View {
     let row: LiveSessionRow
     let guardedCount: Int?
@@ -302,80 +532,258 @@ struct LiveSessionSummarySheet: View {
     @AppStorage(CardAppearancePrefs.opacityKey) private var cardOpacityPercent = CardAppearancePrefs.defaultPercent
     private var cardOpacity: Double { max(0, min(1, Double(cardOpacityPercent) / 100)) }
 
+    /// Seconds the strap actually tracked (in, below or above the band).
+    private var trackedSec: Double { row.inBandSec + row.belowSec + row.aboveSec }
+    /// The session's length: start to end on the wall clock, never shorter than the tracked time. Every
+    /// share on this screen divides by this one figure, so the hero, the cards and the bar agree.
+    private var sessionSec: Double {
+        let wall = row.endTs.map { Double($0 - row.startTs) } ?? 0
+        return max(wall, trackedSec)
+    }
+    /// Time inside the session with no reading (stale stream), which no bucket accrues.
+    private var unreadSec: Double { max(0, sessionSec - trackedSec) }
+
+    private func share(_ seconds: Double) -> Int {
+        sessionSec > 0 ? Int((seconds / sessionSec * 100).rounded()) : 0
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LIVE SESSION")
-                    .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                    .foregroundStyle(StrandPalette.metricCyan)
-                Text("Session summary")
-                    .font(StrandFont.title1).foregroundStyle(StrandPalette.textPrimary)
-            }
-            .padding(.top, NoopMetrics.space6)
-
-            Text(Self.verdict(row: row))
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            summaryCard {
-                bandRow(String(localized: "In band"), seconds: row.inBandSec, tint: StrandPalette.metricCyan)
-                bandRow(String(localized: "Below band"), seconds: row.belowSec, tint: StrandPalette.textTertiary)
-                bandRow(String(localized: "Above band"), seconds: row.aboveSec, tint: StrandPalette.statusCritical)
-            }
-
-            summaryCard {
-                HStack {
-                    Text("Cues sent").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
-                    Spacer()
-                    Text(cueLine).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
+        ScrollView {
+            VStack(spacing: 0) {
+                hero
+                VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+                    statGrid
+                    NoopSectionTitle("Band adherence", captionKey: "Whole session")
+                    adherenceCard
+                    NoopInsightRow(verbatim: Self.verdict(row: row))
+                        .padding(.top, 8)
+                        .padding(.horizontal, 4)
+                    if let n = guardedCount, n > 0 {
+                        Text(n == 1 ? String(localized: "1 session guarded")
+                                    : String(localized: "\(n) sessions guarded"))
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 4)
+                    }
                 }
-                HStack {
-                    Text("Band").font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
-                    Spacer()
-                    Text("\(Int(row.floorBpm.rounded()))–\(Int(row.ceilingBpm.rounded())) bpm")
-                        .font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textPrimary)
-                }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.top, 16)
+                .padding(.bottom, 24)
             }
-
-            if let n = guardedCount, n > 0 {
-                Text(n == 1 ? String(localized: "1 session guarded")
-                            : String(localized: "\(n) sessions guarded"))
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-
-            Spacer(minLength: NoopMetrics.space3)
-            NoopButton("Done", kind: .primary, fullWidth: true) { onDone() }
         }
-        .screenPadding()
-        .padding(.vertical, NoopMetrics.space6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(StrandPalette.surfaceBase.ignoresSafeArea())
+        #if os(iOS)
+        .scrollBounceBehavior(.basedOnSize)
+        #endif
+        #if os(iOS) && DEBUG
+        .modifier(DemoScrollAnchor())
+        #endif
+        .background(NoopVisualStyle.canvas.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom) {
+            NoopButton("Done", kind: .primary, fullWidth: true) { onDone() }
+                .padding(.horizontal, NoopMetrics.screenHPadding)
+                .padding(.top, 24)
+                .padding(.bottom, 8)
+                .background(
+                    LinearGradient(colors: [NoopVisualStyle.canvas.opacity(0), NoopVisualStyle.canvas],
+                                   startPoint: .top, endPoint: .center)
+                        .ignoresSafeArea(edges: .bottom)
+                )
+        }
+        .noopHidesTabBar()
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 520)
         #endif
     }
 
-    // MARK: Rows
+    // MARK: Hero
 
-    private func bandRow(_ label: String, seconds: Double, tint: Color) -> some View {
-        HStack(spacing: NoopMetrics.rowSpacing) {
-            Circle().fill(tint).frame(width: 8, height: 8)
-            Text(label).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
-            Spacer()
-            Text(Self.clock(seconds))
-                .font(StrandFont.number(17)).monospacedDigit()
+    /// The bleed hero: the glow runs up under the status bar, the session length in dot matrix, and the
+    /// one sentence that matters (minutes inside the band).
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                Text("Session summary")
+                    .font(StrandFont.headline)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    NoopCircleButton("x", accessibilityLabel: "Close") { onDone() }
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, -2)
+            HStack {
+                NoopIconBadge("Live session", icon: "heartbeat")
+                Spacer(minLength: 8)
+                NoopTag("BETA", size: 12)
+            }
+            .padding(.top, 30)
+            HStack(alignment: .bottom, spacing: 10) {
+                NoopDotNumber(Self.clock(sessionSec), size: 80)
+                    .fixedSize()
+                    .padding(.bottom, -6)
+                Text("min")
+                    .font(StrandFont.light(14))
+                    .foregroundStyle(Color.white.opacity(0.66))
+                    .padding(.bottom, 8)
+            }
+            .padding(.top, 24)
+            .accessibilityElement(children: .combine)
+            Text(verbatim: String(localized: "\(Int((row.inBandSec / 60).rounded())) of \(Int((sessionSec / 60).rounded())) minutes inside your band."))
+                .font(StrandFont.light(19))
                 .foregroundStyle(StrandPalette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 16)
+            Text(verbatim: heroCaption)
+                .font(StrandFont.light(13))
+                .foregroundStyle(Color.white.opacity(0.62))
+                .padding(.top, 8)
+        }
+        .padding(.top, 6)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            NoopHeroSurface(glow: .strain, bleed: true)
+                .ignoresSafeArea(edges: .top)
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// "Today · silent guardian · band from Charge 78 %".
+    private var heroCaption: String {
+        let start = Date(timeIntervalSince1970: TimeInterval(row.startTs))
+        let day: String
+        if Calendar.current.isDateInToday(start) {
+            day = String(localized: "Today")
+        } else if Calendar.current.isDateInYesterday(start) {
+            day = String(localized: "Yesterday")
+        } else {
+            day = start.formatted(.dateTime.day().month(.abbreviated).locale(AppLanguage.activeLocale))
+        }
+        let source = row.chargeAtStart.map { String(localized: "band from Charge \(Int($0.rounded())) %") }
+            ?? String(localized: "no Charge banked")
+        return "\(day) · \(String(localized: "silent guardian")) · \(source)"
+    }
+
+    // MARK: Cards
+
+    private var statGrid: some View {
+        VStack(spacing: NoopMetrics.gap) {
+            HStack(spacing: NoopMetrics.gap) {
+                statCard("Cues sent", icon: "vibrate", value: "\(row.pushCount + row.easeCount)", unit: nil,
+                         caption: cueLine)
+                statCard("Band", icon: "target",
+                         value: "\(Int(row.floorBpm.rounded()))–\(Int(row.ceilingBpm.rounded()))", unit: "bpm",
+                         caption: row.chargeAtStart.map { String(localized: "Gated on Charge \(Int($0.rounded())) %") }
+                            ?? String(localized: "No Charge banked"))
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: NoopMetrics.gap) {
+                statCard("Time in band", icon: "check-circle", value: "\(share(row.inBandSec))", unit: "%",
+                         caption: Self.minSec(row.inBandSec))
+                statCard("Out of band", icon: "arrows-down-up", value: "\(share(row.belowSec + row.aboveSec))",
+                         unit: "%",
+                         caption: String(localized: "\(Self.clock(row.belowSec)) below · \(Self.clock(row.aboveSec)) above"))
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private func summaryCard<V: View>(@ViewBuilder _ content: () -> V) -> some View {
-        VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) { content() }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(NoopPanelSurface(cornerRadius: 22, surfaceOpacity: cardOpacity))
+    private func statCard(_ title: LocalizedStringKey, icon: String, value: String, unit: String?,
+                          caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The kit's card title, allowed a second line: half-width tiles cut German titles
+            // ("Gesendete Hi…", "Außerhalb de…"). Each row's pair stretches to the taller tile.
+            HStack(alignment: .top, spacing: 8) {
+                PhIcon(icon, size: 16).opacity(0.9).padding(.top, 1)
+                Text(title)
+                    .font(StrandFont.book(14, relativeTo: .subheadline))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(StrandPalette.textPrimary)
+            Spacer(minLength: 0)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(verbatim: value)
+                    .font(StrandFont.light(26))
+                    .tracking(-0.52)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let unit {
+                    Text(verbatim: unit)
+                        .font(StrandFont.book(11))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.top, 12)
+            Text(verbatim: caption)
+                .font(StrandFont.light(10.5))
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 3)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .noopPanel(surfaceOpacity: cardOpacity)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// How the session's time split: one bar in session order of size (in band, above, below, and any
+    /// stretch with no reading), with its legend.
+    private var adherenceCard: some View {
+        let parts: [(label: String, sec: Double, color: Color)] = [
+            (String(localized: "In band"), row.inBandSec, NoopGlow.strain.accent),
+            (String(localized: "Above"), row.aboveSec, StrandPalette.textPrimary),
+            (String(localized: "Below"), row.belowSec, StrandPalette.textTertiary),
+            (String(localized: "No reading"), unreadSec, NoopGlow.ink.deep),
+        ].filter { share($0.sec) >= 1 }
+        return VStack(alignment: .leading, spacing: 10) {
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    ForEach(parts.indices, id: \.self) { i in
+                        Rectangle()
+                            .fill(parts[i].color)
+                            .frame(width: sessionSec > 0 ? geo.size.width * CGFloat(parts[i].sec / sessionSec) : 0)
+                    }
+                }
+            }
+            .frame(height: 12)
+            .background(NoopGlow.ink.deep)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            // Three keys fit one line; a fourth (time with no reading) wraps the legend onto two.
+            let rows = parts.count > 3 ? [Array(parts.indices.prefix(2)), Array(parts.indices.dropFirst(2))]
+                                       : [Array(parts.indices)]
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(rows.indices, id: \.self) { r in
+                    HStack(spacing: 14) {
+                        ForEach(rows[r], id: \.self) { i in
+                            legendKey(parts[i].label, share: share(parts[i].sec), color: parts[i].color)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .noopPanel(surfaceOpacity: cardOpacity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func legendKey(_ label: String, share: Int, color: Color) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(verbatim: "\(label) \(share) %")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .lineLimit(1)
+                .fixedSize()
+        }
     }
 
     private var cueLine: String {
@@ -411,5 +819,11 @@ struct LiveSessionSummarySheet: View {
     static func clock(_ seconds: Double) -> String {
         let s = max(0, Int(seconds.rounded()))
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// "27 min 05 s".
+    static func minSec(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        return String(localized: "\(s / 60) min \(String(format: "%02d", s % 60)) s")
     }
 }

@@ -33,8 +33,9 @@ struct LiftSessionExerciseSheet: View {
     private var canAdd: Bool { !trimmedExercise.isEmpty && !adding }
 
     var body: some View {
-        ScreenScaffold(title: "Add exercise",
-                       subtitle: "Pick one you have done before, or type a new name.") {
+        LiftSheetScaffold("Add exercise",
+                          subtitle: "Pick one you have done before, or type a new name.",
+                          onCancel: { dismiss() }) {
             VStack(alignment: .leading, spacing: NoopMetrics.sectionGap) {
                 exerciseSection
                 LiftMusclePicker(primary: $primary, secondaries: $secondaries)
@@ -45,12 +46,9 @@ struct LiftSessionExerciseSheet: View {
                 footer
             }
         }
-        #if os(iOS)
-        .presentationDragIndicator(.visible)
-        #else
+        #if os(macOS)
         .frame(width: 520, height: 640)
         #endif
-        .background(StrandPalette.surfaceBase)
         .keyboardDoneToolbar($focused)
         .dismissesKeyboardOnTap($focused)
         .task { await load() }
@@ -74,7 +72,7 @@ struct LiftSessionExerciseSheet: View {
     private var exerciseSection: some View {
         let suggestions = LiftExerciseVocabulary.suggestions(vocabulary, matching: exercise, limit: 8)
         return VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Exercise", overline: "Movement")
+            NoopSectionTitle("Exercise", captionKey: "Movement", topPadding: 0)
             NoopCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                     TextField("Incline dumbbell press", text: $exercise)
@@ -96,19 +94,10 @@ struct LiftSessionExerciseSheet: View {
         }
     }
 
+    /// Add, as the sheet's one primary action; Cancel is in the sheet header.
     private var footer: some View {
-        HStack {
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .font(StrandFont.body)
-                .foregroundStyle(StrandPalette.textSecondary)
-            Spacer()
-            Button("Add to session") { Task { await add() } }
-                .buttonStyle(.noopPrimary)
-                .frame(maxWidth: 200)
-                .disabled(!canAdd)
-                .opacity(canAdd ? 1 : NoopButtonMetrics.disabledOpacity)
-        }
+        LTActionButton("Add to session", kind: .primary) { Task { await add() } }
+            .disabled(!canAdd)
     }
 
     /// Take a known exercise, with the muscles it is already known by.

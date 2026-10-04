@@ -96,37 +96,22 @@ struct TrainingLoadCard: View {
     private static let established = TrainingLoadEngine.Configuration.standard.establishedDays
     private static let minimum = TrainingLoadEngine.Configuration.standard.minimumDays
 
-    private func fmt(_ v: Double) -> String { String(format: "%.1f", v) }
-    private func signed(_ v: Double) -> String { String(format: "%+.1f", v) }
+    private func whole(_ v: Double) -> String { "\(Int(v.rounded()))" }
+    private func signed(_ v: Double) -> String {
+        let n = Int(v.rounded())
+        return n > 0 ? "+\(n)" : (n < 0 ? "−\(abs(n))" : "0")
+    }
+
+    /// The form scale the marker sits on: TSB from −30 (deep fatigue) to +25 (fully fresh).
+    private static let formScale: ClosedRange<Double> = -30...25
 
     var body: some View {
         let tl = result
-        Group {
+        NoopCard {
             if !tl.isAvailable {
-                unavailableCard(contiguousDays: tl.contiguousDays)
+                unavailable(contiguousDays: tl.contiguousDays)
             } else {
-                let latest = tl.points.last
-                let rows = rows(from: tl)
-                ChartCard(
-                    title: "Training Load",
-                    subtitle: subtitle(for: tl),
-                    trailing: latest.map { signed($0.balance) },
-                    height: NoopMetrics.chartHeight,
-                    chart: {
-                        VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-                            legend
-                            TrainingLoadChart(rows: rows)
-                        }
-                    },
-                    footer: {
-                        ChartFooter([
-                            ("CTL", latest.map { fmt($0.chronicLoad) } ?? "—"),
-                            ("ATL", latest.map { fmt($0.acuteLoad) } ?? "—"),
-                            ("Form", latest.map { signed($0.balance) } ?? "—"),
-                            ("Days", "\(tl.contiguousDays)"),
-                        ])
-                    }
-                )
+                established(tl)
             }
         }
         // Persist the memoized result into `@State` (mirrors `CompareView`'s `.onAppear { refreshModel() }`
@@ -136,18 +121,115 @@ struct TrainingLoadCard: View {
         .onChangeCompat(of: Self.modelKey(for: days)) { _ in refreshResult() }
     }
 
-    private var legend: some View {
-        HStack(spacing: NoopMetrics.space2 * 2) {
-            legendDot(color: StrandPalette.gold, label: "CTL · Fitness")
-            legendDot(color: StrandPalette.strain100, label: "ATL · Fatigue")
-            Spacer()
+    @ViewBuilder
+    private func established(_ tl: TrainingLoadEngine.Result) -> some View {
+        let latest = tl.points.last
+        // The chart shows the last 42 modelled days (the chronic horizon); the loads themselves are
+        // modelled over the whole contiguous history.
+        let rows = Array(rows(from: tl).suffix(Self.established))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                loadTile("CTL · Fitness", value: latest.map { whole($0.chronicLoad) } ?? "—", dashed: false)
+                loadTile("ATL · Fatigue", value: latest.map { whole($0.acuteLoad) } ?? "—", dashed: true)
+            }
+            TrainingLoadChart(rows: rows)
+                .frame(height: 84)
+                .padding(.top, 16)
+            axisLabels(rows).padding(.top, 6)
+            Text(subtitle(for: tl))
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .padding(.top, 12)
+            if let latest {
+                form(latest.balance)
+                    .padding(.top, 14)
+                    .overlay(alignment: .top) { Rectangle().fill(NoopVisualStyle.border).frame(height: 1) }
+                    .padding(.top, 14)
+            }
         }
     }
 
-    private func legendDot(color: Color, label: LocalizedStringKey) -> some View {
-        HStack(spacing: NoopMetrics.space2) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+    /// A `.tl` tile: caption, the latest load and a legend stroke matching its line in the chart.
+    private func loadTile(_ title: LocalizedStringKey, value: String, dashed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+            HStack(spacing: 8) {
+                Text(verbatim: value)
+                    .font(StrandFont.value(30, weight: 300))
+                    .tracking(-0.6)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Path { p in
+                    p.move(to: CGPoint(x: 0, y: 4))
+                    p.addLine(to: CGPoint(x: 22, y: 4))
+                }
+                .stroke(dashed ? StrandPalette.textPrimary : StrandPalette.metricCyan,
+                        style: StrokeStyle(lineWidth: dashed ? 1.4 : 1.6, dash: dashed ? [3, 3] : []))
+                .frame(width: 22, height: 8)
+                .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private static let axisFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.locale = AppLanguage.activeLocale
+        f.setLocalizedDateFormatFromTemplate("dMMM")
+        return f
+    }()
+
+    private func axisLabels(_ rows: [Row]) -> some View {
+        let isToday = rows.last.map { Self.dayParser.string(from: $0.date) == Repository.localDayKey(Date()) } ?? false
+        return HStack {
+            Text(verbatim: rows.first.map { Self.axisFormatter.string(from: $0.date) } ?? "")
+            Spacer()
+            Text(verbatim: rows.isEmpty ? "" : Self.axisFormatter.string(from: rows[rows.count / 2].date))
+            Spacer()
+            Group {
+                if isToday { Text("Today") } else { Text(verbatim: rows.last.map { Self.axisFormatter.string(from: $0.date) } ?? "") }
+            }
+            .foregroundStyle(StrandPalette.textPrimary)
+        }
+        .font(StrandFont.footnote)
+        .foregroundStyle(StrandPalette.textTertiary)
+        .accessibilityHidden(true)
+    }
+
+    /// Form (TSB = CTL − ATL) with its position on the fatigue-to-fresh scale.
+    private func form(_ balance: Double) -> some View {
+        let f = (balance - Self.formScale.lowerBound) / (Self.formScale.upperBound - Self.formScale.lowerBound)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Form").font(StrandFont.book(14)).foregroundStyle(StrandPalette.textPrimary)
+                    Text("Fitness minus fatigue").font(StrandFont.light(10.5)).foregroundStyle(StrandPalette.textTertiary)
+                }
+                Spacer(minLength: 8)
+                Text(verbatim: signed(balance))
+                    .font(StrandFont.value(30, weight: 300))
+                    .tracking(-0.6)
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+            .accessibilityElement(children: .combine)
+            NoopTickScale(marker: min(max(f, 0), 1), height: 18)
+                .padding(.top, 14)
+            HStack {
+                Text("Overreaching")
+                Spacer()
+                Text("Productive")
+                Spacer()
+                Text("Fresh")
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .padding(.top, 6)
+            .accessibilityHidden(true)
         }
     }
 
@@ -163,20 +245,13 @@ struct TrainingLoadCard: View {
     }
 
     // Honest empty state: name exactly how many consecutive Effort days are still needed.
-    private func unavailableCard(contiguousDays: Int) -> some View {
-        ChartCard(
-            title: "Training Load",
-            subtitle: String(localized: "Chronic vs acute load"),
-            chart: {
-                VStack(spacing: NoopMetrics.space2) {
-                    Text("Needs \(Self.minimum)+ consecutive days of Effort to begin. \(contiguousDays) so far.")
-                        .font(StrandFont.subhead)
-                        .foregroundStyle(StrandPalette.textTertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            },
-            footer: { EmptyView() }
-        )
+    private func unavailable(contiguousDays: Int) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            NoopCardHeader("Chronic vs acute load", icon: "chart-line")
+            Text("Needs \(Self.minimum)+ consecutive days of Effort to begin. \(contiguousDays) so far.")
+                .font(StrandFont.light(14))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

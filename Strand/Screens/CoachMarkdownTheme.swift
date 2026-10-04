@@ -10,14 +10,26 @@ import StrandDesign
 /// look, sized for a chat bubble: headings are capped near body size (a `#` must
 /// not shout inside a 560pt bubble), and tables get hairline borders.
 extension Theme {
-    static let strand = Theme()
-        // Base body text — mirrors StrandFont.body (15 / regular).
+    /// Hanken Grotesk named instances of the bundled variable font. MarkdownUI builds its fonts with
+    /// `Font.custom(name:)`, so the v2 weights are reached through the instances' exact PostScript names
+    /// (CoreText's "HankenGrotesk-Light" alias resolves on macOS but falls back to Helvetica on iOS).
+    /// `FontWeight` is avoided: on this face SwiftUI's `.light` lands near 200 and `.medium` near 600.
+    private static let lightFace = "HankenGrotesk-Regular_Light"
+    private static let bookFace = "HankenGrotesk-Regular"
+
+    static let strand: Theme = {
+        // The faces must be registered before MarkdownUI resolves them by name.
+        NoopFonts.registerIfNeeded()
+        return Theme()
+        // v2 reply copy: 14.5 pt Light in 86 % ink; bold runs step up to Book in full ink.
         .text {
-            ForegroundColor(StrandPalette.textPrimary)
-            FontSize(15)
+            FontFamily(.custom(Theme.lightFace))
+            ForegroundColor(StrandPalette.textPrimary.opacity(0.86))
+            FontSize(14.5)
         }
         .strong {
-            FontWeight(.semibold)
+            FontFamily(.custom(Theme.bookFace))
+            ForegroundColor(StrandPalette.textPrimary)
         }
         .emphasis {
             FontStyle(.italic)
@@ -25,19 +37,20 @@ extension Theme {
         .code {
             FontFamilyVariant(.monospaced)
             FontSize(.em(0.88))
-            ForegroundColor(StrandPalette.accentHover)
-            BackgroundColor(StrandPalette.surfaceInset)
+            ForegroundColor(StrandPalette.textPrimary)
+            BackgroundColor(NoopVisualStyle.inset)
         }
         .link {
-            ForegroundColor(StrandPalette.accent)
+            ForegroundColor(StrandPalette.textPrimary)
+            UnderlineStyle(.single)
         }
-        // Headings: h1/h2 land at headline (17 / semibold), h3 just above body,
+        // Headings in Book: h1/h2 land at headline size (17), h3 just above body,
         // h4–h6 as overline-ish small caps labels.
         .heading1 { configuration in
             configuration.label
                 .markdownMargin(top: 14, bottom: 6)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(17)
                     ForegroundColor(StrandPalette.textPrimary)
                 }
@@ -46,7 +59,7 @@ extension Theme {
             configuration.label
                 .markdownMargin(top: 14, bottom: 6)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(17)
                     ForegroundColor(StrandPalette.textPrimary)
                 }
@@ -55,7 +68,7 @@ extension Theme {
             configuration.label
                 .markdownMargin(top: 12, bottom: 4)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(16)
                     ForegroundColor(StrandPalette.textPrimary)
                 }
@@ -64,7 +77,7 @@ extension Theme {
             configuration.label
                 .markdownMargin(top: 10, bottom: 4)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(15)
                     ForegroundColor(StrandPalette.textPrimary)
                 }
@@ -73,7 +86,7 @@ extension Theme {
             configuration.label
                 .markdownMargin(top: 10, bottom: 4)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(13)
                     ForegroundColor(StrandPalette.textSecondary)
                 }
@@ -82,14 +95,14 @@ extension Theme {
             configuration.label
                 .markdownMargin(top: 10, bottom: 4)
                 .markdownTextStyle {
-                    FontWeight(.semibold)
+                    FontFamily(.custom(Theme.bookFace))
                     FontSize(12)
                     ForegroundColor(StrandPalette.textSecondary)
                 }
         }
         .paragraph { configuration in
             configuration.label
-                .relativeLineSpacing(.em(0.22))
+                .relativeLineSpacing(.em(0.26))
                 .markdownMargin(top: 0, bottom: 8)
         }
         .listItem { configuration in
@@ -104,7 +117,7 @@ extension Theme {
                 }
                 .overlay(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1.5)
-                        .fill(StrandPalette.accent.opacity(0.6))
+                        .fill(NoopVisualStyle.borderHighlight)
                         .frame(width: 3)
                 }
                 .markdownMargin(top: 4, bottom: 8)
@@ -119,23 +132,23 @@ extension Theme {
                     }
                     .padding(10)
             }
-            .background(StrandPalette.surfaceInset)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(StrandPalette.hairline, lineWidth: 1))
+            .background(NoopVisualStyle.inset)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(NoopVisualStyle.border, lineWidth: 1))
             .markdownMargin(top: 4, bottom: 8)
         }
         .thematicBreak {
-            StrandPalette.hairline
+            NoopVisualStyle.border
                 .frame(height: 1)
                 .markdownMargin(top: 10, bottom: 10)
         }
         .table { configuration in
             configuration.label
                 .fixedSize(horizontal: false, vertical: true)
-                .markdownTableBorderStyle(.init(color: StrandPalette.hairline))
+                .markdownTableBorderStyle(.init(color: NoopVisualStyle.border))
                 .markdownTableBackgroundStyle(
-                    .alternatingRows(Color.clear, StrandPalette.surfaceInset)
+                    .alternatingRows(Color.clear, NoopVisualStyle.inset)
                 )
                 .markdownMargin(top: 4, bottom: 8)
         }
@@ -143,7 +156,7 @@ extension Theme {
             configuration.label
                 .markdownTextStyle {
                     if configuration.row == 0 {
-                        FontWeight(.semibold)
+                        FontFamily(.custom(Theme.bookFace))
                     }
                     FontSize(.em(0.9))
                 }
@@ -152,4 +165,5 @@ extension Theme {
                 .padding(.horizontal, 10)
                 .relativeLineSpacing(.em(0.2))
         }
+    }()
 }

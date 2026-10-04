@@ -27,11 +27,22 @@ struct ProfileAvatarView: View {
     var size: CGFloat
     /// Icon tint for the fallback symbol (defaults to the header's secondary text tone).
     var fallbackTint: Color = StrandPalette.textSecondary
+    /// What stands in for a missing photo.
+    var placeholder: Placeholder = .brandMark
 
-    init(imageData: Data?, size: CGFloat, fallbackTint: Color = StrandPalette.textSecondary) {
+    /// The no-photo fallback. `.disc` is the v2 avatar chrome (soft grey disc, hairline, a person glyph),
+    /// used where the avatar sits among v2 circle buttons; `.brandMark` keeps the NOOP loop mark.
+    enum Placeholder {
+        case brandMark
+        case disc
+    }
+
+    init(imageData: Data?, size: CGFloat, fallbackTint: Color = StrandPalette.textSecondary,
+         placeholder: Placeholder = .brandMark) {
         self.imageData = imageData
         self.size = size
         self.fallbackTint = fallbackTint
+        self.placeholder = placeholder
     }
 
     var body: some View {
@@ -43,6 +54,10 @@ struct ProfileAvatarView: View {
                 .clipShape(Circle())
                 // A faint hairline ring so the photo edge reads cleanly on any card/canvas.
                 .overlay(Circle().strokeBorder(StrandPalette.hairline, lineWidth: 1))
+        } else if placeholder == .disc {
+            NoopAvatar("", size: size)
+                .overlay(PhIcon("user", size: size * 0.43).foregroundStyle(fallbackTint))
+                .accessibilityHidden(true)
         } else {
             // Fallback: the NOOP loop BrandMark (the green ring + white core) instead of a generic
             // person glyph — the default avatar is now on-brand. BrandMark is intrinsically square and

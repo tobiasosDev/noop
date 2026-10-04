@@ -16,8 +16,8 @@ import StrandAnalytics
 // pulls today's per-source metrics and runs `FusionResolver.resolve` lives in Wave 3 — see
 // `wiringNeeded`). It does no I/O and never touches AppModel/Repository directly, so it compiles and
 // previews from a fixture. This file owns only PRESENTATION: a metric label, a value formatter, and
-// the row/sheet chrome — all built from the locked component set (NoopCard / StatePill / SourceBadge /
-// ScoreStatePill / SectionHeader) and tokens (StrandPalette / StrandFont / NoopMetrics).
+// the row/detail chrome — all built from the v2 kit (NoopHeroCard / NoopList / NoopCard / NoopTag …)
+// and tokens (StrandPalette / StrandFont / NoopVisualStyle).
 //
 // Wellness framing only: a source is "higher-trust for this metric" with a plain reason; we never say
 // a number is accurate / correct / clinical, never flag a value as concerning. "Everything stays on
@@ -67,129 +67,283 @@ public struct FusedRecord: Equatable {
 
 struct FusedRecordView: View {
     let record: FusedRecord
-    /// The day label shown in the header subtitle ("Today", or a formatted date). Defaulted so the
-    /// preview/caller can omit it.
+    /// The day label shown beside the metric in the per-metric comparison ("Today", or a formatted
+    /// date). Defaulted so the preview/caller can omit it.
     var dayLabel: String = String(localized: "Today")
+    /// When the host last merged this record: the hero's "Last merged" figure. nil hides it.
+    var mergedAt: Date? = nil
+    /// True while the host is still building the record: the header and a quiet note, no figures.
+    var isLoading: Bool = false
 
-    /// The metric currently open in the conflict-compare sheet (nil = closed).
-    @State private var comparing: FusedRow?
+    /// The metric currently open in the per-metric source comparison (nil = closed).
+    @State private var comparing: FusedCompareTarget?
 
     /// True only when more than one source contributed anywhere — gates all provenance chrome so a
     /// single-WHOOP user sees a plain record, not a manufactured multi-source experience.
     private var isMultiSource: Bool { record.contributingSourceCount > 1 }
 
     var body: some View {
-        ScreenScaffold(
-            title: "Your Data, Fused",
-            subtitle: subtitle
-        ) {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                if isMultiSource { dayBadgeRow }
-
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Your data, fused")
+                .padding(.bottom, 6)
+            if isLoading {
+                loadingCard
+            } else {
+                FusedDayHero(record: record, mergedAt: mergedAt)
                 if record.rows.isEmpty {
-                    DataPendingNote(
-                        title: "Nothing to fuse yet",
-                        message: "Import a WHOOP export, Apple Health or a second band and your best-sourced record builds here, on this device.",
-                        symbol: "square.stack.3d.up"
-                    )
+                    emptyCard
                 } else {
-                    NoopCard(padding: 0) {
-                        VStack(spacing: 0) {
-                            ForEach(Array(record.rows.enumerated()), id: \.element.id) { index, row in
-                                FusedMetricRowView(
-                                    row: row,
-                                    showProvenance: isMultiSource,
-                                    onCompare: { comparing = row }
-                                )
-                                if index < record.rows.count - 1 {
-                                    Divider().overlay(StrandPalette.hairline)
-                                        .padding(.leading, NoopMetrics.cardPadding)
-                                }
-                            }
-                        }
-                    }
+                    metricsSection
+                    if isMultiSource { sourceOrderSection }
+                    explainer
                 }
-
-                privacyNote
-                disclaimerNote
+                footer
             }
         }
-        // The conflict-compare detail: every source's value side by side, the winner labelled with its
-        // reason. Opening it never changes the resolved value — it only explains it.
-        .sheet(item: $comparing) { row in
-            ConflictCompareSheet(row: row)
-                #if os(iOS)
-                .noopSheetPresentation(largeFirst: false)
-                #else
-                .frame(width: 480, height: 600)
-                #endif
+        // The screen draws its own v2 header (back circle + title), so the system bar stays hidden.
+        .noopHidesSystemNavBar()
+        #if os(iOS)
+        // Every source for one metric, pushed like any detail. Opening it never changes the resolved
+        // value — it only explains it.
+        .navigationDestination(item: $comparing) { target in
+            if let row = record.rows.first(where: { $0.id == target.id }) {
+                FusedMetricDetailView(row: row, dayLabel: dayLabel)
+            }
         }
-    }
-
-    private var subtitle: LocalizedStringKey {
-        if isMultiSource {
-            return "\(dayLabel) · best signal per metric, from \(record.contributingSourceCount) sources. Everything stays on \(deviceNoun)."
-        }
-        return "\(dayLabel) · your record, on \(deviceNoun)."
-    }
-
-    /// "this Mac" / "this device" without pulling in the app's Platform helper (keeps the view's deps
-    /// minimal — the helper lives in the main target, not the design package).
-    private var deviceNoun: String {
-        #if os(macOS)
-        return String(localized: "this Mac")
         #else
-        return String(localized: "this device")
+        // macOS shows this screen in the split view's detail pane, which has no navigation stack to
+        // push onto, so the comparison stays a sheet there.
+        .sheet(item: $comparing) { target in
+            if let row = record.rows.first(where: { $0.id == target.id }) {
+                FusedMetricDetailView(row: row, dayLabel: dayLabel)
+                    .frame(width: 480, height: 680)
+            }
+        }
         #endif
     }
 
-    /// "Today's record owned by WHOOP" — the scores' single-owner, made honest. Only shown when the
-    /// fused record actually spans multiple sources (else there's no ambiguity to caption).
-    private var dayBadgeRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.accent)
-                .accessibilityHidden(true)
-            if let owner = record.dayOwner {
-                Text("Today's scores owned by \(owner.displayName)")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textSecondary)
-            } else {
-                Text("Scores still calibrating, no single day-owner yet")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
+    @ViewBuilder private var metricsSection: some View {
+        NoopSectionTitle("Today's metrics", captionKey: "Tap to compare")
+        NoopList {
+            ForEach(record.rows) { row in
+                Button {
+                    comparing = FusedCompareTarget(id: row.id)
+                } label: {
+                    FusedMetricRowView(row: row, showProvenance: isMultiSource)
+                }
+                .buttonStyle(.plain)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 4)
-        .accessibilityElement(children: .combine)
     }
 
-    private var privacyNote: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lock.fill")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-                .accessibilityHidden(true)
-            Text("Fused on \(deviceNoun). Nothing leaves it: no account, no cloud.")
-                .font(StrandFont.footnote)
-                .foregroundStyle(StrandPalette.textTertiary)
-            Spacer(minLength: 0)
+    /// The tie-break order the resolver applies when two sources sit on the same trust tier for a
+    /// metric, with what each source supplies today. Read-only: the order is the published policy.
+    @ViewBuilder private var sourceOrderSection: some View {
+        NoopSectionTitle("Source order", captionKey: "Breaks ties")
+        NoopList {
+            ForEach(Array(record.sourcesInPriorityOrder.enumerated()), id: \.element) { index, source in
+                HStack(spacing: 14) {
+                    Text(verbatim: String(format: "%02d", index + 1))
+                        .font(StrandFont.dot(17, weight: 700))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .frame(width: 24, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: source.displayName)
+                            .font(StrandFont.book(15, relativeTo: .body))
+                            .foregroundStyle(StrandPalette.textPrimary)
+                        sourceCaption(source)
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .accessibilityElement(children: .combine)
+            }
         }
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .accessibilityElement(children: .combine)
     }
 
-    /// The pillar's standing non-clinical line (umbrella §4.1). Kept inline + plain — wellness only.
-    private var disclaimerNote: some View {
+    /// What a source is picked for today ("Picked for Resting HR, HRV"), or that it was only counted.
+    private func sourceCaption(_ source: FusionSource) -> Text {
+        let won = record.rows
+            .filter { $0.point.winningSource == source }
+            .map { String(localized: String.LocalizationValue($0.label)) }
+        if won.isEmpty { return Text("Counted; another source leads each metric") }
+        return Text("Picked for \(won.joined(separator: ", "))")
+    }
+
+    @ViewBuilder private var explainer: some View {
+        NoopInsightRow(
+            isMultiSource
+                ? "NOOP picks one source per metric and never averages them. Each metric goes to the source that measures it most directly; when two are equally direct, the higher one in this order wins. Tap a row to see every source."
+                : "NOOP picks one source per metric and never averages them. Tap a row to see where a number came from.",
+            icon: "info"
+        )
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
+        // The pillar's standing non-clinical line (umbrella §4.1). Kept inline + plain — wellness only.
         Text("NOOP picks the best-sourced number and shows you where each came from. It's for wellness and curiosity. It doesn't diagnose or replace medical advice.")
+            .font(StrandFont.caption)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 34)
+            .padding(.trailing, 4)
+    }
+
+    private var footer: some View {
+        Text("Merged on \(Platform.deviceNounPhrase) · nothing leaves the device")
             .font(StrandFont.footnote)
             .foregroundStyle(StrandPalette.textTertiary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 4)
-            .padding(.top, 2)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 10)
+    }
+
+    private var emptyCard: some View {
+        NoopCard {
+            VStack(alignment: .leading, spacing: 10) {
+                NoopCardHeader("Nothing to fuse yet", icon: "intersect-three")
+                Text("Import a WHOOP export, Apple Health or a second band and your best-sourced record builds here, on this device.")
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var loadingCard: some View {
+        NoopCard {
+            HStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(StrandPalette.textSecondary)
+                Text("Reading your sources…")
+                    .font(StrandFont.light(14, relativeTo: .subheadline))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
+/// The value the comparison destination is keyed on (a metric id). Hashable for the iOS push,
+/// Identifiable for the macOS sheet.
+private struct FusedCompareTarget: Hashable, Identifiable {
+    let id: String
+}
+
+extension FusedRecord {
+    /// Every source that contributed to any metric, in the resolver's tie-break order.
+    var sourcesInPriorityOrder: [FusionSource] {
+        var seen = Set<FusionSource>()
+        for row in rows { for c in row.point.contributors { seen.insert(c.source) } }
+        return seen.sorted {
+            MetricArbitrationPolicy.sourcePriority($0) < MetricArbitrationPolicy.sourcePriority($1)
+        }
+    }
+}
+
+// MARK: - Hero
+
+/// The ink hero: how many sources fed the day, which device owns the scores, and the record's shape
+/// (metrics fused, how many disagree, when it was merged).
+private struct FusedDayHero: View {
+    let record: FusedRecord
+    let mergedAt: Date?
+
+    private var sources: [FusionSource] { record.sourcesInPriorityOrder }
+    private var differing: Int {
+        record.rows.filter { $0.point.agreement == .minorDelta || $0.point.agreement == .conflict }.count
+    }
+
+    var body: some View {
+        NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge("Fused day", icon: "intersect-three")
+                    Spacer(minLength: 8)
+                    NoopPill(verbatim: Date().formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)),
+                             compact: true)
+                }
+                HStack(alignment: .center, spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        NoopDotNumber("\(record.contributingSourceCount)", size: 96)
+                        Text(record.contributingSourceCount == 1 ? "source\ntoday" : "sources\ntoday")
+                            .font(StrandFont.light(12, relativeTo: .caption))
+                            .foregroundStyle(StrandPalette.textSecondary)
+                            .lineSpacing(2)
+                            .padding(.bottom, 8)
+                    }
+                    Spacer(minLength: 8)
+                    FusedSourceStack(sources: sources)
+                }
+                .padding(.top, 28)
+
+                ownerLine
+                    .font(StrandFont.light(21, relativeTo: .title2))
+                    .tracking(-0.3)
+                    .lineSpacing(2)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 22)
+                if !sources.isEmpty {
+                    feedLine
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                }
+                NoopMetricRow {
+                    NoopMetric(value: "\(record.rows.count)", label: "Metrics fused", labelColor: NoopMetric.heroLabel)
+                    NoopMetric(value: "\(differing)", label: "Sources differ", labelColor: NoopMetric.heroLabel)
+                    if let mergedAt {
+                        NoopMetric(value: mergedAt.formatted(date: .omitted, time: .shortened),
+                                   label: "Last merged", labelColor: NoopMetric.heroLabel)
+                    }
+                }
+                .padding(.top, 22)
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    /// "Today's scores owned by WHOOP" — the scores' single owner, made honest.
+    private var ownerLine: Text {
+        if let owner = record.dayOwner {
+            return Text("Today's scores owned by \(owner.displayName)")
+        }
+        return Text("Scores still calibrating, no single day-owner yet")
+    }
+
+    private var feedLine: Text {
+        let names = sources.map(\.displayName).joined(separator: " · ")
+        if sources.count == 1 { return Text("One source feeds this day:\n\(names)") }
+        return Text("\(sources.count) sources feed this day:\n\(names)")
+    }
+}
+
+/// The overlapping source glyphs at the hero's right edge (WHOOP, Apple Health, Mi Band …).
+private struct FusedSourceStack: View {
+    let sources: [FusionSource]
+
+    var body: some View {
+        HStack(spacing: -10) {
+            ForEach(sources.prefix(4), id: \.self) { source in
+                PhIcon(source.fusedSourceIcon, size: 17)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(NoopVisualStyle.inset.opacity(0.9)))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                    // A dark ring around each disc so the overlap reads as a stack, not a blur.
+                    .background(Circle().fill(Color.black.opacity(0.55)).padding(-3))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -197,10 +351,9 @@ struct FusedRecordView: View {
 
 private struct FusedMetricRowView: View {
     let row: FusedRow
-    /// When false (single-source record) the provenance pill + reason + agreement are all hidden — a
-    /// plain "label … value" row, no manufactured multi-source noise.
+    /// When false (single-source record) the source chip and agreement chip are hidden — a plain
+    /// "label … value" row, no manufactured multi-source noise.
     let showProvenance: Bool
-    let onCompare: () -> Void
 
     // Each screen resolves °C/°F for itself (TodayView, FullDayChartView, MetricExplorerView do the
     // same); the fused row used to print a hardcoded "°C" and was the last reader here ignoring it.
@@ -213,207 +366,379 @@ private struct FusedMetricRowView: View {
 
     private var point: FusedMetricPoint { row.point }
 
-    private var accent: Color {
-        if let hex = row.accentHex { return Color(hex: hex) }
-        return StrandPalette.textPrimary
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Top line: metric label + the winning value (best-sourced), right-aligned.
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(LocalizedStringKey(row.label))
-                    .font(StrandFont.headline)
-                    .foregroundStyle(StrandPalette.textPrimary)
-                Spacer(minLength: 8)
-                Text(FusionFormat.value(point.value, metricKey: point.metric, temperature: temperatureUnit))
-                    .font(StrandFont.number(20))
-                    .foregroundStyle(accent)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-
-            if showProvenance {
-                // Provenance line: a source badge + the published one-line reason. The literal goes to
-                // SourceBadge's LocalizedStringKey directly so the "from %@" key is catalogued.
+        HStack(spacing: 12) {
+            NoopIconTile(fusedMetricIcon(point.metric))
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    SourceBadge("from \(point.winningSource.displayName)",
-                                tint: StrandPalette.accent)
-                    if let reason = winnerReason {
-                        Text(reason)
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textTertiary)
-                    }
-                    Spacer(minLength: 0)
+                    Text(LocalizedStringKey(row.label))
+                        .font(StrandFont.book(15, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1)
+                    if showProvenance { agreementChip }
                 }
-
-                // Agreement line: quiet for agree, neutral both-values for minorDelta, a ⚠ + compare
-                // affordance for conflict. Single → nothing (no second source to cross-check).
-                agreementLine
+                if showProvenance {
+                    FusedSourceChip(source: point.winningSource)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            FusedValueText(parts: FusionFormat.parts(point.value, metricKey: point.metric,
+                                                     temperature: temperatureUnit),
+                           size: 17)
+            PhIcon("caret-right", size: 14)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .opacity(0.4)
         }
-        .padding(.horizontal, NoopMetrics.cardPadding)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        // The whole conflict row is the compare affordance, so VoiceOver and a tap both reach it.
+        // The whole row is the compare affordance, so VoiceOver and a tap both reach it.
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(point.agreement == .conflict ? .isButton : [])
-        .accessibilityHint(point.agreement == .conflict ? "Compare sources" : "")
-        .onTapGesture { if point.agreement == .conflict { onCompare() } }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Compare sources")
     }
 
-    /// The winner's published reason — only worth showing when it adds justification ("counts
-    /// directly" / "best stager" / a tier word). A bare "direct sensor" on a lone vital is noise, so we
-    /// keep it but it reads quietly in tertiary text.
-    private var winnerReason: String? {
-        point.contributors.first?.reason
-    }
-
-    @ViewBuilder private var agreementLine: some View {
+    /// Quiet for agree / single; a dashed chip when the sources disagree. Never an alarm colour.
+    @ViewBuilder private var agreementChip: some View {
         switch point.agreement {
-        case .single:
+        case .single, .agree:
             EmptyView()
-
-        case .agree:
-            if let other = point.contributors.dropFirst().first {
-                Text("\(other.source.displayName) agrees: \(FusionFormat.value(other.value, metricKey: point.metric, temperature: temperatureUnit))")
-                    .font(StrandFont.footnote)
-                    .foregroundStyle(StrandPalette.textTertiary)
-            }
-
         case .minorDelta:
-            if let other = point.contributors.dropFirst().first {
-                HStack(spacing: 6) {
-                    StatePill("Differs slightly", tone: .neutral, showsDot: false)
-                    Text("\(other.source.displayName): \(FusionFormat.value(other.value, metricKey: point.metric, temperature: temperatureUnit))")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                    Spacer(minLength: 0)
-                }
-            }
-
+            FusedDifferenceChip(text: "Differs slightly")
         case .conflict:
-            Button(action: onCompare) {
-                HStack(spacing: 6) {
-                    StatePill("Sources differ", tone: .warning)
-                    Text(conflictSummary)
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textSecondary)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(StrandPalette.textTertiary)
-                    Spacer(minLength: 0)
-                }
-            }
-            .buttonStyle(.plain)
-            // Don't double-announce: the row already carries the compare hint+trait above.
-            .accessibilityHidden(true)
+            FusedDifferenceChip(text: "Sources differ")
         }
-    }
-
-    /// "Apple Health says 6h 40m. Tap to compare" style line for a conflict.
-    private var conflictSummary: String {
-        guard let other = point.contributors.dropFirst().first else { return String(localized: "Tap to compare") }
-        return String(localized: "\(other.source.displayName) says \(FusionFormat.value(other.value, metricKey: point.metric, temperature: temperatureUnit)). Tap to compare")
     }
 }
 
-// MARK: - Conflict-compare sheet
+/// The small source capsule under a metric ("WHOOP", "Apple Health") with the source's glyph.
+private struct FusedSourceChip: View {
+    let source: FusionSource
+    var body: some View {
+        HStack(spacing: 5) {
+            PhIcon(source.fusedSourceIcon, size: 12)
+            Text(verbatim: source.displayName)
+                .font(StrandFont.book(11, relativeTo: .caption2))
+                .lineLimit(1)
+        }
+        .foregroundStyle(StrandPalette.textSecondary)
+        .padding(.leading, 7)
+        .padding(.trailing, 9)
+        .frame(height: 22)
+        .background(Capsule(style: .continuous).fill(NoopVisualStyle.inset))
+        .overlay(Capsule(style: .continuous).strokeBorder(NoopVisualStyle.border, lineWidth: 1))
+    }
+}
 
-/// A small read-only sheet: every source's value for the metric, side by side, with the one NOOP is
-/// using marked and its trust reason named. NOOP never adjudicates which is "correct" — it shows the
-/// spread and explains its best-signal pick. Transparency, not diagnosis.
-private struct ConflictCompareSheet: View {
-    let row: FusedRow
-    @Environment(\.dismiss) private var dismiss
+/// The dashed "Sources differ" / "Differs slightly" capsule beside a metric's name.
+private struct FusedDifferenceChip: View {
+    let text: LocalizedStringKey
+    var body: some View {
+        HStack(spacing: 4) {
+            PhIcon("arrows-split", size: 11)
+            Text(text)
+                .font(StrandFont.book(10.5, relativeTo: .caption2))
+                .lineLimit(1)
+        }
+        .foregroundStyle(StrandPalette.textPrimary)
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .frame(height: 20)
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.white.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+        )
+    }
+}
 
-    private var point: FusedMetricPoint { row.point }
+/// A fused value with its unit set small beside it (`52` `bpm`).
+private struct FusedValueText: View {
+    let parts: (number: String, unit: String?)
+    let size: CGFloat
+    var color: Color = StrandPalette.textPrimary
 
     var body: some View {
-        ScreenScaffold(title: LocalizedStringKey(row.label), subtitle: "Your bands report different numbers. Here's every source, and the one NOOP is using.") {
-            VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                NoopCard {
-                    VStack(spacing: 0) {
-                        ForEach(Array(point.contributors.enumerated()), id: \.offset) { index, contrib in
-                            ContributorRow(
-                                contrib: contrib,
-                                metricKey: point.metric,
-                                isWinner: index == 0
-                            )
-                            if index < point.contributors.count - 1 {
-                                Divider().overlay(StrandPalette.hairline)
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(verbatim: parts.number)
+                .font(StrandFont.value(size))
+                .tracking(-size * 0.015)
+                .foregroundStyle(color)
+            if let unit = parts.unit {
+                Text(verbatim: unit)
+                    .font(StrandFont.book(10))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
+}
+
+extension FusionSource {
+    /// The Phosphor glyph for a source on the fused screens.
+    var fusedSourceIcon: String {
+        switch self {
+        case .whoopImport:   return "bluetooth"
+        case .noopComputed:  return "cpu"
+        case .appleHealth:   return "heart"
+        case .healthConnect: return "heart"
+        case .xiaomiBand:    return "watch"
+        case .nutritionCsv:  return "fork-knife"
+        case .localCache:    return "database"
+        }
+    }
+}
+
+/// The Phosphor glyph for a fused metric key.
+private func fusedMetricIcon(_ key: String) -> String {
+    switch MetricArbitrationPolicy.kind(forKey: key) {
+    case .restingHR: return "heartbeat"
+    case .heartRate: return "heart"
+    case .hrv:       return "wave-sine"
+    case .spo2:      return "drop"
+    case .skinTemp:  return "thermometer-simple"
+    case .steps:     return "footprints"
+    case .sleep:     return "moon-stars"
+    case .calories:  return "fire"
+    case .other:     return "chart-line"
+    }
+}
+
+// MARK: - Per-metric comparison
+
+/// Every source's value for one metric, side by side, with the one NOOP is using marked and its trust
+/// reason named. NOOP never adjudicates which is "correct" — it shows the spread and explains its
+/// best-signal pick. Transparency, not diagnosis.
+struct FusedMetricDetailView: View {
+    let row: FusedRow
+    var dayLabel: String = String(localized: "Today")
+
+    // Each screen resolves °C/°F for itself (TodayView, FullDayChartView, MetricExplorerView do the
+    // same); the fused row used to print a hardcoded "°C" and was the last reader here ignoring it.
+    @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    private var temperatureUnit: TemperatureUnit {
+        UnitPrefs.resolveTemperature(system: UnitSystem(rawValue: unitSystemRaw) ?? .metric,
+                                     override: temperatureRaw)
+    }
+
+    private var point: FusedMetricPoint { row.point }
+    private var winner: ContributingSource? { point.contributors.first }
+    private var metricName: String { String(localized: String.LocalizationValue(row.label)) }
+
+    var body: some View {
+        ScreenScaffold(title: nil) {
+            NoopScreenHeader("Fused data")
+                .padding(.bottom, 6)
+            hero
+            NoopSectionTitle("Every source", caption: "\(metricName) · \(dayLabel)")
+            NoopList {
+                ForEach(Array(point.contributors.enumerated()), id: \.offset) { index, contrib in
+                    FusedContributorRow(contrib: contrib, metricKey: point.metric,
+                                        isWinner: index == 0, temperature: temperatureUnit)
+                }
+            }
+            if point.contributors.count > 1 {
+                comparedCard
+            } else if let winner {
+                NoopInsightRow(text: explanation(winner), icon: "info")
+                    .padding(.horizontal, 4)
+                    .padding(.top, 8)
+            }
+        }
+        .noopHidesSystemNavBar()
+    }
+
+    private var hero: some View {
+        let parts = FusionFormat.parts(point.value, metricKey: point.metric, temperature: temperatureUnit)
+        return NoopHeroCard(glow: .ink, padding: 22) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    NoopIconBadge(verbatim: "\(metricName) · \(dayLabel)", icon: fusedMetricIcon(point.metric))
+                    Spacer(minLength: 8)
+                    NoopPill(agreementTitle, compact: true)
+                }
+                NoopDotNumber(parts.number, unit: parts.unit, size: 88)
+                    .padding(.top, 30)
+                if let winner {
+                    Text("Using \(winner.source.displayName), \(fusedReason(winner.reason)).")
+                        .font(StrandFont.light(19, relativeTo: .title3))
+                        .tracking(-0.2)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 18)
+                }
+                NoopMetricRow {
+                    NoopMetric(value: "\(point.contributors.count)", label: "Sources counted", labelColor: NoopMetric.heroLabel)
+                    if let winner {
+                        ForEach(Array(point.contributors.dropFirst().prefix(2).enumerated()), id: \.offset) { _, other in
+                            if let delta = delta(other, against: winner) {
+                                NoopMetric(value: delta.number, unit: delta.unit,
+                                           labelText: String(localized: "\(other.source.displayName) vs \(winner.source.displayName)"), labelColor: NoopMetric.heroLabel)
                             }
                         }
                     }
                 }
+                .padding(.top, 20)
+            }
+            .padding(.bottom, 2)
+        }
+    }
 
-                // Why this one — the honest explanation of the pick, never a "correct" claim.
-                if let winner = point.contributors.first {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "info.circle")
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(StrandPalette.accent)
-                            .accessibilityHidden(true)
-                        Text("NOOP shows the \(winner.source.displayName) reading because it \(winner.reason) for this metric: a higher-trust source here, not a verdict that the others are wrong.")
-                            .font(StrandFont.subhead)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+    private var agreementTitle: LocalizedStringKey {
+        switch point.agreement {
+        case .single:     return "One source"
+        case .agree:      return "Sources agree"
+        case .minorDelta: return "Differs slightly"
+        case .conflict:   return "Sources differ"
+        }
+    }
+
+    /// How far another source sits from the one in use: a percentage for counts, the unit's own
+    /// difference for vitals and durations. nil where a difference would mislead (skin temperature
+    /// mixes absolute readings with deviations from baseline, #622).
+    private func delta(_ other: ContributingSource, against winner: ContributingSource) -> (number: String, unit: String?)? {
+        let d = other.value - winner.value
+        func signed(_ s: String, negative: Bool, zero: Bool) -> String {
+            zero ? s : (negative ? "\u{2212}" : "+") + s
+        }
+        switch MetricArbitrationPolicy.kind(forKey: point.metric) {
+        case .skinTemp:
+            return nil
+        case .steps, .calories, .other:
+            guard winner.value != 0 else { return nil }
+            let pct = Int((d / abs(winner.value) * 100).rounded())
+            return (signed("\(abs(pct))", negative: pct < 0, zero: pct == 0), "%")
+        default:
+            let p = FusionFormat.parts(abs(d), metricKey: point.metric, temperature: temperatureUnit)
+            let isZero = p.number == "0" || p.number == "0m"
+            return (signed(p.number, negative: d < 0, zero: isZero), p.unit)
+        }
+    }
+
+    private var comparedCard: some View {
+        let maxValue = point.contributors.map { abs($0.value) }.max() ?? 0
+        return NoopCard {
+            VStack(alignment: .leading, spacing: 0) {
+                NoopCardHeader("Compared", icon: "chart-bar", caption: "\(metricName) · \(dayLabel)")
+                VStack(spacing: 14) {
+                    ForEach(Array(point.contributors.enumerated()), id: \.offset) { index, contrib in
+                        FusedCompareBar(
+                            name: contrib.source.displayName,
+                            value: FusionFormat.value(contrib.value, metricKey: point.metric, temperature: temperatureUnit),
+                            fraction: maxValue > 0 ? abs(contrib.value) / maxValue : 0,
+                            isWinner: index == 0
+                        )
                     }
-                    .padding(.horizontal, 4)
                 }
-
-                Button("Done") { dismiss() }
-                    .buttonStyle(.noopSecondary)
-                    .padding(.top, 4)
+                .padding(.top, 18)
+                if let winner {
+                    Rectangle().fill(NoopVisualStyle.border).frame(height: 1)
+                        .padding(.top, 18)
+                        .padding(.bottom, 14)
+                    explanation(winner)
+                        .font(StrandFont.light(13, relativeTo: .subheadline))
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+    }
+
+    /// Why this one — the honest explanation of the pick, never a "correct" claim.
+    private func explanation(_ winner: ContributingSource) -> Text {
+        // The reason is a short label ("counts directly"), so it sits in parentheses rather than inside the
+        // clause: interpolated into "because it …" it cannot be translated grammatically.
+        Text("NOOP shows the \(winner.source.displayName) reading for this metric (\(fusedReason(winner.reason))): a higher-trust source here, not a verdict that the others are wrong.")
     }
 }
 
-/// One source's value inside the compare sheet — a source badge, its value, a "trust" caption (the
-/// reason), and a "● Using" marker on the winner.
-private struct ContributorRow: View {
+/// One source inside the comparison list: its glyph, name (+ "Using" on the winner), the trust
+/// reason, its value, and a check on the one in use.
+private struct FusedContributorRow: View {
     let contrib: ContributingSource
     let metricKey: String
     let isWinner: Bool
-
-    // Each screen resolves °C/°F for itself (TodayView, FullDayChartView, MetricExplorerView do the
-    // same); the fused row used to print a hardcoded "°C" and was the last reader here ignoring it.
-    @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
-    @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
-    private var temperatureUnit: TemperatureUnit {
-        UnitPrefs.resolveTemperature(system: UnitSystem(rawValue: unitSystemRaw) ?? .metric,
-                                     override: temperatureRaw)
-    }
+    let temperature: TemperatureUnit
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        let formatted = FusionFormat.value(contrib.value, metricKey: metricKey, temperature: temperature)
+        HStack(spacing: 12) {
+            NoopIconTile(contrib.source.fusedSourceIcon)
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    SourceBadge(LocalizedStringKey(contrib.source.displayName),
-                                tint: isWinner ? StrandPalette.accent : StrandPalette.textTertiary)
-                    if isWinner {
-                        StatePill("Using", tone: .accent, showsDot: true)
-                    }
+                    Text(verbatim: contrib.source.displayName)
+                        .font(StrandFont.book(15, relativeTo: .body))
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .lineLimit(1)
+                    // The tag keeps its full width ("IN BENUTZUNG"); the source name yields first.
+                    if isWinner { NoopTag("Using", size: 10).fixedSize().layoutPriority(1) }
                 }
-                Text(contrib.reason)
-                    .font(StrandFont.footnote)
+                Text(verbatim: fusedReason(contrib.reason))
+                    .font(StrandFont.light(12, relativeTo: .caption))
                     .foregroundStyle(StrandPalette.textTertiary)
             }
-            Spacer(minLength: 8)
-            Text(FusionFormat.value(contrib.value, metricKey: metricKey, temperature: temperatureUnit))
-                .font(StrandFont.number(18))
-                .foregroundStyle(isWinner ? StrandPalette.textPrimary : StrandPalette.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            FusedValueText(parts: FusionFormat.parts(contrib.value, metricKey: metricKey, temperature: temperature),
+                           size: 17,
+                           color: isWinner ? StrandPalette.textPrimary : StrandPalette.textSecondary)
+            ZStack {
+                if isWinner {
+                    Circle().fill(StrandPalette.textPrimary)
+                    PhIcon("check", size: 13).foregroundStyle(NoopVisualStyle.canvas)
+                }
+            }
+            .frame(width: 22, height: 22)
         }
-        .padding(.vertical, 12)
+        .padding(.leading, 14)
+        .padding(.trailing, 16)
+        .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
         // Whole-string key per variant (never a concatenated localized tail on an a11y label).
         .accessibilityLabel(isWinner
-            ? "\(contrib.source.displayName), \(FusionFormat.value(contrib.value, metricKey: metricKey, temperature: temperatureUnit)), in use"
-            : "\(contrib.source.displayName), \(FusionFormat.value(contrib.value, metricKey: metricKey, temperature: temperatureUnit))")
+            ? "\(contrib.source.displayName), \(formatted), in use"
+            : "\(contrib.source.displayName), \(formatted)")
+    }
+}
+
+/// One horizontal bar in the "Compared" card: source name, a bar scaled to the largest reading, the
+/// value. The source in use is the bright one.
+private struct FusedCompareBar: View {
+    let name: String
+    let value: String
+    let fraction: Double
+    let isWinner: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(verbatim: name)
+                .font(StrandFont.book(12, relativeTo: .caption))
+                .foregroundStyle(StrandPalette.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: 86, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous).fill(NoopVisualStyle.inset)
+                    Capsule(style: .continuous)
+                        .fill(isWinner
+                              ? AnyShapeStyle(LinearGradient(colors: [StrandPalette.textPrimary.opacity(0.6),
+                                                                      StrandPalette.textPrimary],
+                                                             startPoint: .leading, endPoint: .trailing))
+                              : AnyShapeStyle(Color.white.opacity(0.2)))
+                        .frame(width: max(12, geo.size.width * min(max(fraction, 0), 1)))
+                }
+            }
+            .frame(height: 12)
+            Text(verbatim: value)
+                .font(StrandFont.value(13))
+                .foregroundStyle(isWinner ? StrandPalette.textPrimary : StrandPalette.textSecondary)
+                .lineLimit(1)
+                .frame(minWidth: 46, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -451,13 +776,45 @@ enum FusionFormat {
         }
     }
 
+    /// The value split into its number and its unit, for layouts that set the unit smaller beside the
+    /// number (`52` + `bpm`). Same rules as `value(_:metricKey:temperature:)`; units-less kinds (steps,
+    /// sleep) return a nil unit.
+    static func parts(_ v: Double, metricKey: String, temperature: TemperatureUnit) -> (number: String, unit: String?) {
+        switch MetricArbitrationPolicy.kind(forKey: metricKey) {
+        case .restingHR, .heartRate:
+            return ("\(Int(v.rounded()))", "bpm")
+        case .hrv:
+            return ("\(Int(v.rounded()))", "ms")
+        case .spo2:
+            return ("\(Int(v.rounded()))", "%")
+        case .skinTemp:
+            // Same bimodal rule as `value`: the kind (absolute vs deviation) is read from the value.
+            let kind = SkinTempDisplay.kind(of: v)
+            let fahrenheit = temperature == .fahrenheit
+            return (SkinTempDisplay.numberString(v, kind: kind, fahrenheit: fahrenheit),
+                    SkinTempDisplay.unitSymbol(kind: kind, fahrenheit: fahrenheit))
+        case .steps:
+            return (integerGrouped(v), nil)
+        case .sleep:
+            return (duration(minutes: v), nil)
+        case .calories:
+            return (integerGrouped(v), "kcal")
+        case .other:
+            return (v == v.rounded() ? "\(Int(v))" : String(format: "%.1f", v), nil)
+        }
+    }
+
     /// "8,420" — grouped integer.
     private static func integerGrouped(_ v: Double) -> String {
+        integerFormatter.string(from: NSNumber(value: v.rounded())) ?? "\(Int(v.rounded()))"
+    }
+    /// Built once: the value column formats every row on every render.
+    private static let integerFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.maximumFractionDigits = 0
-        return f.string(from: NSNumber(value: v.rounded())) ?? "\(Int(v.rounded()))"
-    }
+        return f
+    }()
 
     /// "7h 12m" from a minutes value; "52m" under an hour; "0m" for nothing.
     private static func duration(minutes: Double) -> String {
@@ -517,3 +874,9 @@ private extension FusedMetricPoint {
         .preferredColorScheme(.dark)
 }
 #endif
+
+/// The arbitration reason (`MetricArbitrationPolicy.reason`, a fixed English label shared with Android)
+/// looked up in the app catalogue, so a translated label shows where one exists.
+func fusedReason(_ reason: String) -> String {
+    Bundle.main.localizedString(forKey: reason, value: reason, table: nil)
+}

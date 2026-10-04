@@ -1,12 +1,11 @@
 import SwiftUI
 
-// MARK: - GlowRing — crisp WHOOP-style score ring
+// MARK: - GlowRing — the v2 score ring
 //
-// Quality here is CRISPNESS, not blur. A clean solid arc with rounded caps over a clearly-visible
-// full-circle track (so the ring reads as "X% of a circle"), a bold centred number that counts up, and
-// only a TIGHT, low-opacity glow hugging the arc (additive on dark, hidden on light) — never a wide
-// fuzzy bloom. The arc springs in from 12 o'clock and re-animates when the value changes (day nav).
-// Theme-aware (number + track follow light/dark). Motion gated on Reduce Motion; macOS-13 / iOS-17 safe.
+// A faint full-circle track, the score's arc from 12 o'clock in its accent, and a white knob with a soft
+// glow at the arc's end (the kit's ring gauge), with the number in the dot-matrix face at the centre. The
+// arc springs in on appear and re-animates when the value changes (day nav). Motion gated on Reduce
+// Motion; macOS-13 / iOS-17 safe.
 
 public struct GlowRing: View {
 
@@ -34,12 +33,12 @@ public struct GlowRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// The centre-number font for a ring of the given diameter — the house numeral at `diameter * 0.36`,
-    /// bold. Exposed so an EMPTY / carried / "No data" ring (which doesn't draw a `GlowRing`) can render
-    /// its centre text in the EXACT same size + weight as a filled ring, keeping the hero trio's three
-    /// centre read-outs visually consistent regardless of state.
+    /// The centre-number font for a ring of the given diameter — the dot-matrix face at `diameter * 0.32`.
+    /// Exposed so an EMPTY / carried / "No data" ring (which doesn't draw a `GlowRing`) can render its
+    /// centre text in the EXACT same size as a filled ring, keeping the hero trio's three centre read-outs
+    /// visually consistent regardless of state.
     public static func centerFont(diameter: CGFloat) -> Font {
-        StrandFont.rounded(diameter * 0.36, weight: .bold)
+        StrandFont.dot(diameter * 0.32)
     }
 
     private var clamped: CGFloat { CGFloat(min(max(fraction, 0), 1)) }
@@ -49,19 +48,28 @@ public struct GlowRing: View {
 
     public var body: some View {
         ZStack {
-            // Clearly-visible full-circle track, so the arc reads as a fraction of a circle (like WHOOP).
+            // The faint full-circle track, so the arc reads as a fraction of a circle.
             Circle()
                 .stroke(StrandPalette.textPrimary.opacity(0.10),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
-            // Design Reset: NO glow. A flat, crisp solid arc only — the clean Material-style look.
             arc.stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+
+            // The white knob at the arc's end, with the kit's soft glow.
+            if filled > 0.001 {
+                let r = (diameter - lineWidth) / 2
+                let a = Angle.degrees(-90 + 360 * Double(filled)).radians
+                Circle().fill(Color.white)
+                    .frame(width: lineWidth * 2.4, height: lineWidth * 2.4)
+                    .shadow(color: .white.opacity(0.8), radius: 4)
+                    .offset(x: r * CGFloat(cos(a)), y: r * CGFloat(sin(a)))
+            }
 
             // Centred rolling number.
             Text(format(shown))
                 .font(Self.centerFont(diameter: diameter))
+                .tracking(StrandFont.dotTracking(diameter * 0.32))
                 .foregroundStyle(StrandPalette.textPrimary)
-                .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
                 .contentTransition(.numericText())

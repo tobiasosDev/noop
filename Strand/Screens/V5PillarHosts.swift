@@ -24,22 +24,17 @@ struct FusedRecordHost: View {
 
     @State private var record = FusedRecord(rows: [], dayOwner: nil, contributingSourceCount: 0)
     @State private var loaded = false
+    /// When the record was last built here — the hero's "Last merged" time.
+    @State private var mergedAt: Date?
 
     var body: some View {
-        Group {
-            if loaded {
-                FusedRecordView(record: record)
-            } else {
-                ScreenScaffold(title: "Your Data, Fused",
-                               subtitle: "Building your best-sourced record…") {
-                    ComingSoon(what: "Reading your sources…", symbol: "square.stack.3d.up")
-                }
+        // One view for both states, so the header (and its back button) is there while loading too.
+        FusedRecordView(record: record, mergedAt: mergedAt, isLoading: !loaded)
+            .task(id: repo.refreshSeq) {
+                record = await model.buildTodayFusedRecord()
+                mergedAt = Date()
+                loaded = true
             }
-        }
-        .task(id: repo.refreshSeq) {
-            record = await model.buildTodayFusedRecord()
-            loaded = true
-        }
     }
 }
 

@@ -12,29 +12,9 @@ struct SyncLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SyncActivityAttributes.self) { context in
             // Lock Screen / banner presentation.
-            HStack(spacing: 14) {
-                syncGlyph(context.state.phase)
-                    .font(.title2)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(context.attributes.title)
-                        .font(.caption).foregroundStyle(StrandPalette.textSecondary)
-                    Text(context.state.status)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(StrandPalette.textPrimary)
-                    if let detail = context.state.detail {
-                        Text(detail).font(.caption2).foregroundStyle(StrandPalette.textSecondary)
-                    }
-                }
-                Spacer()
-                if isActive(context.state.phase) {
-                    elapsed(since: context.state.startedAt)
-                        .font(.system(.headline, design: .rounded).monospacedDigit())
-                        .foregroundStyle(StrandPalette.textPrimary)
-                }
-            }
-            .padding()
-            .activityBackgroundTint(StrandPalette.surfaceBase)
-            .activitySystemActionForegroundColor(StrandPalette.textPrimary)
+            SyncLiveActivityBanner(title: context.attributes.title, state: context.state)
+                .activityBackgroundTint(NoopVisualStyle.surface)
+                .activitySystemActionForegroundColor(StrandPalette.textPrimary)
         } dynamicIsland: { context in
             // ONE line, deliberately. iOS shows the expanded layout for a few seconds whenever an activity
             // starts and offers no way to start compact, so the only lever on that flash is how tall the
@@ -43,13 +23,14 @@ struct SyncLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Label { Text(context.state.status) } icon: { syncGlyph(context.state.phase) }
-                        .font(.subheadline)
+                        .font(StrandFont.book(14))
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     if isActive(context.state.phase) {
                         elapsed(since: context.state.startedAt)
-                            .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                            .font(StrandFont.value(14, weight: 500))
+                            .monospacedDigit()
                     }
                 }
             } compactLeading: {
@@ -69,6 +50,41 @@ struct SyncLiveActivity: Widget {
     }
 }
 
+/// The sync banner on the Lock Screen: the phase glyph, the run's title over its status and backlog, and
+/// the elapsed clock while it is still pulling.
+struct SyncLiveActivityBanner: View {
+    let title: String
+    let state: SyncActivityAttributes.ContentState
+
+    var body: some View {
+        HStack(spacing: 14) {
+            syncGlyph(state.phase, size: 19)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color.white.opacity(0.08)))
+                .overlay(Circle().strokeBorder(NoopVisualStyle.borderHighlight, lineWidth: 1))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(StrandFont.light(12)).foregroundStyle(StrandPalette.textSecondary)
+                Text(state.status)
+                    .font(StrandFont.book(17))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                if let detail = state.detail {
+                    Text(detail).font(StrandFont.light(11)).foregroundStyle(StrandPalette.textSecondary)
+                }
+            }
+            Spacer()
+            if isActive(state.phase) {
+                elapsed(since: state.startedAt)
+                    .font(StrandFont.value(17, weight: 500))
+                    .monospacedDigit()
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+    }
+}
+
 private func isActive(_ phase: SyncActivityAttributes.Phase) -> Bool {
     phase == .connecting || phase == .syncing
 }
@@ -83,13 +99,13 @@ private func elapsed(since start: Date) -> some View {
 /// kept the compact pill's width steady — then a tick once done, and the critical colour when the strap
 /// went quiet.
 @ViewBuilder
-private func syncGlyph(_ phase: SyncActivityAttributes.Phase) -> some View {
+private func syncGlyph(_ phase: SyncActivityAttributes.Phase, size: CGFloat = 15) -> some View {
     switch phase {
     case .connecting, .syncing:
-        Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(StrandPalette.statusPositive)
+        PhIcon("arrows-clockwise", size: size).foregroundStyle(StrandPalette.statusPositive)
     case .done:
-        Image(systemName: "checkmark.circle.fill").foregroundStyle(StrandPalette.statusPositive)
+        PhIcon("check-circle", weight: .fill, size: size).foregroundStyle(StrandPalette.statusPositive)
     case .interrupted:
-        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(StrandPalette.statusCritical)
+        PhIcon("warning-circle", weight: .fill, size: size).foregroundStyle(StrandPalette.statusCritical)
     }
 }
