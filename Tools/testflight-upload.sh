@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
 # Archive NOOPiOS (widget extension and watch app included) and upload it to
-# TestFlight with Xcode automatic signing. Uses the Apple ID already signed in
-# to Xcode, or an App Store Connect API key when one is supplied. The key file
+# TestFlight. The default is Xcode automatic signing. An optional manual mode
+# signs the export with a local Apple Distribution certificate and installed
+# App Store provisioning profiles. Uses the Apple ID already signed in to
+# Xcode, or an App Store Connect API key when one is supplied. The key file
 # stays outside the repo.
 #
 # Usage:
 #   Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID]
 #       [--api-key-path PATH] [--api-key-id KEY_ID] [--api-issuer ISSUER_ID]
+#       [--manual-profiles] [--profile-prefix PREFIX]
 #
 # --team overrides the Apple Developer Team ID (default 48XAPJ6DGL).
 # --app-group, or the APP_GROUP_ID environment variable, overrides the App
@@ -18,6 +21,11 @@
 # the Xcode account. When the key ID and issuer are set and the path is
 # omitted, the path defaults to
 # ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8.
+# --manual-profiles, or EXPORT_SIGNING=manual, writes an export options plist
+# with manual signing. Each archived bundle ID maps to a profile named
+# "<prefix> <bundle id>". The prefix comes from --profile-prefix or
+# PROFILE_NAME_PREFIX and defaults to "NOOP AppStore". The API key, when set,
+# still authenticates the upload. The archive itself stays automatically signed.
 # Requires Config/BundleIdSecrets.xcconfig (gitignored; see
 # Config/BundleIdSecrets.example.xcconfig). The marketing version comes from
 # project.yml. The build number is a timestamp (YYYYMMDDHHMM) so each upload
@@ -31,9 +39,20 @@ APP_GROUP="${APP_GROUP_ID:-}"
 ASC_KEY_PATH="${ASC_KEY_PATH:-}"
 ASC_KEY_ID="${ASC_KEY_ID:-}"
 ASC_ISSUER_ID="${ASC_ISSUER_ID:-}"
+# Flag wins over the environment when both are set.
+MANUAL_PROFILES=0
+case "${EXPORT_SIGNING:-automatic}" in
+  automatic) ;;
+  manual) MANUAL_PROFILES=1 ;;
+  *)
+    echo "error: EXPORT_SIGNING must be automatic or manual" >&2
+    exit 2
+    ;;
+esac
+PROFILE_NAME_PREFIX="${PROFILE_NAME_PREFIX:-NOOP AppStore}"
 
 usage() {
-  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID] [--api-key-path PATH] [--api-key-id KEY_ID] [--api-issuer ISSUER_ID]" >&2
+  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID] [--api-key-path PATH] [--api-key-id KEY_ID] [--api-issuer ISSUER_ID] [--manual-profiles] [--profile-prefix PREFIX]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -83,6 +102,19 @@ while [[ $# -gt 0 ]]; do
       ASC_ISSUER_ID="$2"
       shift 2
       ;;
+    --manual-profiles)
+      MANUAL_PROFILES=1
+      shift
+      ;;
+    --profile-prefix)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        echo "error: --profile-prefix requires a name prefix" >&2
+        usage
+        exit 2
+      fi
+      PROFILE_NAME_PREFIX="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -98,6 +130,13 @@ done
 if [[ ! "$TEAM" =~ ^[A-Z0-9]{10}$ ]]; then
   echo "error: team ID must be 10 uppercase letters or digits" >&2
   exit 2
+fi
+
+if [[ "$MANUAL_PROFILES" -eq 1 ]]; then
+  if [[ -z "$PROFILE_NAME_PREFIX" || "$PROFILE_NAME_PREFIX" == *$'\n'* || "$PROFILE_NAME_PREFIX" == *$'\r'* ]]; then
+    echo "error: profile name prefix must be a single non-empty line" >&2
+    exit 2
+  fi
 fi
 
 if [[ -n "$APP_GROUP" && ! "$APP_GROUP" =~ ^group\.[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
@@ -234,8 +273,66 @@ expect_build "widgets" "$APP_DIR/PlugIns/NOOPWidgets.appex/Info.plist"
 expect_build "watch" "$APP_DIR/Watch/NOOPWatch.app/Info.plist"
 expect_build "watch complications" "$APP_DIR/Watch/NOOPWatch.app/PlugIns/NOOPWatchComplications.appex/Info.plist"
 
+# Taken from the archive so another bundle prefix still maps. Not a team constant.
+APP_BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/Info.plist")"
+WIDGET_BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/PlugIns/NOOPWidgets.appex/Info.plist")"
+WATCH_BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/Watch/NOOPWatch.app/Info.plist")"
+COMPLICATION_BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/Watch/NOOPWatch.app/PlugIns/NOOPWatchComplications.appex/Info.plist")"
+
 EXPORT_PLIST="$WORKDIR/ExportOptions.plist"
-cat > "$EXPORT_PLIST" <<EOF
+if [[ "$MANUAL_PROFILES" -eq 1 ]]; then
+  for bundle_id in "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" "$WATCH_BUNDLE_ID" "$COMPLICATION_BUNDLE_ID"; do
+    if [[ -z "$bundle_id" ]]; then
+      echo "error: archived bundle ID is empty" >&2
+      exit 1
+    fi
+  done
+  xml_escape() {
+    local s=$1
+    s=${s//&/&amp;}
+    s=${s//</&lt;}
+    s=${s//>/&gt;}
+    printf '%s' "$s"
+  }
+  # An extra trailing newline survives command-substitution stripping.
+  profile_entry() {
+    local bundle=$1
+    local name="${PROFILE_NAME_PREFIX} ${bundle}"
+    printf '\t\t<key>%s</key>\n\t\t<string>%s</string>\n\n' "$(xml_escape "$bundle")" "$(xml_escape "$name")"
+  }
+  cat > "$EXPORT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>destination</key>
+	<string>upload</string>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>provisioningProfiles</key>
+	<dict>
+$(profile_entry "$APP_BUNDLE_ID")$(profile_entry "$WIDGET_BUNDLE_ID")$(profile_entry "$WATCH_BUNDLE_ID")$(profile_entry "$COMPLICATION_BUNDLE_ID")	</dict>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>teamID</key>
+	<string>${TEAM}</string>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>
+EOF
+  plutil -lint "$EXPORT_PLIST" >/dev/null
+  echo "Exporting and uploading ${VERSION} (${BUILD}) with manual profiles:"
+  echo "  ${PROFILE_NAME_PREFIX} ${APP_BUNDLE_ID}"
+  echo "  ${PROFILE_NAME_PREFIX} ${WIDGET_BUNDLE_ID}"
+  echo "  ${PROFILE_NAME_PREFIX} ${WATCH_BUNDLE_ID}"
+  echo "  ${PROFILE_NAME_PREFIX} ${COMPLICATION_BUNDLE_ID}"
+else
+  cat > "$EXPORT_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -255,14 +352,36 @@ cat > "$EXPORT_PLIST" <<EOF
 </dict>
 </plist>
 EOF
+  echo "Exporting and uploading ${VERSION} (${BUILD})..."
+fi
 
-echo "Exporting and uploading ${VERSION} (${BUILD})..."
-xcodebuild \
-  -exportArchive \
-  -archivePath "$ARCHIVE" \
-  -exportOptionsPlist "$EXPORT_PLIST" \
-  -exportPath "$WORKDIR/export" \
-  "${XCODE_AUTH[@]}"
+# Manual export uses profiles already on disk. Skip -allowProvisioningUpdates
+# there so xcodebuild does not try cloud signing. The API key still uploads.
+EXPORT_AUTH=()
+if [[ "$MANUAL_PROFILES" -eq 0 ]]; then
+  EXPORT_AUTH+=(-allowProvisioningUpdates)
+fi
+if [[ -n "$ASC_KEY_ID" ]]; then
+  EXPORT_AUTH+=(
+    -authenticationKeyPath "$ASC_KEY_PATH"
+    -authenticationKeyID "$ASC_KEY_ID"
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  )
+fi
+if [[ ${#EXPORT_AUTH[@]} -eq 0 ]]; then
+  xcodebuild \
+    -exportArchive \
+    -archivePath "$ARCHIVE" \
+    -exportOptionsPlist "$EXPORT_PLIST" \
+    -exportPath "$WORKDIR/export"
+else
+  xcodebuild \
+    -exportArchive \
+    -archivePath "$ARCHIVE" \
+    -exportOptionsPlist "$EXPORT_PLIST" \
+    -exportPath "$WORKDIR/export" \
+    "${EXPORT_AUTH[@]}"
+fi
 
 BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/Info.plist")"
 echo "Uploaded ${BUNDLE_ID} ${VERSION} (${BUILD}) to TestFlight."
