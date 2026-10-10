@@ -2,8 +2,9 @@ import Foundation
 import WhoopStore
 
 /// The user's custom journal questions plus the starter behaviour catalog. Question strings are
-/// resolved through JournalQuestionIdentity for analysis; imported wording takes precedence for
-/// display. UserDefaults-backed (single user).
+/// resolved through JournalQuestionIdentity for analysis. The stored canonical keeps imported
+/// wording; screens localise known questions through JournalQuestionDisplay. UserDefaults-backed
+/// (single user).
 ///
 /// v2 (#322 / task #53): a journal item can now be renamed (display-only, the stored key stays put
 /// so imported WHOOP history still lines up), typed as numeric (a value + unit, not just yes/no),
@@ -26,8 +27,9 @@ enum JournalCatalogBackupKeys {
 final class JournalCatalogStore: ObservableObject {
 
     /// Mirrors Android STARTER_JOURNAL_QUESTIONS value-for-value (JournalLog.kt). These are DATA,
-    /// not UI literals, stored verbatim in the journal table and rendered verbatim, so they must
-    /// never be localised (a translated key would start a new, disconnected behaviour).
+    /// not UI literals, stored verbatim in the journal table, so they must never be localised
+    /// (a translated key would start a new, disconnected behaviour). Screens localise a known
+    /// question through JournalQuestionDisplay; the stored starter string itself stays English.
     nonisolated static let starterQuestions: [String] = [
         "Did you drink any alcohol?",
         "Did you have caffeine late in the day?",
@@ -259,7 +261,8 @@ final class JournalCatalogStore: ObservableObject {
 
     // MARK: - Custom add / remove / restore (v1 API preserved)
 
-    /// The display label for a canonical key: the user's rename, or the verbatim canonical.
+    /// The stored label for a canonical key: the user's rename, or the verbatim canonical.
+    /// Screens that show the question go through `JournalQuestionDisplay` instead.
     func displayName(for canonical: String) -> String {
         item(for: canonical)?.displayName ?? canonical.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -353,7 +356,9 @@ struct JournalCatalogItem: Equatable, Codable, Identifiable {
 
     var id: String { canonical }
 
-    /// What the UI renders: the rename if present, else the verbatim canonical.
+    /// Stored label: the rename if present, else the verbatim canonical. Screens that show a
+    /// question go through `JournalQuestionDisplay` so a known question can be localised
+    /// without rewriting this key.
     var display: String {
         displayName ?? canonical
     }

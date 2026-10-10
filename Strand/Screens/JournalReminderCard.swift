@@ -11,7 +11,8 @@ import StrandDesign
 // Today where it can't be missed, and doubles as the "direct link to Insights" the report (#627) asked for.
 //
 // Opt-out via `PuffinExperiment.journalReminderKey` (default ON — the same key also gates the Android
-// morning sleep sheet twin). Read-only: it never writes a journal entry. Twin of Android
+// morning sleep sheet twin, and on iOS the morning auto-present of yesterday's journal). Read-only:
+// it never writes a journal entry. Twin of Android
 // `JournalReminderCard` (android/.../ui/JournalReminder.kt). v2: a neutral card with the week as day
 // cells, the same chrome as the other Today cards.
 

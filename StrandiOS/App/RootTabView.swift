@@ -29,6 +29,7 @@ struct RootTabView: View {
     /// that state; keeping it explicit here prevents this shell's window-level sheet from covering a gate.
     let homeScreenQuickActionsEnabled: Bool
 
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var repo: Repository
     /// Cross-screen navigation requests (e.g. Live → "Manage devices"). Devices isn't a tab — it lives
     /// behind the More list — so a request presents it as a sheet, matching the quick-action screens.
@@ -38,6 +39,8 @@ struct RootTabView: View {
 
     /// Which quick-action screen the centre FAB is presenting (nil = sheet closed).
     @State private var quickAction: QuickAction?
+    /// Set while the morning-journal read is in flight, so a second activation cannot present twice.
+    @State private var morningJournalCheckInFlight = false
     /// Presents the Devices manager (pair / switch bands) when a screen asks the shell to open it.
     @State private var showDevices = false
     /// Presents the Updates inbox from the quick-action sheet's Updates row.
@@ -292,12 +295,17 @@ struct RootTabView: View {
         // through the change callback. Both route through the same screens as the centre FAB.
         .onAppear {
             presentPendingHomeScreenQuickActionIfPossible()
+            presentMorningJournalIfNeeded()
         }
         .onChange(of: homeScreenQuickActions.pendingAction) { _, _ in
             presentPendingHomeScreenQuickActionIfPossible()
         }
         .onChange(of: homeScreenQuickActionsEnabled) { _, _ in
             presentPendingHomeScreenQuickActionIfPossible()
+            presentMorningJournalIfNeeded()
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active { presentMorningJournalIfNeeded() }
         }
         // The running gym session, reachable from ANY tab. It sits above the tab bar rather than
         // inside the Lift Log screen, because a workout outlives whichever screen you wandered to —
@@ -339,6 +347,52 @@ struct RootTabView: View {
             showDevices = false
             routedPillar = nil
             quickAction = destination
+        }
+    }
+
+    /// Opens yesterday's journal when the app becomes active in the morning.
+    ///
+    /// All of these have to hold: the journal reminder is on, local time is 04:00 inclusive through
+    /// 12:00 exclusive, this calendar day has not already auto-presented (`JournalMorningPrompt.shownDayKey`),
+    /// yesterday has no native journal answers, first-run gates are done, and no other sheet is up.
+    /// The day key is written when the sheet is presented, so dismissing it does not open it again.
+    private func presentMorningJournalIfNeeded() {
+        guard scenePhase == .active else { return }
+        guard homeScreenQuickActionsEnabled else { return }
+        guard PuffinExperiment.journalReminderEnabled else { return }
+        guard !morningJournalCheckInFlight else { return }
+        guard quickAction == nil, routedPillar == nil, !showDevices, !showUpdatesInbox else { return }
+        guard homeScreenQuickActions.pendingAction == nil else { return }
+        guard !liftSession.isPresented else { return }
+
+        let now = Date()
+        let calendar = Calendar.current
+        let todayKey = Repository.localDayKey(now)
+        let shown = UserDefaults.standard.string(forKey: JournalMorningPrompt.shownDayKey)
+        guard JournalMorningPrompt.shouldPresent(
+            now: now, calendar: calendar, shownDay: shown, todayKey: todayKey, yesterdayAnswered: false
+        ) else { return }
+
+        morningJournalCheckInFlight = true
+        Task {
+            let yesterday = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+            let yesterdayKey = Repository.localDayKey(yesterday)
+            let logged = await repo.nativeJournalDays(from: yesterdayKey, to: yesterdayKey)
+            let answered = logged.contains(yesterdayKey)
+            let stillNow = Date()
+            let stillToday = Repository.localDayKey(stillNow)
+            let stillShown = UserDefaults.standard.string(forKey: JournalMorningPrompt.shownDayKey)
+            let stillClear = quickAction == nil && routedPillar == nil && !showDevices && !showUpdatesInbox
+                && homeScreenQuickActions.pendingAction == nil && !liftSession.isPresented
+                && homeScreenQuickActionsEnabled && PuffinExperiment.journalReminderEnabled
+                && scenePhase == .active
+            let stillDue = JournalMorningPrompt.shouldPresent(
+                now: stillNow, calendar: Calendar.current, shownDay: stillShown,
+                todayKey: stillToday, yesterdayAnswered: answered)
+            morningJournalCheckInFlight = false
+            guard stillClear, stillDue else { return }
+            UserDefaults.standard.set(stillToday, forKey: JournalMorningPrompt.shownDayKey)
+            router.openJournal(day: 1)
         }
     }
 

@@ -218,7 +218,7 @@ struct InsightsHubView: View {
                         .frame(width: 12, alignment: .leading)
                     // Behaviours are the journal's own question text, often a full sentence: three
                     // lines before truncating.
-                    Text(r.behavior)
+                    Text(verbatim: JournalQuestionDisplay.label(forCanonical: r.behavior))
                         .font(StrandFont.book(14.5, relativeTo: .subheadline))
                         .foregroundStyle(StrandPalette.textPrimary)
                         .lineLimit(3)

@@ -160,8 +160,28 @@ struct SettingsView: View {
     @AppStorage(PuffinExperiment.autoDetectWorkoutsKey) private var autoDetectWorkoutsEnabled = false
 
     /// "Journal reminder" (#627, default ON). When ON, Today shows the persistent journal widget
-    /// (last-7-days strip + tap-through). Mirrors the Android `NoopPrefs.KEY_JOURNAL_REMINDER_ENABLED`.
+    /// (last-7-days strip + tap-through). On iOS the same switch also opens yesterday's journal when
+    /// the app becomes active between 04:00 and 12:00, once that morning, if it is not logged yet.
+    /// Mirrors the Android `NoopPrefs.KEY_JOURNAL_REMINDER_ENABLED`.
     @AppStorage(PuffinExperiment.journalReminderKey) private var journalReminderEnabled = true
+
+    /// Footer under the journal reminder toggle. iOS also opens yesterday's journal in the morning.
+    private var journalReminderFooter: Text {
+        #if os(iOS)
+        Text("Shows a card on Today reminding you to log your journal. Between 4:00 and noon, opening the app also opens yesterday's journal when it is not logged yet.")
+        #else
+        Text("Show a Today card reminding you to log your journal")
+        #endif
+    }
+
+    /// Accessibility hint for the journal reminder toggle. Same copy as the footer.
+    private var journalReminderHint: LocalizedStringKey {
+        #if os(iOS)
+        "Shows a card on Today reminding you to log your journal. Between 4:00 and noon, opening the app also opens yesterday's journal when it is not logged yet."
+        #else
+        "Show a Today card reminding you to log your journal"
+        #endif
+    }
 
     /// Opt-in "Keep screen on during a workout" (default OFF, #703). When ON, the live-workout view
     /// holds the screen awake while a manual recording is running so you can glance at your live HR
@@ -2119,9 +2139,9 @@ struct SettingsView: View {
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
                 .toggleStyle(.noop)
-                .accessibilityHint("Show a Today card reminding you to log your journal")
+                .accessibilityHint(journalReminderHint)
 
-                Text("Show a Today card reminding you to log your journal")
+                journalReminderFooter
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
