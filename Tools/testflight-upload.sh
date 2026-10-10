@@ -2,15 +2,22 @@
 #
 # Archive NOOPiOS (widget extension and watch app included) and upload it to
 # TestFlight with Xcode automatic signing. Uses the Apple ID already signed in
-# to Xcode. No App Store Connect API key.
+# to Xcode, or an App Store Connect API key when one is supplied. The key file
+# stays outside the repo.
 #
 # Usage:
 #   Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID]
+#       [--api-key-path PATH] [--api-key-id KEY_ID] [--api-issuer ISSUER_ID]
 #
 # --team overrides the Apple Developer Team ID (default 48XAPJ6DGL).
 # --app-group, or the APP_GROUP_ID environment variable, overrides the App
 # Group for the archive only. project.yml sets APP_GROUP_ID at project level,
 # which beats the xcconfig, so the override is passed as a build setting.
+# --api-key-path, --api-key-id, and --api-issuer (or ASC_KEY_PATH, ASC_KEY_ID,
+# and ASC_ISSUER_ID) authenticate xcodebuild. Pass all three, or none to keep
+# the Xcode account. When the key ID and issuer are set and the path is
+# omitted, the path defaults to
+# ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8.
 # Requires Config/BundleIdSecrets.xcconfig (gitignored; see
 # Config/BundleIdSecrets.example.xcconfig). The marketing version comes from
 # project.yml. The build number is a timestamp (YYYYMMDDHHMM) so each upload
@@ -21,9 +28,12 @@ set -euo pipefail
 TEAM="48XAPJ6DGL"
 # Flag wins over the environment when both are set.
 APP_GROUP="${APP_GROUP_ID:-}"
+ASC_KEY_PATH="${ASC_KEY_PATH:-}"
+ASC_KEY_ID="${ASC_KEY_ID:-}"
+ASC_ISSUER_ID="${ASC_ISSUER_ID:-}"
 
 usage() {
-  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID]" >&2
+  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID] [--api-key-path PATH] [--api-key-id KEY_ID] [--api-issuer ISSUER_ID]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -46,6 +56,33 @@ while [[ $# -gt 0 ]]; do
       APP_GROUP="$2"
       shift 2
       ;;
+    --api-key-path)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        echo "error: --api-key-path requires a path to an App Store Connect API key" >&2
+        usage
+        exit 2
+      fi
+      ASC_KEY_PATH="$2"
+      shift 2
+      ;;
+    --api-key-id)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        echo "error: --api-key-id requires an App Store Connect API key ID" >&2
+        usage
+        exit 2
+      fi
+      ASC_KEY_ID="$2"
+      shift 2
+      ;;
+    --api-issuer)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        echo "error: --api-issuer requires an App Store Connect issuer ID" >&2
+        usage
+        exit 2
+      fi
+      ASC_ISSUER_ID="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -66,6 +103,44 @@ fi
 if [[ -n "$APP_GROUP" && ! "$APP_GROUP" =~ ^group\.[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
   echo "error: app group must look like group.com.example.app" >&2
   exit 2
+fi
+
+# ID plus issuer, and no path, is enough: the key lives in the standard directory.
+if [[ -z "$ASC_KEY_PATH" && -n "$ASC_KEY_ID" && -n "$ASC_ISSUER_ID" ]]; then
+  ASC_KEY_PATH="${HOME}/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+fi
+
+asc_set=0
+[[ -n "$ASC_KEY_PATH" ]] && asc_set=$((asc_set + 1))
+[[ -n "$ASC_KEY_ID" ]] && asc_set=$((asc_set + 1))
+[[ -n "$ASC_ISSUER_ID" ]] && asc_set=$((asc_set + 1))
+if [[ "$asc_set" -ne 0 && "$asc_set" -ne 3 ]]; then
+  echo "error: App Store Connect API key auth needs the key path, key ID, and issuer ID together." >&2
+  echo "Pass --api-key-path, --api-key-id, and --api-issuer (or ASC_KEY_PATH, ASC_KEY_ID, and ASC_ISSUER_ID), or omit all three to use the Xcode account." >&2
+  exit 2
+fi
+
+if [[ -n "$ASC_KEY_ID" ]]; then
+  if [[ ! "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "error: API key ID must be 10 uppercase letters or digits" >&2
+    exit 2
+  fi
+  if [[ ! "$ASC_ISSUER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "error: API issuer ID must be a UUID" >&2
+    exit 2
+  fi
+  # A quoted ~/ path is not expanded by the shell before it reaches the script.
+  if [[ "$ASC_KEY_PATH" == "~/"* ]]; then
+    ASC_KEY_PATH="${HOME}/${ASC_KEY_PATH:2}"
+  fi
+  if [[ ! -f "$ASC_KEY_PATH" ]]; then
+    echo "error: App Store Connect API key file not found at ${ASC_KEY_PATH}" >&2
+    exit 1
+  fi
+  if [[ ! -r "$ASC_KEY_PATH" ]]; then
+    echo "error: App Store Connect API key file is not readable" >&2
+    exit 1
+  fi
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -102,16 +177,29 @@ ARCHIVE_SETTINGS=(
 )
 if [[ -n "$APP_GROUP" ]]; then
   ARCHIVE_SETTINGS+=(APP_GROUP_ID="$APP_GROUP")
-  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}, app group ${APP_GROUP}..."
+fi
+# Always at least -allowProvisioningUpdates, for the same bash 3.2 reason.
+XCODE_AUTH=(-allowProvisioningUpdates)
+auth_note=""
+if [[ -n "$ASC_KEY_ID" ]]; then
+  XCODE_AUTH+=(
+    -authenticationKeyPath "$ASC_KEY_PATH"
+    -authenticationKeyID "$ASC_KEY_ID"
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  )
+  auth_note=", App Store Connect API key"
+fi
+if [[ -n "$APP_GROUP" ]]; then
+  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}, app group ${APP_GROUP}${auth_note}..."
 else
-  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}..."
+  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}${auth_note}..."
 fi
 xcodebuild \
   -project Strand.xcodeproj \
   -scheme NOOPiOS \
   -configuration Release \
   -destination 'generic/platform=iOS' \
-  -allowProvisioningUpdates \
+  "${XCODE_AUTH[@]}" \
   "${ARCHIVE_SETTINGS[@]}" \
   archive \
   -archivePath "$ARCHIVE"
@@ -174,7 +262,7 @@ xcodebuild \
   -archivePath "$ARCHIVE" \
   -exportOptionsPlist "$EXPORT_PLIST" \
   -exportPath "$WORKDIR/export" \
-  -allowProvisioningUpdates
+  "${XCODE_AUTH[@]}"
 
 BUNDLE_ID="$(read_plist :CFBundleIdentifier "$APP_DIR/Info.plist")"
 echo "Uploaded ${BUNDLE_ID} ${VERSION} (${BUILD}) to TestFlight."
