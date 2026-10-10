@@ -253,9 +253,13 @@ enum PuffinExperiment {
 
     /// "Journal reminder" (#627). When ON, Today shows a persistent journal widget (a last-7-days
     /// completion strip that taps through to the journal) and nudges when today isn't logged yet.
-    /// Default ON — gates both the widget and (on Android) the morning sleep sheet. Mirrors the Android
-    /// `NoopPrefs.KEY_JOURNAL_REMINDER_ENABLED`. Default-true, so a bare `bool(forKey:)` can't be used to
-    /// read it (that defaults false); read it through @AppStorage(...) = true or `object(forKey:)`.
+    /// On iOS the same opt-out also presents yesterday's journal when the app becomes active between
+    /// 04:00 and 12:00 local, once per calendar day, and only when yesterday has no native answers.
+    /// `noopJournalMorningShownDay` records that presentation so dismissing the sheet does not open
+    /// it again the same morning. Default ON — gates the widget, the iOS morning sheet, and (on
+    /// Android) the morning sleep sheet. Mirrors the Android `NoopPrefs.KEY_JOURNAL_REMINDER_ENABLED`.
+    /// Default-true, so a bare `bool(forKey:)` can't be used to read it (that defaults false); read it
+    /// through @AppStorage(...) = true or `object(forKey:)`.
     static let journalReminderKey = "noopJournalReminder"
 
     static var journalReminderEnabled: Bool {
