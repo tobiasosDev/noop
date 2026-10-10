@@ -5,9 +5,12 @@
 # to Xcode. No App Store Connect API key.
 #
 # Usage:
-#   Tools/testflight-upload.sh [--team TEAM_ID]
+#   Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID]
 #
 # --team overrides the Apple Developer Team ID (default 48XAPJ6DGL).
+# --app-group, or the APP_GROUP_ID environment variable, overrides the App
+# Group for the archive only. project.yml sets APP_GROUP_ID at project level,
+# which beats the xcconfig, so the override is passed as a build setting.
 # Requires Config/BundleIdSecrets.xcconfig (gitignored; see
 # Config/BundleIdSecrets.example.xcconfig). The marketing version comes from
 # project.yml. The build number is a timestamp (YYYYMMDDHHMM) so each upload
@@ -16,9 +19,11 @@
 set -euo pipefail
 
 TEAM="48XAPJ6DGL"
+# Flag wins over the environment when both are set.
+APP_GROUP="${APP_GROUP_ID:-}"
 
 usage() {
-  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID]" >&2
+  echo "usage: Tools/testflight-upload.sh [--team TEAM_ID] [--app-group APP_GROUP_ID]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +35,15 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       TEAM="$2"
+      shift 2
+      ;;
+    --app-group)
+      if [[ $# -lt 2 || -z "${2}" ]]; then
+        echo "error: --app-group requires an App Group identifier" >&2
+        usage
+        exit 2
+      fi
+      APP_GROUP="$2"
       shift 2
       ;;
     -h|--help)
@@ -46,6 +60,11 @@ done
 
 if [[ ! "$TEAM" =~ ^[A-Z0-9]{10}$ ]]; then
   echo "error: team ID must be 10 uppercase letters or digits" >&2
+  exit 2
+fi
+
+if [[ -n "$APP_GROUP" && ! "$APP_GROUP" =~ ^group\.[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+  echo "error: app group must look like group.com.example.app" >&2
   exit 2
 fi
 
@@ -76,15 +95,24 @@ echo "Generating Xcode project..."
 xcodegen generate
 
 ARCHIVE="$WORKDIR/NOOP.xcarchive"
-echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}..."
+# Always at least these two, so the array stays non-empty under set -u (bash 3.2).
+ARCHIVE_SETTINGS=(
+  DEVELOPMENT_TEAM="$TEAM"
+  CURRENT_PROJECT_VERSION="$BUILD"
+)
+if [[ -n "$APP_GROUP" ]]; then
+  ARCHIVE_SETTINGS+=(APP_GROUP_ID="$APP_GROUP")
+  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}, app group ${APP_GROUP}..."
+else
+  echo "Archiving NOOPiOS ${VERSION} (${BUILD}) for team ${TEAM}..."
+fi
 xcodebuild \
   -project Strand.xcodeproj \
   -scheme NOOPiOS \
   -configuration Release \
   -destination 'generic/platform=iOS' \
   -allowProvisioningUpdates \
-  DEVELOPMENT_TEAM="$TEAM" \
-  CURRENT_PROJECT_VERSION="$BUILD" \
+  "${ARCHIVE_SETTINGS[@]}" \
   archive \
   -archivePath "$ARCHIVE"
 
