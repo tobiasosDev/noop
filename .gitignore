@@ -102,6 +102,10 @@ Strand/Oura/OuraSecrets.xcconfig
 # Personal bundle id prefix (BYO; never committed)
 Config/BundleIdSecrets.xcconfig
 
+# Local TestFlight account settings (BYO; never committed). Template is
+# Config/testflight.env.example. The script reads ~/.config/noop/testflight.env.
+Config/testflight.env
+
 # (#979) The linux-capture workbench moved from `tools/` to `Tools/` when the two case-colliding
 # trees were merged. On a case-SENSITIVE filesystem any capture a contributor already had stays
 # behind at the old path, where that tool's own .gitignore no longer reaches it — and those files

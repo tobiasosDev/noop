@@ -259,6 +259,7 @@ swift run backfill
 iOS ships as a **build-from-source-only** target, folded into main in v1.94. There is **no App
 Store or TestFlight build** — both require a real Apple Developer identity, which is fundamentally
 at odds with NOOP staying anonymous, so the only way to run it is to build it yourself in Xcode.
+A checkout that uses your own Apple Developer account can upload with `Tools/testflight-upload.sh`; see [`TESTFLIGHT.md`](TESTFLIGHT.md).
 The iOS app is **newer and less battle-tested** than macOS and Android: live BLE on a real iPhone
 isn't yet fully validated. It shares the same analytics packages, so once data is in, results match
 macOS.
