@@ -117,13 +117,15 @@ expand_tilde() {
 }
 
 # Password stays on the pipe. xtrace is off for the whole function so a
-# caller running under bash -x cannot echo it.
+# caller running under bash -x cannot echo it. security prompts on /dev/tty
+# when the script has a terminal, and ignores a pipe. Python starts the
+# unlock with no controlling terminal, so the password is read from stdin.
 unlock_signing_keychain() {
   local keychain="$1"
   local service="$2"
   local login_db="${HOME}/Library/Keychains/login.keychain-db"
   local tracing=0 errexit=0
-  local prompt_log find_status unlock_status
+  local py find_status unlock_status
 
   if [[ ! -f "$keychain" ]]; then
     echo "error: signing keychain not found at ${keychain}" >&2
@@ -138,6 +140,14 @@ unlock_signing_keychain() {
     echo "The signing keychain stays locked, and codesign fails with errSecInternalComponent." >&2
     exit 1
   fi
+  if [[ -x /usr/bin/python3 ]]; then
+    py="/usr/bin/python3"
+  elif command -v python3 >/dev/null 2>&1; then
+    py="$(command -v python3)"
+  else
+    echo "error: python3 is required to unlock the signing keychain without prompting." >&2
+    exit 1
+  fi
 
   case $- in
     *x*) tracing=1 ;;
@@ -147,13 +157,23 @@ unlock_signing_keychain() {
   esac
   set +x
   set +e
-  prompt_log="$(mktemp "${TMPDIR:-/tmp}/noop-keychain-unlock.XXXXXX")"
-  chmod 600 "$prompt_log"
   security find-generic-password -s "$service" -w "$login_db" 2>/dev/null \
-    | security unlock-keychain "$keychain" >/dev/null 2>"$prompt_log"
+    | "$py" -c '
+import sys, subprocess
+password = sys.stdin.read()
+if password.endswith("\n"):
+    password = password[:-1]
+result = subprocess.run(
+    ["security", "unlock-keychain", sys.argv[1]],
+    input=password + "\n",
+    text=True,
+    capture_output=True,
+    start_new_session=True,
+)
+sys.exit(result.returncode)
+' "$keychain" >/dev/null 2>&1
   # One assignment: a second statement would replace PIPESTATUS.
   find_status=${PIPESTATUS[0]} unlock_status=${PIPESTATUS[1]}
-  rm -f "$prompt_log"
   if [[ "$errexit" -eq 1 ]]; then
     set -e
   fi
