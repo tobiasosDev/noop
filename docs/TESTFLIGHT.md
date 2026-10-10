@@ -35,18 +35,6 @@ Tools/testflight-upload.sh
 
 `--archive-only` archives and skips export and upload. `--manual-profiles` is the same as `EXPORT_SIGNING=manual`.
 
-## Automatic deploys from main
-
-`Tools/testflight-deploy-main.sh` is the unattended entry point. A GitHub push webhook in T3 starts an agent session on this Mac, and that session runs the script once. The Mac has to be on. Nothing is uploaded while it is asleep or off.
-
-The script fetches `origin/main` (override with `NOOP_DEPLOY_REMOTE` and `NOOP_DEPLOY_BRANCH`) into a detached worktree at `~/.noop-deploy/main` (`NOOP_DEPLOY_DIR`). It creates that worktree on first use, attached to the clone that contains the script, and does not check out or clean any other worktree. `Tools/testflight-upload.sh` then runs from the deploy worktree, so the archive is that commit. `build/` and `DerivedData/` in the deploy worktree are left in place. Other untracked files there are removed only when `git clean` would actually delete something.
-
-One deploy holds `~/.noop-deploy/lock`. A second run waits until that deploy finishes, for up to 60 minutes, and then fetches again, so a push that arrives during an upload is deployed afterwards instead of being dropped. A lock whose pid is no longer running is removed and the next run takes it. `NOOP_DEPLOY_REF` checks out a local commit and skips the fetch.
-
-The full SHA of the last successful upload is written to `~/.config/noop/testflight-last-deployed` (`NOOP_DEPLOY_STATE`). That file starts out absent. The same SHA prints `Already deployed <sha>` and exits 0 unless `--force` is set. A failed upload does not update the file. `--dry-run` resolves the commit and passes `--dry-run` to the upload script, so nothing is archived and the state file stays unchanged.
-
-Logs are `~/.noop-deploy/logs/<timestamp>-<shortsha>.log`. On success the script prints `Deployed <shortsha> as <version> (<build>)`.
-
 ## Troubleshooting
 
 **`No Accounts`.** Xcode has no Apple ID signed in, and no App Store Connect API key was provided. Set `ASC_KEY_ID` and `ASC_ISSUER_ID`, and set `ASC_KEY_PATH` when the `.p8` is not in `~/.appstoreconnect/private_keys`.
