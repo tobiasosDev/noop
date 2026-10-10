@@ -198,6 +198,11 @@ struct InsightsView: View {
     @State private var dayNumeric: [String: Double] = [:]
     /// -1 = tomorrow (log ahead), 0 = today, 1 = yesterday (late logging).
     @State private var journalDayOffset = 0
+    #if os(iOS)
+    /// The journal is often already a sheet. A second sheet for the hub is ignored, so iOS pushes
+    /// `InsightsHubView` on the host `NavigationStack` instead. The menu sets this; the row is a link.
+    @State private var pushInsightsHub = false
+    #endif
     /// #860 item 4: today's local calendar-day key, captured on appear and refreshed on foreground. The
     /// journal day chips ("Today"/"Yesterday"/"Tomorrow") are relative to the CURRENT date, but the
     /// answers (`dayAnswers`) and the resolved day key are derived from `Date()` only inside `load()`,
@@ -272,6 +277,14 @@ struct InsightsView: View {
             }
         }
         .noopHidesSystemNavBar()
+        #if os(iOS)
+        // Every iOS host of this screen (journal quick-action sheet, pillar sheet, More tab, demo
+        // route) already wraps it in a NavigationStack, so this push has a stack to land on. The hub
+        // draws its own back circle (`NoopScreenHeader` + `dismiss`), which pops that stack.
+        .navigationDestination(isPresented: $pushInsightsHub) {
+            InsightsHubView()
+        }
+        #endif
         // #860 item 4: key on the data-refresh seq AND today's day-key, so the journal re-loads both on a
         // data change and the moment the calendar day rolls over (driven by the foreground/appear refresh
         // of `currentDayKey` below), so yesterday's answers leave "Today" and the new day starts fresh.
@@ -309,9 +322,15 @@ struct InsightsView: View {
     /// The header's circle: the way into the hub and the outcome the effects below are measured against.
     private var headerMenu: some View {
         Menu {
+            #if os(iOS)
+            Button { pushInsightsHub = true } label: {
+                Label("What moves you", systemImage: "chart.bar.xaxis")
+            }
+            #else
             Button { router.openInsightsHub() } label: {
                 Label("What moves you", systemImage: "chart.bar.xaxis")
             }
+            #endif
             Picker("Outcome metric", selection: $outcome) {
                 ForEach(Outcome.allCases) { o in Text(o.label).tag(o) }
             }
@@ -404,30 +423,44 @@ struct InsightsView: View {
     }
 
     /// The deep-link row into the v5 "What moves you" hub.
+    ///
+    /// On iOS the journal is usually already presented as a sheet, and SwiftUI will not present a
+    /// second sheet from that same root — `router.openInsightsHub()` is a silent no-op there. Push
+    /// the hub on the host stack instead. macOS has no sheet in the way; the sidebar handles the route.
     private var whatMovesYouLink: some View {
-        Button { router.openInsightsHub() } label: {
-            NoopList {
-                HStack(spacing: 14) {
-                    NoopIconTile("chart-bar-horizontal")
-                    Text("What moves you")
-                        .font(StrandFont.book(12, relativeTo: .caption))
-                        .tracking(1.4)
-                        .textCase(.uppercase)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Ranked")
-                        .font(StrandFont.light(12, relativeTo: .caption))
-                        .foregroundStyle(StrandPalette.textSecondary)
-                    PhIcon("caret-right", size: 16).opacity(0.6)
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .contentShape(Rectangle())
+        whatMovesYouNavigation
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("What moves you. Ranked patterns in your own data, and your dose-response.")
+    }
+
+    @ViewBuilder private var whatMovesYouNavigation: some View {
+        #if os(iOS)
+        NavigationLink { InsightsHubView() } label: { whatMovesYouRow }
+        #else
+        Button { router.openInsightsHub() } label: { whatMovesYouRow }
+        #endif
+    }
+
+    private var whatMovesYouRow: some View {
+        NoopList {
+            HStack(spacing: 14) {
+                NoopIconTile("chart-bar-horizontal")
+                Text("What moves you")
+                    .font(StrandFont.book(12, relativeTo: .caption))
+                    .tracking(1.4)
+                    .textCase(.uppercase)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Ranked")
+                    .font(StrandFont.light(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                PhIcon("caret-right", size: 16).opacity(0.6)
             }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("What moves you. Ranked patterns in your own data, and your dose-response.")
     }
     // MARK: - Load
 
