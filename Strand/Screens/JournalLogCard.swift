@@ -65,7 +65,10 @@ struct JournalLogCard: View {
     /// Items grouped by their group, each group ordered by sortIndex then display.
     private func items(in group: JournalGroup) -> [JournalCatalogItem] {
         resolved.filter { $0.group == group }
-            .sorted { ($0.sortIndex, $0.display) < ($1.sortIndex, $1.display) }
+            .sorted {
+                ($0.sortIndex, JournalQuestionDisplay.label(for: $0))
+                    < ($1.sortIndex, JournalQuestionDisplay.label(for: $1))
+            }
     }
 
     private var collapsedGroups: Set<String> {
@@ -118,6 +121,10 @@ struct JournalLogCard: View {
                         }
                     }
                     .padding(.bottom, 4)
+
+                    if !editing && !visibleUnansweredYesNo.isEmpty {
+                        markRestAsNoButton
+                    }
 
                     ForEach(JournalGroup.displayOrder, id: \.self) { group in
                         groupBlock(group)
@@ -182,49 +189,113 @@ struct JournalLogCard: View {
     // MARK: - Item row
 
     @ViewBuilder private func itemRow(_ item: JournalCatalogItem) -> some View {
+        let label = JournalQuestionDisplay.label(for: item)
         HStack(spacing: 12) {
-            PhIcon(Self.icon(for: item), size: 18)
-                .foregroundStyle(StrandPalette.textPrimary)
-                .opacity(item.hidden ? 0.35 : 0.7)
-            Text(verbatim: item.display)   // display = rename ?? canonical; data, not a UI literal
-                .font(StrandFont.book(14.5, relativeTo: .subheadline))
-                .foregroundStyle(item.hidden ? StrandPalette.textTertiary : StrandPalette.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Tapping the icon and the question answers it: unanswered → Yes, then Yes ↔ No.
+            // The Yes/No capsule stays, and re-tapping the selected side still clears.
+            if editing || item.kind.isNumeric {
+                questionLabel(item, label: label)
+            } else {
+                Button { cycleAnswer(item) } label: {
+                    questionLabel(item, label: label)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(label)
+                .accessibilityValue(answerAccessibilityValue(item))
+                .accessibilityHint(String(localized: "Answers yes, then switches between yes and no"))
+            }
             if editing {
-                editControls(item)
+                editControls(item, label: label)
             } else if item.kind.isNumeric {
-                numericField(item)
+                numericField(item, label: label)
             } else {
                 yesNoControl(q: item.canonical)
             }
         }
     }
 
-    /// A Phosphor glyph for a journal item, matched on keywords in its (canonical) question; the
-    /// group's glyph when nothing matches. Display only — the question text is never changed.
+    private func questionLabel(_ item: JournalCatalogItem, label: String) -> some View {
+        HStack(spacing: 12) {
+            PhIcon(Self.icon(for: item), size: 18)
+                .foregroundStyle(StrandPalette.textPrimary)
+                .opacity(item.hidden ? 0.35 : 0.7)
+            Text(verbatim: label)
+                .font(StrandFont.book(14.5, relativeTo: .subheadline))
+                .foregroundStyle(item.hidden ? StrandPalette.textTertiary : StrandPalette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Yes/no rows on screen that still have no answer. Collapsed groups and numeric items are skipped.
+    private var visibleUnansweredYesNo: [JournalCatalogItem] {
+        let collapsed = collapsedGroups
+        return resolved.filter { item in
+            !item.hidden && !item.kind.isNumeric && !collapsed.contains(item.group.rawValue)
+                && answers[JournalQuestionIdentity.canonical(item.canonical)] == nil
+        }
+    }
+
+    private var markRestAsNoButton: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button {
+                markVisibleUnansweredAsNo()
+            } label: {
+                Text("Mark rest as No")
+                    .font(StrandFont.book(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(String(localized: "Sets every visible unanswered question to no"))
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 2)
+    }
+
+    private func markVisibleUnansweredAsNo() {
+        let pending = visibleUnansweredYesNo
+        guard !pending.isEmpty else { return }
+        StrandHaptic.selection.play()
+        let day = dayKey
+        Task {
+            for item in pending {
+                await repo.saveJournalAnswer(day: day, question: item.canonical, answeredYes: false)
+            }
+            onChanged()
+        }
+    }
+
+    /// Unanswered becomes Yes. Yes becomes No. No becomes Yes. Clearing stays on the capsule.
+    private func cycleAnswer(_ item: JournalCatalogItem) {
+        let next: Bool
+        switch answers[JournalQuestionIdentity.canonical(item.canonical)] {
+        case true: next = false
+        case false, nil: next = true
+        }
+        StrandHaptic.selection.play()
+        let day = dayKey
+        Task {
+            await repo.saveJournalAnswer(day: day, question: item.canonical, answeredYes: next)
+            onChanged()
+        }
+    }
+
+    private func answerAccessibilityValue(_ item: JournalCatalogItem) -> String {
+        switch answers[JournalQuestionIdentity.canonical(item.canonical)] {
+        case true: return String(localized: "Yes")
+        case false: return String(localized: "No")
+        case nil: return String(localized: "Not answered")
+        }
+    }
+
+    /// Phosphor glyph for a journal item. Known questions use the stable English display key, so a
+    /// rename or a translation cannot change the icon. Anything else matches whole words, then the group.
     static func icon(for item: JournalCatalogItem) -> String {
-        let q = (JournalQuestionIdentity.canonical(item.canonical) + " " + item.display).lowercased()
-        let table: [(keys: [String], icon: String)] = [
-            (["alcohol", "drink", "wine", "beer"], "wine"),
-            (["caffeine", "coffee", "tea"], "coffee"),
-            (["meal", "eat", "food", "snack", "dinner", "sugar"], "fork-knife"),
-            (["read"], "book-open"),
-            (["screen", "phone", "device"], "device-mobile"),
-            (["meditat", "mindful", "breath"], "flower-lotus"),
-            (["magnes", "vitamin", "supplement", "melatonin", "zinc", "omega", "creatine"], "pill"),
-            (["sauna", "hot"], "thermometer-hot"),
-            (["cold", "ice"], "snowflake"),
-            (["sex", "intimacy"], "heart"),
-            (["nap"], "bed"),
-            (["travel", "flight", "fly"], "airplane"),
-            (["sick", "ill", "fever"], "first-aid-kit"),
-            (["stress", "anxious", "anxiety"], "lightning"),
-            (["water", "hydrat"], "drop"),
-            (["sun", "daylight", "outside"], "sun"),
-            (["stretch", "yoga"], "person-simple-tai-chi"),
-            (["workout", "exercise", "train"], "barbell"),
-        ]
-        for row in table where row.keys.contains(where: { q.contains($0) }) { return row.icon }
+        if let named = JournalQuestionDisplay.iconName(forCanonical: item.canonical) {
+            return named
+        }
+        let source = JournalQuestionIdentity.canonical(item.canonical)
+        if let matched = keywordIcon(in: source) { return matched }
         switch item.group {
         case .supplements: return "pill"
         case .nutrition:   return "fork-knife"
@@ -233,6 +304,76 @@ struct JournalLogCard: View {
         case .behaviour:   return "person-simple"
         case .other:       return "notebook"
         }
+    }
+
+    /// Whole-token match. "sun" and "eat" match only that word, so "sunset" and "great" do not.
+    /// Prefix stems are the three listed below. "read" is a whole word so it does not hit "ready".
+    private static func keywordIcon(in source: String) -> String? {
+        let tokens = wordTokens(source)
+        let table: [(keys: [String], icon: String)] = [
+            (["alcohol", "wine", "beer"], "wine"),
+            (["caffeine", "coffee", "tea"], "coffee"),
+            (["melatonin"], "moon-stars"),
+            (["probiotic"], "flask"),
+            (["creatine"], "barbell"),
+            (["reading", "read"], "book-open"),
+            (["screen", "phone", "device"], "device-mobile"),
+            (["meditat", "mindful", "breath"], "flower-lotus"),
+            (["sauna"], "thermometer-hot"),
+            (["shower"], "shower"),
+            (["cold", "ice"], "snowflake"),
+            (["sex", "intimacy"], "heart"),
+            (["flight", "airplane", "plane", "travel", "fly"], "airplane"),
+            (["injury", "wound"], "bandaids"),
+            (["bloated", "bloat", "bloating"], "wind"),
+            (["sick", "ill", "fever"], "first-aid-kit"),
+            (["nervous", "anxious", "anxiety"], "smiley-nervous"),
+            (["stress"], "lightning"),
+            (["headache"], "brain"),
+            (["dairy", "cheese"], "cheese"),
+            (["protein", "egg"], "egg"),
+            (["water", "hydrat"], "drop"),
+            (["sunlight", "daylight", "sun"], "sun"),
+            (["dim"], "lightbulb-filament"),
+            (["commute"], "car"),
+            (["sugar"], "cube"),
+            (["meal", "eat", "eating", "food", "snack", "dinner"], "fork-knife"),
+            (["learn", "learned", "learning"], "lightbulb"),
+            (["energy"], "battery-high"),
+            (["family", "friend", "friends"], "users-three"),
+            (["steam"], "cloud"),
+            (["nap", "bed"], "bed"),
+            (["stretch", "yoga"], "person-simple-tai-chi"),
+            (["workout", "exercise", "train"], "barbell"),
+            (["magnes", "vitamin", "supplement", "zinc", "omega", "nsaid", "calcium"], "pill"),
+        ]
+        let stems: Set<String> = ["meditat", "hydrat", "magnes"]
+        for row in table {
+            for key in row.keys {
+                if stems.contains(key) {
+                    if tokens.contains(where: { $0.hasPrefix(key) }) { return row.icon }
+                } else if tokens.contains(key) {
+                    return row.icon
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func wordTokens(_ source: String) -> Set<String> {
+        var tokens = Set<String>()
+        var current = ""
+        let folded = source.lowercased(with: Locale(identifier: "en_US_POSIX"))
+        for scalar in folded.unicodeScalars {
+            if CharacterSet.letters.contains(scalar) {
+                current.unicodeScalars.append(scalar)
+            } else if !current.isEmpty {
+                tokens.insert(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { tokens.insert(current) }
+        return tokens
     }
 
     /// The Yes / No capsule (`.yn`). Tri-state: tapping the selected side again clears the answer.
@@ -248,7 +389,7 @@ struct JournalLogCard: View {
 
     // MARK: - Numeric field
 
-    private func numericField(_ item: JournalCatalogItem) -> some View {
+    private func numericField(_ item: JournalCatalogItem, label: String) -> some View {
         let current = numericAnswers[JournalQuestionIdentity.canonical(item.canonical)]
         return HStack(spacing: 4) {
             stepperButton("minus", q: item.canonical, current: current)
@@ -276,7 +417,7 @@ struct JournalLogCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Clear \(item.display)")
+                .accessibilityLabel("Clear \(label)")
             }
         }
     }
@@ -307,7 +448,7 @@ struct JournalLogCard: View {
 
     // MARK: - Edit-mode controls
 
-    private func editControls(_ item: JournalCatalogItem) -> some View {
+    private func editControls(_ item: JournalCatalogItem, label: String) -> some View {
         HStack(spacing: 10) {
             if item.hidden {
                 pillButton("Restore", selected: false) { catalog.restore(item.canonical) }
@@ -332,15 +473,15 @@ struct JournalLogCard: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .accessibilityLabel("Edit \(item.display)")
+                .accessibilityLabel("Edit \(label)")
 
-                removeButton(item)
+                removeButton(item, label: label)
             }
         }
     }
 
     /// Edit-mode control: delete a custom question / hide a built-in one. Tinted red to read as removal.
-    private func removeButton(_ item: JournalCatalogItem) -> some View {
+    private func removeButton(_ item: JournalCatalogItem, label: String) -> some View {
         Button { catalog.remove(item.canonical) } label: {
             PhIcon("minus-circle", weight: .fill, size: 20)
                 .foregroundStyle(NoopGlow.low.tint)
@@ -349,13 +490,13 @@ struct JournalLogCard: View {
         }
         .buttonStyle(.plain)
         .help(item.custom ? "Delete this custom item" : "Hide this item")
-        .accessibilityLabel(item.custom ? "Delete \(item.display)" : "Hide \(item.display)")
+        .accessibilityLabel(item.custom ? "Delete \(label)" : "Hide \(label)")
     }
 
     // MARK: - Rename sheet
 
     private func startRename(_ item: JournalCatalogItem) {
-        renameDraft = item.displayName ?? item.canonical
+        renameDraft = item.displayName ?? JournalQuestionDisplay.label(forCanonical: item.canonical)
         renaming = item
     }
 

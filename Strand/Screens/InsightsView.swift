@@ -727,7 +727,7 @@ struct InsightsView: View {
                 HStack(spacing: 6) {
                     phaseTile(Text(verbatim: window.label), caption: Text("Baseline"))
                     phaseTile(Text(verbatim: window.label),
-                              caption: Text(verbatim: resolvedExperimentBehaviour ?? ""))
+                              caption: Text(verbatim: resolvedExperimentBehaviour.map(journalQuestionLabel) ?? ""))
                     phaseTile(Text("Read-out"), caption: Text(verbatim: outcome.label))
                 }
                 // Equal-height tiles: the behaviour caption (a journal question) may take two lines.
@@ -738,7 +738,7 @@ struct InsightsView: View {
                     Menu {
                         Picker("Behaviour", selection: experimentBehaviourBinding) {
                             ForEach(candidates, id: \.self) { q in
-                                Text(verbatim: q).tag(q)
+                                Text(verbatim: journalQuestionLabel(q)).tag(q)
                             }
                         }
                     } label: {
@@ -747,7 +747,7 @@ struct InsightsView: View {
                                 .font(StrandFont.light(13, relativeTo: .footnote))
                                 .foregroundStyle(StrandPalette.textTertiary)
                             Spacer(minLength: 8)
-                            Text(verbatim: resolvedExperimentBehaviour ?? "")
+                            Text(verbatim: resolvedExperimentBehaviour.map(journalQuestionLabel) ?? "")
                                 .font(StrandFont.book(14, relativeTo: .subheadline))
                                 .foregroundStyle(StrandPalette.textPrimary)
                                 .lineLimit(1)
@@ -801,7 +801,7 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: snapshot.behavior)
+                    Text(verbatim: journalQuestionLabel(snapshot.behavior))
                         .font(StrandFont.light(17, relativeTo: .headline))
                         .foregroundStyle(StrandPalette.textPrimary)
                         .lineLimit(2)
@@ -1141,6 +1141,19 @@ struct InsightsView: View {
         }
     }
 
+    /// Localised question text for a stored behaviour key. The stored key itself is unchanged.
+    private func journalQuestionLabel(_ canonical: String) -> String {
+        JournalQuestionDisplay.label(forCanonical: canonical)
+    }
+
+    /// The analytics sentence with the behaviour shown in the app language.
+    private func journalEffectSentence(_ e: BehaviorEffect) -> String {
+        let sentence = BehaviorInsights.sentence(e)
+        let label = journalQuestionLabel(e.behavior)
+        guard label != e.behavior else { return sentence }
+        return sentence.replacingOccurrences(of: e.behavior, with: label)
+    }
+
     /// One behaviour-effect card: the plain-English sentence, with / without means and the effect size.
     private func effectCard(_ e: BehaviorEffect) -> some View {
         let deltaText: String = {
@@ -1150,12 +1163,12 @@ struct InsightsView: View {
         }()
         // Build the plain-English sentence ONCE and reuse it for both the visible
         // copy and the accessibility label (was computed twice per card).
-        let sentence = BehaviorInsights.sentence(e)
+        let sentence = journalEffectSentence(e)
 
         return NoopCard(padding: 18) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center) {
-                    Text(e.behavior)
+                    Text(verbatim: journalQuestionLabel(e.behavior))
                         .font(StrandFont.book(15, relativeTo: .body))
                         .foregroundStyle(StrandPalette.textPrimary)
                         .lineLimit(2)
