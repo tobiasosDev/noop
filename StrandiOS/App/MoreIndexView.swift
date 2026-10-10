@@ -620,11 +620,9 @@ private struct MoreBatteryRing: View {
                     .offset(x: 54 * CGFloat(cos(a)), y: 54 * CGFloat(sin(a)))
             }
             VStack(spacing: 7) {
-                if let percent {
-                    NoopDotNumber("\(percent)", unit: "%", size: 46, unitSize: 20)
-                } else {
-                    NoopDotNumber("--", size: 46)
-                }
+                figure
+                    // The 46 pt dot line, held for the smaller `100` too, so the caption does not jump.
+                    .frame(height: 56)
                 Text("battery")
                     .font(StrandFont.light(11, relativeTo: .caption2))
                     .foregroundStyle(Color.white.opacity(0.55))
@@ -634,6 +632,27 @@ private struct MoreBatteryRing: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Battery"))
         .accessibilityValue(percent.map { Text(verbatim: "\($0)%") } ?? Text("Unknown"))
+    }
+
+    /// The digits in the dot-matrix face, the `%` in the sans face: Doto's `%` blurs into a cross of dots
+    /// at unit size. A three-digit `100` at 46 pt runs over the ring, so it drops to 36 pt.
+    @ViewBuilder private var figure: some View {
+        if let percent {
+            let digits = "\(percent)"
+            let size: CGFloat = digits.count > 2 ? 36 : 46
+            HStack(alignment: .lastTextBaseline, spacing: 1) {
+                Text(verbatim: digits)
+                    .font(StrandFont.dot(size))
+                    .tracking(StrandFont.dotTracking(size))
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(verbatim: "%")
+                    .font(StrandFont.book(15))
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            .lineLimit(1)
+        } else {
+            NoopDotNumber("--", size: 46)
+        }
     }
 }
 
