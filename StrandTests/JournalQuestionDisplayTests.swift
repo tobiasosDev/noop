@@ -14,14 +14,14 @@ final class JournalQuestionDisplayTests: XCTestCase {
 
     func testListedQuestionsResolveToEnglishAndASpecificIcon() {
         let cases: [(raw: String, english: String, icon: String)] = [
-            ("Im Bett auf ein Gerät mit Bildschirm geschaut?", "Did you view a screen device in bed?", "device-mobile"),
-            ("Unter Stress gestanden?", "Did you experience stress?", "lightning"),
+            ("Im Bett auf ein Gerät mit Bildschirm geschaut?", "Did you view a screen in bed?", "device-mobile"),
+            ("Unter Stress gestanden?", "Did you feel stressed?", "lightning"),
             ("Probiotikum eingenommen?", "Did you take a probiotic?", "flask"),
             ("Kreatin eingenommen?", "Did you take creatine?", "barbell"),
-            ("Koffein konsumiert?", "Did you have caffeine?", "coffee"),
+            ("Koffein konsumiert?", "Did you have caffeine late in the day?", "coffee"),
             ("Im Home Office gearbeitet?", "Did you work from home?", "house"),
             ("Etwas Interessantes oder Wichtiges gelernt?", "Did you learn something interesting or important?", "lightbulb"),
-            ("im Bett gelesen (kein Gerät mit Bildschirm)?", "Did you read in bed (not a screen device)?", "book-open"),
+            ("im Bett gelesen (kein Gerät mit Bildschirm)?", "Did you read before bed?", "book-open"),
             ("Hast du ein Dampfbad benutzt?", "Did you use a steam room?", "cloud"),
             ("Milchprodukte konsumiert?", "Did you have dairy?", "cheese"),
             ("Genug Wasser getrunken?", "Did you drink enough water?", "drop"),
@@ -71,16 +71,32 @@ final class JournalQuestionDisplayTests: XCTestCase {
         }
     }
 
-    func testSimilarQuestionsStaySeparate() {
-        XCTAssertNotEqual(
-            JournalQuestionDisplay.englishKey(forCanonical: "Koffein konsumiert?"),
-            JournalQuestionDisplay.englishKey(forCanonical: "Did you have caffeine late in the day?"))
-        XCTAssertNotEqual(
-            JournalQuestionDisplay.englishKey(forCanonical: "im Bett gelesen (kein Gerät mit Bildschirm)?"),
-            JournalQuestionDisplay.englishKey(forCanonical: "Did you read before bed?"))
-        XCTAssertNotEqual(
-            JournalQuestionDisplay.englishKey(forCanonical: "Im Bett auf ein Gerät mit Bildschirm geschaut?"),
-            JournalQuestionDisplay.englishKey(forCanonical: "Did you view a screen in bed?"))
+    func testWhoopExportWordingFoldsOntoTheStarterQuestion() {
+        // A WHOOP export ships these questions in its own wording. They are the same behaviour as
+        // the starter catalog entry, so they must resolve to one identity and one label rather than
+        // showing up as a second, duplicate row.
+        let pairs = [
+            ("Koffein konsumiert?", "Did you have caffeine late in the day?"),
+            ("Did you have caffeine?", "Did you have caffeine late in the day?"),
+            ("im Bett gelesen (kein Gerät mit Bildschirm)?", "Did you read before bed?"),
+            ("Did you read in bed (not a screen device)?", "Did you read before bed?"),
+            ("Im Bett auf ein Gerät mit Bildschirm geschaut?", "Did you view a screen in bed?"),
+            ("Did you view a screen device in bed?", "Did you view a screen in bed?"),
+            ("Unter Stress gestanden?", "Did you feel stressed?"),
+            ("Did you experience stress?", "Did you feel stressed?"),
+        ]
+        for (whoop, starter) in pairs {
+            XCTAssertEqual(JournalQuestionIdentity.canonical(whoop),
+                           JournalQuestionIdentity.canonical(starter), whoop)
+            XCTAssertEqual(JournalQuestionDisplay.englishKey(forCanonical: whoop),
+                           JournalQuestionDisplay.englishKey(forCanonical: starter), whoop)
+        }
+    }
+
+    func testGenuinelyDifferentQuestionsStaySeparate() {
+        // A steam room is not a sauna: explicit equivalents must not collapse distinct behaviours.
+        XCTAssertNotEqual(JournalQuestionDisplay.englishKey(forCanonical: "Hast du ein Dampfbad benutzt?"),
+                          JournalQuestionDisplay.englishKey(forCanonical: "Did you use a sauna?"))
     }
 
     func testRenameStaysVerbatimAndIconFollowsCanonical() {

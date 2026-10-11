@@ -4,6 +4,9 @@ import Foundation
 /// no fuzzy or keyword matching may combine questions about different behaviours or time windows.
 /// Mirrors Android JournalQuestionIdentity. Imported rows are left intact on disk; callers resolve
 /// their identity when building the catalog, reading answers, and grouping history for analysis.
+/// The German variants are the wording a WHOOP export actually ships (a starter question and its
+/// export translation are the same behaviour, so they must fold together rather than sit as two
+/// rows).
 public enum JournalQuestionIdentity {
     /// Stable English identity for a known question; otherwise the original string, unchanged.
     /// Kotlin twin: `JournalQuestionIdentity.canonical`.
@@ -11,13 +14,13 @@ public enum JournalQuestionIdentity {
         switch normalise(question) {
         case "did you drink any alcohol?", "did you drink alcohol?", "alkohol konsumiert?", "alkohol getrunken?", "hast du alkohol konsumiert?", "hast du alkohol getrunken?":
             return "Did you drink any alcohol?"
-        case "did you have caffeine late in the day?", "spät am tag koffein konsumiert?", "koffein spät am tag konsumiert?", "hast du spät am tag koffein konsumiert?":
+        case "did you have caffeine late in the day?", "spät am tag koffein konsumiert?", "koffein spät am tag konsumiert?", "hast du spät am tag koffein konsumiert?", "did you have caffeine?", "koffein konsumiert?":
             return "Did you have caffeine late in the day?"
-        case "did you view a screen in bed?", "einen bildschirm im bett angesehen?", "im bett auf einen bildschirm geschaut?", "bildschirm im bett genutzt?", "hast du im bett auf einen bildschirm geschaut?":
+        case "did you view a screen in bed?", "einen bildschirm im bett angesehen?", "im bett auf einen bildschirm geschaut?", "bildschirm im bett genutzt?", "hast du im bett auf einen bildschirm geschaut?", "did you view a screen device in bed?", "im bett auf ein gerät mit bildschirm geschaut?":
             return "Did you view a screen in bed?"
         case "did you eat close to bedtime?", "kurz vor dem schlafengehen gegessen?", "kurz vor dem zubettgehen gegessen?", "hast du kurz vor dem schlafengehen gegessen?":
             return "Did you eat close to bedtime?"
-        case "did you feel stressed?", "dich gestresst gefühlt?", "gestresst gefühlt?", "hast du dich gestresst gefühlt?":
+        case "did you feel stressed?", "dich gestresst gefühlt?", "gestresst gefühlt?", "hast du dich gestresst gefühlt?", "did you experience stress?", "unter stress gestanden?":
             return "Did you feel stressed?"
         case "did you use a sauna?", "eine sauna benutzt?", "eine sauna genutzt?", "in der sauna gewesen?", "hast du eine sauna benutzt?":
             return "Did you use a sauna?"
@@ -27,7 +30,7 @@ public enum JournalQuestionIdentity {
             return "Did you feel sick or ill?"
         case "did you take magnesium?", "magnesium eingenommen?", "hast du magnesium eingenommen?":
             return "Did you take magnesium?"
-        case "did you read before bed?", "vor dem schlafengehen gelesen?", "vor dem zubettgehen gelesen?", "hast du vor dem schlafengehen gelesen?":
+        case "did you read before bed?", "vor dem schlafengehen gelesen?", "vor dem zubettgehen gelesen?", "hast du vor dem schlafengehen gelesen?", "did you read in bed (not a screen device)?", "im bett gelesen (kein gerät mit bildschirm)?":
             return "Did you read before bed?"
         case "did you feel bloated?", "did you experience bloating?", "blähungen gehabt?", "hast du blähungen gehabt?":
             return "Did you feel bloated?"

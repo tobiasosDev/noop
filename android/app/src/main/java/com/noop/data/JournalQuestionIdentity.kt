@@ -2,19 +2,21 @@ package com.noop.data
 
 /** Explicit equivalents of journal questions. Unknown/custom questions keep their original key.
  * No fuzzy/keyword matching: different behaviours and time windows must remain separate.
- * Mirrors Swift JournalQuestionIdentity; imported rows remain unchanged on disk. */
+ * Mirrors Swift JournalQuestionIdentity; imported rows remain unchanged on disk.
+ * The German variants are the wording a WHOOP export actually ships (a starter question and its
+ * export translation are the same behaviour, so they fold together rather than sit as two rows). */
 object JournalQuestionIdentity {
     /** Swift twin: `JournalQuestionIdentity.canonical`. */
     fun canonical(question: String): String = when (normalise(question)) {
         "did you drink any alcohol?", "did you drink alcohol?", "alkohol konsumiert?", "alkohol getrunken?", "hast du alkohol konsumiert?", "hast du alkohol getrunken?" ->
             "Did you drink any alcohol?"
-        "did you have caffeine late in the day?", "spät am tag koffein konsumiert?", "koffein spät am tag konsumiert?", "hast du spät am tag koffein konsumiert?" ->
+        "did you have caffeine late in the day?", "spät am tag koffein konsumiert?", "koffein spät am tag konsumiert?", "hast du spät am tag koffein konsumiert?", "did you have caffeine?", "koffein konsumiert?" ->
             "Did you have caffeine late in the day?"
-        "did you view a screen in bed?", "einen bildschirm im bett angesehen?", "im bett auf einen bildschirm geschaut?", "bildschirm im bett genutzt?", "hast du im bett auf einen bildschirm geschaut?" ->
+        "did you view a screen in bed?", "einen bildschirm im bett angesehen?", "im bett auf einen bildschirm geschaut?", "bildschirm im bett genutzt?", "hast du im bett auf einen bildschirm geschaut?", "did you view a screen device in bed?", "im bett auf ein gerät mit bildschirm geschaut?" ->
             "Did you view a screen in bed?"
         "did you eat close to bedtime?", "kurz vor dem schlafengehen gegessen?", "kurz vor dem zubettgehen gegessen?", "hast du kurz vor dem schlafengehen gegessen?" ->
             "Did you eat close to bedtime?"
-        "did you feel stressed?", "dich gestresst gefühlt?", "gestresst gefühlt?", "hast du dich gestresst gefühlt?" ->
+        "did you feel stressed?", "dich gestresst gefühlt?", "gestresst gefühlt?", "hast du dich gestresst gefühlt?", "did you experience stress?", "unter stress gestanden?" ->
             "Did you feel stressed?"
         "did you use a sauna?", "eine sauna benutzt?", "eine sauna genutzt?", "in der sauna gewesen?", "hast du eine sauna benutzt?" ->
             "Did you use a sauna?"
@@ -24,7 +26,7 @@ object JournalQuestionIdentity {
             "Did you feel sick or ill?"
         "did you take magnesium?", "magnesium eingenommen?", "hast du magnesium eingenommen?" ->
             "Did you take magnesium?"
-        "did you read before bed?", "vor dem schlafengehen gelesen?", "vor dem zubettgehen gelesen?", "hast du vor dem schlafengehen gelesen?" ->
+        "did you read before bed?", "vor dem schlafengehen gelesen?", "vor dem zubettgehen gelesen?", "hast du vor dem schlafengehen gelesen?", "did you read in bed (not a screen device)?", "im bett gelesen (kein gerät mit bildschirm)?" ->
             "Did you read before bed?"
         "did you feel bloated?", "did you experience bloating?", "blähungen gehabt?", "hast du blähungen gehabt?" ->
             "Did you feel bloated?"

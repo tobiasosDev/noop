@@ -4,7 +4,7 @@ import XCTest
 
 final class JournalQuestionIdentityTests: XCTestCase {
     func testStandaloneOraclePinsEveryAliasAndDistinctQuestions() throws {
-        let json = #"["Did you drink any alcohol?", "Did you drink alcohol?", "Alkohol konsumiert?", "Alkohol getrunken?", "Hast du Alkohol konsumiert?", "Hast du Alkohol getrunken?", "Did you have caffeine late in the day?", "Spät am Tag Koffein konsumiert?", "Koffein spät am Tag konsumiert?", "Hast du spät am Tag Koffein konsumiert?", "Did you view a screen in bed?", "Einen Bildschirm im Bett angesehen?", "Im Bett auf einen Bildschirm geschaut?", "Bildschirm im Bett genutzt?", "Hast du im Bett auf einen Bildschirm geschaut?", "Did you eat close to bedtime?", "Kurz vor dem Schlafengehen gegessen?", "Kurz vor dem Zubettgehen gegessen?", "Hast du kurz vor dem Schlafengehen gegessen?", "Did you feel stressed?", "Dich gestresst gefühlt?", "Gestresst gefühlt?", "Hast du dich gestresst gefühlt?", "Did you use a sauna?", "Eine Sauna benutzt?", "Eine Sauna genutzt?", "In der Sauna gewesen?", "Hast du eine Sauna benutzt?", "Did you share your bed?", "Dein Bett geteilt?", "Das Bett geteilt?", "Hast du dein Bett geteilt?", "Did you feel sick or ill?", "Did you feel sick?", "Dich krank gefühlt?", "Krank gefühlt?", "Hast du dich krank gefühlt?", "Did you take magnesium?", "Magnesium eingenommen?", "Hast du Magnesium eingenommen?", "Did you read before bed?", "Vor dem Schlafengehen gelesen?", "Vor dem Zubettgehen gelesen?", "Hast du vor dem Schlafengehen gelesen?", "Did you feel bloated?", "Did you experience bloating?", "Blähungen gehabt?", "Hast du Blähungen gehabt?", "Did you have an injury or wound?", "Eine Verletzung oder Wunde haben?", "Eine Verletzung oder Wunde gehabt?", "Hast du eine Verletzung oder Wunde gehabt?", "  MAGNESIUM EINGENOMMEN?\n", "DICH KRANK GEFÜHLT?", "Koffein konsumiert?", "Did you have caffeine?", "Did you drink any alcohol yesterday?", "  My custom question  ", ""]"#
+        let json = #"["Did you drink any alcohol?", "Did you drink alcohol?", "Alkohol konsumiert?", "Alkohol getrunken?", "Hast du Alkohol konsumiert?", "Hast du Alkohol getrunken?", "Did you have caffeine late in the day?", "Spät am Tag Koffein konsumiert?", "Koffein spät am Tag konsumiert?", "Hast du spät am Tag Koffein konsumiert?", "Did you view a screen in bed?", "Einen Bildschirm im Bett angesehen?", "Im Bett auf einen Bildschirm geschaut?", "Bildschirm im Bett genutzt?", "Hast du im Bett auf einen Bildschirm geschaut?", "Did you eat close to bedtime?", "Kurz vor dem Schlafengehen gegessen?", "Kurz vor dem Zubettgehen gegessen?", "Hast du kurz vor dem Schlafengehen gegessen?", "Did you feel stressed?", "Dich gestresst gefühlt?", "Gestresst gefühlt?", "Hast du dich gestresst gefühlt?", "Did you use a sauna?", "Eine Sauna benutzt?", "Eine Sauna genutzt?", "In der Sauna gewesen?", "Hast du eine Sauna benutzt?", "Did you share your bed?", "Dein Bett geteilt?", "Das Bett geteilt?", "Hast du dein Bett geteilt?", "Did you feel sick or ill?", "Did you feel sick?", "Dich krank gefühlt?", "Krank gefühlt?", "Hast du dich krank gefühlt?", "Did you take magnesium?", "Magnesium eingenommen?", "Hast du Magnesium eingenommen?", "Did you read before bed?", "Vor dem Schlafengehen gelesen?", "Vor dem Zubettgehen gelesen?", "Hast du vor dem Schlafengehen gelesen?", "Did you feel bloated?", "Did you experience bloating?", "Blähungen gehabt?", "Hast du Blähungen gehabt?", "Did you have an injury or wound?", "Eine Verletzung oder Wunde haben?", "Eine Verletzung oder Wunde gehabt?", "Hast du eine Verletzung oder Wunde gehabt?", "  MAGNESIUM EINGENOMMEN?\n", "DICH KRANK GEFÜHLT?", "Koffein konsumiert?", "Did you have caffeine?", "Did you drink any alcohol yesterday?", "  My custom question  ", "", "Im Bett auf ein Gerät mit Bildschirm geschaut?", "Did you view a screen device in bed?", "Unter Stress gestanden?", "Did you experience stress?", "im Bett gelesen (kein Gerät mit Bildschirm)?", "Did you read in bed (not a screen device)?"]"#
         let inputs = try JSONDecoder().decode([String].self, from: Data(json.utf8))
         let actual = inputs.map {
             JournalQuestionIdentity.canonical($0).replacingOccurrences(of: "\n", with: "\\n") + "|" + JournalQuestionIdentity.key($0)
@@ -65,11 +65,17 @@ final class JournalQuestionIdentityTests: XCTestCase {
             Did you have an injury or wound?|did you have an injury or wound?
             Did you take magnesium?|did you take magnesium?
             Did you feel sick or ill?|did you feel sick or ill?
-            Koffein konsumiert?|koffein konsumiert?
-            Did you have caffeine?|did you have caffeine?
+            Did you have caffeine late in the day?|did you have caffeine late in the day?
+            Did you have caffeine late in the day?|did you have caffeine late in the day?
             Did you drink any alcohol yesterday?|did you drink any alcohol yesterday?
               My custom question  |my custom question
             |
+            Did you view a screen in bed?|did you view a screen in bed?
+            Did you view a screen in bed?|did you view a screen in bed?
+            Did you feel stressed?|did you feel stressed?
+            Did you feel stressed?|did you feel stressed?
+            Did you read before bed?|did you read before bed?
+            Did you read before bed?|did you read before bed?
             """
         XCTAssertEqual(actual, expected)
     }
