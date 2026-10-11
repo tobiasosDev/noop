@@ -17,22 +17,14 @@ enum JournalQuestionDisplay {
     }
 
     private static let known: [KnownQuestion] = [
-        KnownQuestion(canonical: "Im Bett auf ein Gerät mit Bildschirm geschaut?",
-                      english: "Did you view a screen device in bed?", icon: "device-mobile"),
-        KnownQuestion(canonical: "Unter Stress gestanden?",
-                      english: "Did you experience stress?", icon: "lightning"),
         KnownQuestion(canonical: "Probiotikum eingenommen?",
                       english: "Did you take a probiotic?", icon: "flask"),
         KnownQuestion(canonical: "Kreatin eingenommen?",
                       english: "Did you take creatine?", icon: "barbell"),
-        KnownQuestion(canonical: "Koffein konsumiert?",
-                      english: "Did you have caffeine?", icon: "coffee"),
         KnownQuestion(canonical: "Im Home Office gearbeitet?",
                       english: "Did you work from home?", icon: "house"),
         KnownQuestion(canonical: "Etwas Interessantes oder Wichtiges gelernt?",
                       english: "Did you learn something interesting or important?", icon: "lightbulb"),
-        KnownQuestion(canonical: "im Bett gelesen (kein Gerät mit Bildschirm)?",
-                      english: "Did you read in bed (not a screen device)?", icon: "book-open"),
         KnownQuestion(canonical: "Hast du ein Dampfbad benutzt?",
                       english: "Did you use a steam room?", icon: "cloud"),
         KnownQuestion(canonical: "Milchprodukte konsumiert?",
@@ -147,22 +139,14 @@ enum JournalQuestionDisplay {
     /// Every arm is a catalog literal so the string audit can see the key. Unknown keys return as-is.
     private static func localized(_ english: String) -> String {
         switch english {
-        case "Did you view a screen device in bed?":
-            return String(localized: "Did you view a screen device in bed?")
-        case "Did you experience stress?":
-            return String(localized: "Did you experience stress?")
         case "Did you take a probiotic?":
             return String(localized: "Did you take a probiotic?")
         case "Did you take creatine?":
             return String(localized: "Did you take creatine?")
-        case "Did you have caffeine?":
-            return String(localized: "Did you have caffeine?")
         case "Did you work from home?":
             return String(localized: "Did you work from home?")
         case "Did you learn something interesting or important?":
             return String(localized: "Did you learn something interesting or important?")
-        case "Did you read in bed (not a screen device)?":
-            return String(localized: "Did you read in bed (not a screen device)?")
         case "Did you use a steam room?":
             return String(localized: "Did you use a steam room?")
         case "Did you have dairy?":
