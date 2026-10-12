@@ -13,7 +13,7 @@ extension DemoScreensV2 {
         case "coachquickask": return AnyView(CoachDemoHost(mode: .quickAsk))
         case "insightshub", "whatmovesyou": return AnyView(InsightsHubView())
         case "intelligence": return AnyView(IntelligenceDemoHost())
-        case "insightslog": return AnyView(ScreenScaffold(title: nil) { MindSection(); CaffeineLogCard() })
+        case "insightslog": return AnyView(ScreenScaffold(title: nil) { MindSection() })
         default: return nil
         }
     }

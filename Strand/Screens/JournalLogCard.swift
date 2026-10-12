@@ -50,6 +50,7 @@ struct JournalLogCard: View {
     /// The item being renamed (drives the rename sheet).
     @State private var renaming: JournalCatalogItem?
     @State private var renameDraft = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var dayKey: String {
         Repository.localDayKey(
@@ -190,27 +191,67 @@ struct JournalLogCard: View {
 
     @ViewBuilder private func itemRow(_ item: JournalCatalogItem) -> some View {
         let label = JournalQuestionDisplay.label(for: item)
-        HStack(spacing: 12) {
-            // Tapping the icon and the question answers it: unanswered → Yes, then Yes ↔ No.
-            // The Yes/No capsule stays, and re-tapping the selected side still clears.
-            if editing || item.kind.isNumeric {
-                questionLabel(item, label: label)
-            } else {
-                Button { cycleAnswer(item) } label: {
+        let showsCaffeineAmount = showsCaffeineAmount(item)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                // Tapping the icon and the question answers it: unanswered → Yes, then Yes ↔ No.
+                // The Yes/No capsule stays, and re-tapping the selected side still clears.
+                if editing || item.kind.isNumeric {
                     questionLabel(item, label: label)
+                } else {
+                    Button { cycleAnswer(item) } label: {
+                        questionLabel(item, label: label)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(label)
+                    .accessibilityValue(answerAccessibilityValue(item))
+                    .accessibilityHint(String(localized: "Answers yes, then switches between yes and no"))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(label)
-                .accessibilityValue(answerAccessibilityValue(item))
-                .accessibilityHint(String(localized: "Answers yes, then switches between yes and no"))
+                if editing {
+                    editControls(item, label: label)
+                } else if item.kind.isNumeric {
+                    numericField(item, label: label)
+                } else {
+                    yesNoControl(q: item.canonical)
+                }
             }
-            if editing {
-                editControls(item, label: label)
-            } else if item.kind.isNumeric {
-                numericField(item, label: label)
+            if showsCaffeineAmount {
+                // Indented to the question text, so the amount reads as part of this answer.
+                CaffeineAmountSlider(
+                    stored: numericAnswers[JournalQuestionIdentity.canonical(item.canonical)],
+                    onCommit: { mg in commitCaffeineAmount(item.canonical, mg: mg) })
+                .padding(.leading, 30)
+                .softCardTransition()
+            }
+        }
+        .animation(NoopMotion.gated(NoopMotion.card, reduced: reduceMotion), value: showsCaffeineAmount)
+    }
+
+    /// The caffeine question opens an amount slider once it is answered Yes. This replaces the separate
+    /// caffeine card, so caffeine is logged where it is switched on. A caffeine item converted to Number
+    /// keeps its numeric field instead.
+    private func showsCaffeineAmount(_ item: JournalCatalogItem) -> Bool {
+        let canonical = JournalQuestionIdentity.canonical(item.canonical)
+        return !editing && !item.kind.isNumeric
+            && canonical == Self.caffeineQuestion
+            && answers[canonical] == true
+    }
+
+    /// The starter caffeine question, as stored. WHOOP export variants fold onto it through
+    /// `JournalQuestionIdentity`, so they open the slider too.
+    private static let caffeineQuestion = "Did you have caffeine late in the day?"
+
+    /// Saves the caffeine amount for the selected day. Zero keeps the plain Yes without an amount, so
+    /// the far left of the slider clears the number and leaves the answer in place.
+    private func commitCaffeineAmount(_ q: String, mg: Double) {
+        let day = dayKey
+        Task {
+            if mg > 0 {
+                await repo.saveJournalNumeric(day: day, question: q, value: mg)
             } else {
-                yesNoControl(q: item.canonical)
+                await repo.saveJournalAnswer(day: day, question: q, answeredYes: true)
             }
+            onChanged()
         }
     }
 
@@ -680,5 +721,100 @@ private struct NumericLogField: View {
 
     private static func format(_ v: Double) -> String {
         v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
+    }
+}
+
+/// The amount under a Yes to the caffeine question: one slider in milligrams, read back with a rough
+/// drink equivalent so the number means something to someone who does not count mg. The far left is
+/// "not set", which keeps the plain Yes and never invents an amount. A drag commits on release;
+/// VoiceOver and keyboard steps arrive without a drag, so they commit as they land.
+private struct CaffeineAmountSlider: View {
+    /// The stored amount for the selected day, nil when the Yes carries no amount.
+    let stored: Double?
+    let onCommit: (Double) -> Void
+
+    @State private var draft: Double = 0
+    @State private var dragging = false
+
+    /// 400 mg is the commonly cited daily ceiling for adults, so a full slider is a whole day's worth.
+    private static let range: ClosedRange<Double> = 0...400
+    private static let step = 10.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(verbatim: shown > 0 ? "\(Int(shown.rounded()))" : "—")
+                    .font(StrandFont.value(28, weight: 300))
+                    .tracking(-0.56)
+                    .foregroundStyle(shown > 0 ? StrandPalette.textPrimary : StrandPalette.textTertiary)
+                Text("mg")
+                    .font(StrandFont.light(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textSecondary)
+                Spacer(minLength: 8)
+                Text(Self.equivalent(mg: shown))
+                    .font(StrandFont.light(12, relativeTo: .caption))
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .multilineTextAlignment(.trailing)
+            }
+            Slider(value: binding, in: Self.range, step: Self.step) { editing in
+                dragging = editing
+                if !editing { commit() }
+            }
+            .tint(StrandPalette.textPrimary)
+            .accessibilityLabel(String(localized: "Caffeine amount"))
+            .accessibilityValue(shown > 0
+                                ? String(localized: "\(Int(shown.rounded())) milligrams, \(Self.equivalent(mg: shown))")
+                                : String(localized: "Not set"))
+            HStack {
+                Text("Not set")
+                Spacer()
+                Text("\(Int(Self.range.upperBound)) mg")
+            }
+            .font(StrandFont.footnote)
+            .foregroundStyle(StrandPalette.textTertiary)
+            .accessibilityHidden(true)
+        }
+        .onAppear { draft = Self.position(stored) }
+        .onChangeCompat(of: stored) { v in if !dragging { draft = Self.position(v) } }
+    }
+
+    private var binding: Binding<Double> {
+        Binding(get: { draft }, set: { v in
+            draft = v
+            if !dragging { commit() }
+        })
+    }
+
+    /// The readout follows the thumb, except while the thumb still sits on the stored amount: an amount
+    /// above the slider's top (typed while the item was a Number) is printed as stored, not as the clamp.
+    private var shown: Double {
+        if let stored, Self.position(stored) == draft { return stored }
+        return draft
+    }
+
+    private func commit() {
+        guard draft != Self.position(stored) else { return }
+        onCommit(draft)
+    }
+
+    private static func position(_ mg: Double?) -> Double {
+        min(max(mg ?? 0, range.lowerBound), range.upperBound)
+    }
+
+    /// A plain drink for the amount. Caffeine per cup varies a lot, so every line says "about"; the
+    /// anchors are typical servings (tea ~45 mg, espresso ~65 mg, filter coffee ~95 mg).
+    static func equivalent(mg: Double) -> String {
+        switch mg {
+        case ..<1:   return String(localized: "Slide to set the amount")
+        case ..<31:  return String(localized: "Less than a cup of tea")
+        case ..<51:  return String(localized: "About a cup of tea")
+        case ..<76:  return String(localized: "About an espresso")
+        case ..<111: return String(localized: "About a cup of coffee")
+        case ..<151: return String(localized: "About a double espresso")
+        case ..<231: return String(localized: "About two cups of coffee")
+        case ..<331: return String(localized: "About three cups of coffee")
+        case ...400: return String(localized: "About four cups of coffee")
+        default:     return String(localized: "More than four cups of coffee")
+        }
     }
 }
