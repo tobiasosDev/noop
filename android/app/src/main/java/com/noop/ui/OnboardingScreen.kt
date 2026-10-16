@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -360,18 +359,8 @@ private fun WelcomeStep() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            // The NOOP mark centred on a flat brushed-titanium hero tile (the metallic titanium ramp, a
-            // reset token — no gold). Clean and flat: a hairline rim, no bloom.
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(150.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(150.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(*Palette.titaniumGradient.toTypedArray()))
-                        .border(1.dp, Palette.hairline, CircleShape),
-                )
-                BrandMark(size = 104.dp)
-            }
+            // The NOOP lockup as the welcome hero, as on the iOS welcome card: one flat colour, no tile.
+            BrandLockup(height = 56.dp, contentDescription = uiString(R.string.app_name))
             Spacer(Modifier.height(18.dp))
             Text(
                 uiString(R.string.l10n_onboarding_screen_all_your_data_none_of_the_6fc6f26d),

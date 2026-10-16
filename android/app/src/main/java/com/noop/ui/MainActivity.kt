@@ -730,8 +730,8 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_BUZZ_WHOOP4_WITH_ALARM, enabled).apply()
     }
 
-    /** Launcher-icon preference (v3 "Titanium & Gold"). false = machined-titanium (.IconDefault,
-     *  the default); true = blued/dark-blue titanium (.IconNavy). The actual swap is done by
+    /** Launcher-icon preference. false = the brick icon (.IconDefault, the default); true = the
+     *  navy icon (.IconNavy). The actual swap is done by
      *  enabling exactly one of the two <activity-alias> entries via PackageManager, this bool just
      *  records the user's choice so the App Icon control reflects it across restarts. */
     const val KEY_APP_ICON_NAVY = "noop.appIconNavy"

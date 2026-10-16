@@ -225,10 +225,8 @@ struct TrendsReportPage: View {
             NoopPanelSurface(cornerRadius: NoopMetrics.cardRadius,
                              elevated: true)
             VStack(alignment: .leading, spacing: NoopMetrics.space1) {
-                HStack(alignment: .firstTextBaseline) {
-                    BrandMark(size: 22)
-                    Text("NOOP").font(StrandFont.overline).tracking(StrandFont.overlineTracking)
-                        .foregroundStyle(StrandPalette.textSecondary)
+                HStack(alignment: .center) {
+                    BrandLockup(height: 18, color: StrandPalette.textSecondary)
                     Spacer()
                     Text(range.longName).strandOverline()
                 }

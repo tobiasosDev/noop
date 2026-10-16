@@ -473,14 +473,9 @@ struct RootView: View {
 
     private var brand: some View {
         HStack(spacing: 10) {
-            // In-app logo: the open recovery-ring mark so the wordmark reads as a true lockup
-            // (README logo system — mark + "NOOP"), in ink like the rest of the v2 chrome.
-            BrandMark(size: 20)
-            // v2 wordmark: NOOP in the dot-matrix face, as on the design-system sheet.
-            Text(verbatim: "NOOP")
-                .font(StrandFont.dot(22))
-                .tracking(StrandFont.dotTracking(22) * 2)
-                .foregroundStyle(StrandPalette.textPrimary)
+            // The NOOP lockup (mark + "noop"), in ink like the rest of the v2 chrome.
+            BrandLockup(height: 24)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
         }
         // Top padding clears the traffic-light controls (the window hides its title bar, so they sit
@@ -565,34 +560,6 @@ struct RootView: View {
         #else
         LiveView()
         #endif
-    }
-}
-
-/// The NOOP logo mark — an **open recovery ring** (~80% arc, round caps, starting at 12 o'clock)
-/// with a **solid centre core dot** ("on-device core"), per the README logo system. v2 draws it in ink,
-/// flat, so the chrome keeps its one-glow rule: colour belongs to the hero, not the logo. Sized to
-/// optically x-height-match the wordmark.
-struct BrandMark: View {
-    var size: CGFloat = 22
-
-    var body: some View {
-        ZStack {
-            // Open ring: leave ~20% of the circumference as a gap (trim 0 → 0.8), then rotate so the
-            // gap sits at the top and the arc sweeps clockwise from 12 o'clock.
-            Circle()
-                .trim(from: 0, to: 0.8)
-                .stroke(StrandPalette.textPrimary,
-                        style: StrokeStyle(lineWidth: size * 0.16, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .frame(width: size * 0.84, height: size * 0.84)
-
-            // Solid centre core dot — the "on-device core".
-            Circle()
-                .fill(StrandPalette.textPrimary)
-                .frame(width: size * 0.26, height: size * 0.26)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

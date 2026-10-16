@@ -5,7 +5,7 @@ import SwiftUI
 // watchOS NOTE: the `RecoveryRing` view (below) uses .onContinuousHover + BevelGauge + ChartHover
 // tooltips, none of which exist on watchOS, so the VIEW is excluded there (the watch uses the
 // lightweight GlowRing instead). The pure `RecoveryArc` Shape at the bottom of this file stays
-// available on ALL platforms because the watch-safe BevelGauge / BrandMark depend on it.
+// available on ALL platforms because the watch-safe BevelGauge depends on it.
 //
 // A 240° open gauge arc (gap at the bottom), thick rounded-cap stroke filled
 // with an AngularGradient sampling the recovery gradient (WHOOP: value-based

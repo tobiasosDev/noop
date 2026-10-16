@@ -2009,6 +2009,8 @@
     <string name="settings_theme_light">Claro</string>
     <string name="settings_theme_dark">Oscuro</string>
     <string name="settings_chart_default">Predeterminado</string>
+    <string name="settings_app_icon_default">Predeterminado</string>
+    <string name="settings_app_icon_navy">Azul marino</string>
     <string name="settings_chart_classic">Clásico</string>
     <string name="settings_trend_line">Línea</string>
     <string name="settings_trend_bars">Barras</string>

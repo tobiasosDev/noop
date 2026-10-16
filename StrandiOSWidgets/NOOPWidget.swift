@@ -351,10 +351,7 @@ struct NOOPWidgetView: View {
 
     private var largeHeader: some View {
         HStack(spacing: 8) {
-            Text(verbatim: "NOOP")
-                .font(StrandFont.dot(14))
-                .tracking(14 * 0.06)
-                .foregroundStyle(StrandPalette.textPrimary)
+            BrandLockup(height: 15)
             Text(entry.date, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
                 .font(StrandFont.light(11))
                 .foregroundStyle(StrandPalette.textTertiary)

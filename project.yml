@@ -257,7 +257,7 @@ targets:
         # when content is static or Low Power Mode is on.
         CADisableMinimumFrameDurationOnPhone: true
         # Alternate app icons (v3 "Titanium & Gold"). The primary icon stays the asset-catalog
-        # AppIcon (machined titanium); the alternate "AppIcon-Navy" (blued titanium) is declared
+        # AppIcon (the NOOP mark on brick); the alternate "AppIcon-Navy" (the mark on navy) is declared
         # here so UIApplication.setAlternateIconName("AppIcon-Navy") can switch to it at runtime.
         # CFBundleIconFiles is intentionally empty — the artwork lives in the asset catalog, shipped
         # via ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS, so no loose PNGs are listed here.

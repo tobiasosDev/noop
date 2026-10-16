@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="docs/assets/logo-v3.png" alt="NOOP" width="72">
-</p>
-
-<h1 align="center">NOOP</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/noop-lockup-white.svg">
+    <img src="docs/assets/noop-lockup.svg" alt="NOOP" height="64">
+  </picture>
+</h1>
 
 <p align="center"><b>Your strap. Your data. Your machine. Offline, on-device, no cloud.</b></p>
 

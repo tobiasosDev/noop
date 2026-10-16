@@ -755,7 +755,7 @@ fun SettingsScreen(
     // Display-only; the stored value never changes. Mirrors into local state like the toggles above.
     var effortScale by remember { mutableStateOf(UnitPrefs.effortScale(context)) }
 
-    // App icon (v3 "Titanium & Gold") — machined-titanium (.IconDefault) or blued-titanium (.IconNavy).
+    // App icon — the brick default (.IconDefault) or the navy alternate (.IconNavy).
     // SharedPreferences isn't reactive, so the segmented control drives this local mirror; flipping it
     // enables exactly one launcher alias via PackageManager (see setAppIcon below).
     var appIconNavy by remember { mutableStateOf(NoopPrefs.appIconNavy(context)) }
@@ -2072,8 +2072,8 @@ fun SettingsScreen(
             }
         }
 
-        // --- App icon (v3 "Titanium & Gold") ---
-        // Two staged launcher icons — machined titanium (default) and blued/dark-blue titanium. The
+        // --- App icon ---
+        // Two staged launcher icons, the NOOP mark on brick (default) or on navy. The
         // swap is done by enabling exactly one <activity-alias> (.IconDefault / .IconNavy) at runtime;
         // the launcher may take a beat (or briefly disappear/redraw) while it re-reads the icon.
         SettingsCard(
@@ -2085,7 +2085,9 @@ fun SettingsScreen(
                 SegmentedPillControl(
                     items = listOf(false, true),
                     selection = appIconNavy,
-                    label = { if (it) "Blue Titanium" else "Titanium" },
+                    label = {
+                        if (it) uiString(R.string.settings_app_icon_navy) else uiString(R.string.settings_app_icon_default)
+                    },
                     onSelect = { navy ->
                         appIconNavy = navy
                         setAppIcon(context, navy)
@@ -4209,8 +4211,8 @@ private const val SUPPORT_EMAIL = "thenoopapp@gmail.com"
  * The two launcher-icon aliases declared in AndroidManifest.xml. Exactly one is ever enabled — the
  * enabled one is the app's home-screen entry point and supplies the launcher icon.
  */
-private const val ALIAS_DEFAULT = "com.noop.IconDefault" // machined titanium
-private const val ALIAS_NAVY = "com.noop.IconNavy"       // blued / dark-blue titanium
+private const val ALIAS_DEFAULT = "com.noop.IconDefault" // brick
+private const val ALIAS_NAVY = "com.noop.IconNavy"       // navy
 
 /**
  * Persist the chosen launcher icon and flip the manifest aliases so exactly one is enabled:

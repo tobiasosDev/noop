@@ -207,10 +207,7 @@ struct MenuBarScoreCard: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text(verbatim: "NOOP")
-                .font(StrandFont.dot(14))
-                .tracking(StrandFont.dotTracking(14) * 1.5)
-                .foregroundStyle(StrandPalette.textPrimary)
+            BrandLockup(height: 15)
             Text(verbatim: snapshot.dateText)
                 .font(StrandFont.light(11))
                 .foregroundStyle(StrandPalette.textTertiary)

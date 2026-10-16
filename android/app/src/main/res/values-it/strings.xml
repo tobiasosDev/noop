@@ -2096,6 +2096,8 @@
     <string name="settings_theme_light">Chiaro</string>
     <string name="settings_theme_dark">Scuro</string>
     <string name="settings_chart_default">Predefinito</string>
+    <string name="settings_app_icon_default">Predefinito</string>
+    <string name="settings_app_icon_navy">Blu navy</string>
     <string name="settings_chart_classic">Classico</string>
     <string name="settings_trend_line">Linea</string>
     <string name="settings_trend_bars">Barre</string>

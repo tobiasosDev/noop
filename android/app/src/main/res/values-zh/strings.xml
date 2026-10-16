@@ -1930,6 +1930,8 @@
     <string name="settings_theme_light">浅色</string>
     <string name="settings_theme_dark">深色</string>
     <string name="settings_chart_default">默认</string>
+    <string name="settings_app_icon_default">默认</string>
+    <string name="settings_app_icon_navy">藏青色</string>
     <string name="settings_chart_classic">经典</string>
     <string name="settings_trend_line">折线</string>
     <string name="settings_trend_bars">柱形</string>

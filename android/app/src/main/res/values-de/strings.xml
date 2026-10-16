@@ -2041,6 +2041,8 @@
     <string name="settings_theme_light">Hell</string>
     <string name="settings_theme_dark">Dunkel</string>
     <string name="settings_chart_default">Standard</string>
+    <string name="settings_app_icon_default">Standard</string>
+    <string name="settings_app_icon_navy">Navy</string>
     <string name="settings_chart_classic">Klassisch</string>
     <string name="settings_trend_line">Linie</string>
     <string name="settings_trend_bars">Balken</string>

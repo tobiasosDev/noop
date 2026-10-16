@@ -68,10 +68,7 @@ struct TermsGateView: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            Text(verbatim: "NOOP")
-                .font(StrandFont.dot(22))
-                .tracking(StrandFont.dotTracking(22))
-                .foregroundStyle(StrandPalette.textPrimary)
+            BrandLockup(height: 24)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             Button { showPoints = true } label: {

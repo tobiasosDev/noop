@@ -31,7 +31,7 @@ struct ProfileAvatarView: View {
     var placeholder: Placeholder = .brandMark
 
     /// The no-photo fallback. `.disc` is the v2 avatar chrome (soft grey disc, hairline, a person glyph),
-    /// used where the avatar sits among v2 circle buttons; `.brandMark` keeps the NOOP loop mark.
+    /// used where the avatar sits among v2 circle buttons; `.brandMark` puts the NOOP mark on that disc.
     enum Placeholder {
         case brandMark
         case disc
@@ -59,12 +59,12 @@ struct ProfileAvatarView: View {
                 .overlay(PhIcon("user", size: size * 0.43).foregroundStyle(fallbackTint))
                 .accessibilityHidden(true)
         } else {
-            // Fallback: the NOOP loop BrandMark (the green ring + white core) instead of a generic
-            // person glyph — the default avatar is now on-brand. BrandMark is intrinsically square and
-            // sized off a single edge length, so it fills the same `size` footprint a photo / the old
-            // symbol did, keeping the header and Settings layouts unchanged.
-            BrandMark(size: size)
-                .frame(width: size, height: size)
+            // Fallback: the NOOP mark on the v2 avatar disc instead of a generic person glyph, so the
+            // default avatar is on-brand. The disc keeps the same `size` footprint a photo has, so the
+            // header and Settings layouts do not move.
+            NoopAvatar("", size: size)
+                .overlay(BrandMark(size: size * 0.62))
+                .accessibilityHidden(true)
         }
     }
 

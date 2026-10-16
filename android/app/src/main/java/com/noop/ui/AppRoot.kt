@@ -118,6 +118,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.noop.push.SelfHostedPushScreen
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.foundation.layout.aspectRatio
 
 // MARK: - Navigation model
 //
@@ -1293,42 +1297,41 @@ private val NavEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 private val navFadeSpec = tween<Float>(durationMillis = 240, easing = NavEasing)
 
 /**
- * BrandMark — the NOOP logo glyph at a small in-app size: an OPEN recovery ring (≈80%
- * arc, round caps, starting at −90° / 12 o'clock, clockwise) in the gold gradient with a
- * solid gold core dot at the centre. This is the same brand glyph the RecoveryRing hero
- * carries (the "O" of NOOP), shrunk for the top bar / drawer header so the logo reads in
- * app. CLEAN/flat per the v3 restraint brief — no bloom, no halo, just the gradient ring.
- * Token-only (gold gradient + hairline track); decorative, so it carries no content label.
+ * BrandMark — the NOOP mark: the arch of a lowercase n with a dot underneath it (your data, under its own
+ * roof). One flat shape in one colour, drawn from `ic_noop_mark`, which Tools/noop_brand.py generates with
+ * the launcher icons and the iOS path data. Decorative: [BrandLockup] is the variant that carries the name.
  */
 @Composable
-internal fun BrandMark(size: Dp = 22.dp) {
-    Canvas(modifier = Modifier.size(size)) {
-        val stroke = this.size.minDimension * 0.13f          // ~2px-equivalent at 22dp
-        val radius = (this.size.minDimension - stroke) / 2f
-        val topLeft = Offset(center.x - radius, center.y - radius)
-        val arcSize = Size(radius * 2f, radius * 2f)
-        val capStroke = Stroke(width = stroke, cap = StrokeCap.Round)
+internal fun BrandMark(size: Dp = 22.dp, tint: Color = Palette.textPrimary) {
+    Icon(
+        painter = painterResource(R.drawable.ic_noop_mark),
+        contentDescription = null,
+        tint = tint,
+        modifier = Modifier.size(size),
+    )
+}
 
-        // Faint full-ring track (navy hairline) behind the open arc.
-        drawCircle(
-            color = Palette.hairline.copy(alpha = 0.5f),
-            radius = radius,
-            center = center,
-            style = capStroke,
-        )
-        // Open recovery-ring arc: ~80% (288°), −90° start (12 o'clock), clockwise.
-        drawArc(
-            color = Palette.chargeColor,
-            startAngle = -90f,
-            sweepAngle = 288f,
-            useCenter = false,
-            topLeft = topLeft,
-            size = arcSize,
-            style = capStroke,
-        )
-        // Solid WHITE "on-device core" dot at the centre (green ring + white core — iOS parity, no gold).
-        drawCircle(color = Color.White, radius = stroke * 0.62f, center = center)
-    }
+/**
+ * BrandLockup — the mark beside "noop" (Hanken Grotesk SemiBold, outlined), at a fixed [height]; the width
+ * follows the drawable's own proportions. Generated as `ic_noop_lockup` by Tools/noop_brand.py, so it is the
+ * same lockup the iOS app and the README use. Decorative unless [contentDescription] is given.
+ */
+@Composable
+internal fun BrandLockup(
+    height: Dp,
+    modifier: Modifier = Modifier,
+    tint: Color = Palette.textPrimary,
+    contentDescription: String? = null,
+) {
+    val painter = painterResource(R.drawable.ic_noop_lockup)
+    Image(
+        painter = painter,
+        contentDescription = contentDescription,
+        colorFilter = ColorFilter.tint(tint),
+        modifier = modifier
+            .height(height)
+            .aspectRatio(painter.intrinsicSize.width / painter.intrinsicSize.height),
+    )
 }
 
 /** Navigate to a top-level destination with single-top + state save/restore. */

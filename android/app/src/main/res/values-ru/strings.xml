@@ -1999,6 +1999,8 @@
     <string name="settings_theme_light">Светлая</string>
     <string name="settings_theme_dark">Тёмная</string>
     <string name="settings_chart_default">По умолчанию</string>
+    <string name="settings_app_icon_default">По умолчанию</string>
+    <string name="settings_app_icon_navy">Тёмно-синий</string>
     <string name="settings_chart_classic">Классические</string>
     <string name="settings_trend_line">Линия</string>
     <string name="settings_trend_bars">Столбцы</string>
