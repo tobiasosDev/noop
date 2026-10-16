@@ -2892,10 +2892,9 @@ private fun LiquidBatteryRing(batteryPct: Double?, isRing: Boolean, onClick: () 
 
 // MARK: - NOOP wordmark (iOS LiquidWordmark parity — centred, with a tap easter egg)
 //
-// The subtle "N O O P" wordmark that sits on the sky between the header and the hero. Built as a row of
-// letters (not one tracked string, which adds a trailing gap after the last glyph and pushes the word
-// off-centre), so it sits DEAD centre, white @ ~50% opacity. A tap plays one of several random one-shot
-// animations — wiggle / shake / flip / spin / bounce / jelly squash. Mirrors iOS LiquidWordmark.
+// The subtle NOOP lockup that sits on the sky between the header and the hero, dead centre, white @ ~50%
+// opacity. A tap plays one of several random one-shot animations — wiggle / shake / flip / spin / bounce /
+// jelly squash. Mirrors iOS LiquidWordmark.
 
 @Composable
 private fun LiquidWordmark() {
@@ -2943,17 +2942,10 @@ private fun LiquidWordmark() {
                 translationX = animDx
             }
             .clearAndSetSemantics {}, // decorative wordmark — invisible to TalkBack
-        horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        "NOOP".forEach { ch ->
-            Text(
-                ch.toString(),
-                style = NoopType.number(16f, weight = FontWeight.Bold)
-                    .copy(shadow = Shadow(color = Color.Black.copy(alpha = 0.25f), offset = Offset(0f, 1f), blurRadius = 6f)),
-                color = Color.White.copy(alpha = 0.5f),
-            )
-        }
+        BrandLockup(height = 18.dp, tint = Color.White.copy(alpha = 0.5f))
     }
 }
 

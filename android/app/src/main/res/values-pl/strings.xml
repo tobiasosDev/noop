@@ -2002,6 +2002,8 @@
     <string name="settings_theme_light">Jasny</string>
     <string name="settings_theme_dark">Ciemny</string>
     <string name="settings_chart_default">Domyślny</string>
+    <string name="settings_app_icon_default">Domyślny</string>
+    <string name="settings_app_icon_navy">Granatowy</string>
     <string name="settings_chart_classic">Klasyczny</string>
     <string name="settings_trend_line">Linia</string>
     <string name="settings_trend_bars">Bary</string>

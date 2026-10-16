@@ -261,13 +261,7 @@ private struct WelcomeStep: View {
                         NoopPill(verbatim: String(localized: "Version \(UpdateWatch.installedVersion)"), compact: true)
                     }
                     Spacer(minLength: 24)
-                    Text(verbatim: "NOOP")
-                        .font(StrandFont.dot(100))
-                        .tracking(StrandFont.dotTracking(100))
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .padding(.leading, 6)
+                    BrandLockup(height: 64)
                         .scaleEffect(appear ? 1 : 0.92)
                         .opacity(appear ? 1 : 0)
                         .accessibilityAddTraits(.isHeader)
@@ -303,7 +297,7 @@ private struct WelcomeStep: View {
     }
 }
 
-/// Three faint concentric rings behind the welcome wordmark (the middle one dashed).
+/// Three faint concentric rings behind the welcome lockup (the middle one dashed).
 private struct WelcomeRings: View {
     var body: some View {
         ZStack {

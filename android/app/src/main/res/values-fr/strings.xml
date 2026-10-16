@@ -2027,6 +2027,8 @@
     <string name="settings_theme_light">Clair</string>
     <string name="settings_theme_dark">Sombre</string>
     <string name="settings_chart_default">Par défaut</string>
+    <string name="settings_app_icon_default">Par défaut</string>
+    <string name="settings_app_icon_navy">Bleu marine</string>
     <string name="settings_chart_classic">Classique</string>
     <string name="settings_trend_line">Courbe</string>
     <string name="settings_trend_bars">Barres</string>

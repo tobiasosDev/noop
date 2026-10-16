@@ -55,10 +55,7 @@ struct WatchGlanceView: View {
     /// few points where it is not.
     private func glanceStack(_ snap: WatchScoreSnapshot, stale: Bool, showsSleep: Bool) -> some View {
         VStack(spacing: 0) {
-            Text(verbatim: "NOOP")
-                .font(StrandFont.dot(13))
-                .tracking(13 * 0.06)
-                .foregroundStyle(StrandPalette.textPrimary)
+            BrandLockup(height: 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 4)
                 .accessibilityHidden(true)

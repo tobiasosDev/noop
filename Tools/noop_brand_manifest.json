@@ -1,0 +1,31 @@
+{
+  "files": {
+    "NOOPWatch/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png": "3152ec9489a1f4de6277174920382083265242d45fbaa2beef33bd3fab8c9891",
+    "Packages/StrandDesign/Sources/StrandDesign/BrandPaths.swift": "8824ad384d3cf8fe77d36298833288ed7c5c043c5ae6c5e388bbe8624d880f2a",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128.png": "04617da73274ac847f291423ff854acb8569f40184ab0cabba545fabbedcc6d7",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png": "ca53d0f518dbe6b6c5c20ed9a42be667150d806d2237604c5c5203fc35616c56",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_16x16.png": "fc118d972a4430ff4ef4ad020c1d54099f2d109bc3f1bbb42cf5a2f9e9093e08",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_16x16@2x.png": "3d7d4d7e1bedd503d6cb4c24b54f71dc70bf65094404b968c405201ffcbfa99b",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256.png": "ca53d0f518dbe6b6c5c20ed9a42be667150d806d2237604c5c5203fc35616c56",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256@2x.png": "41662c1487d9267aae210430fc698bdf903ff5d61b45a24237dec0f92baab43a",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_32x32.png": "3d7d4d7e1bedd503d6cb4c24b54f71dc70bf65094404b968c405201ffcbfa99b",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_32x32@2x.png": "b039c3fcb764464113db0a6d9899a9ffc52b1a28664224275d53c38c7792dbdf",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png": "41662c1487d9267aae210430fc698bdf903ff5d61b45a24237dec0f92baab43a",
+    "Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png": "3152ec9489a1f4de6277174920382083265242d45fbaa2beef33bd3fab8c9891",
+    "StrandiOS/Resources/Assets.xcassets/AppIcon-Navy.appiconset/icon_1024.png": "458c19795b60be7e396bd21809aa736c1235a5cb0c74e189b92348da529027ab",
+    "StrandiOS/Resources/Assets.xcassets/AppIcon.appiconset/icon_1024.png": "3152ec9489a1f4de6277174920382083265242d45fbaa2beef33bd3fab8c9891",
+    "android/app/src/main/res/drawable/ic_launcher_background.xml": "70cad0e774e1129535cde3ea8a01d4c75b08f86cf7d40f4d53e5a16e38978b41",
+    "android/app/src/main/res/drawable/ic_launcher_background_navy.xml": "01f13042c0ac9ea8bbee035452aeee6464261e108516893f1b5e8d7d12538924",
+    "android/app/src/main/res/drawable/ic_launcher_foreground.xml": "2abd6898623627e05dc0d8e96f32667ab5ec70ab26ae5a9619b0cc42e7baf164",
+    "android/app/src/main/res/drawable/ic_launcher_monochrome.xml": "6ed1f2a9e272a691e783ebaff4bc5850224fc8a021fd1028e065a5fbe81e75d7",
+    "android/app/src/main/res/drawable/ic_noop_lockup.xml": "07241d97ae3d82a81b690cfd9048d1947b7ad3221cd53bcfc6836a03bd275276",
+    "android/app/src/main/res/drawable/ic_noop_mark.xml": "31f355e8f2c8cda2ffa44dc7e910c8025880cee5556992f3062fe447442ebdd1",
+    "docs/assets/banner.svg": "3bc19d0c12e1f6efe165b8aa75b2e7afdb59db2489f7a3420c4f7c34061ce60e",
+    "docs/assets/noop-icon.svg": "4daa46a3643557dd0d8ff4f073e91dc6ebbbf6bd2d5ca644c76084c38a7821e2",
+    "docs/assets/noop-lockup-stacked.svg": "fdefd2f611761a0fb73f02ada108ad893439b25e6610bb05da2a709f9c45ee27",
+    "docs/assets/noop-lockup-white.svg": "1d501e6760c321233d58261ac02056e62d878e921ead522e1301c680639abbda",
+    "docs/assets/noop-lockup.svg": "7ed847cb9b1361fe4401db60dca43447380ff495ec945fb03844cba402fa64c6",
+    "docs/assets/noop-mark.svg": "e2080e45b7e05b113d962a31c0c643aa47841cf0a108938d36da80eb06d5ff7b"
+  },
+  "fingerprint": "1fa97ccb16b8cf2c1e0f8b88313e545a197c57063fbdd9d1cc24b66b434137f2"
+}
