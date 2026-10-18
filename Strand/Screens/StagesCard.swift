@@ -591,9 +591,10 @@ extension SleepStage {
 // MARK: - Overnight heart rate
 
 /// The sleeping heart-rate chart: a 1.2 pt trace over a soft blue area, y captions, onset → wake clock
-/// captions, and a highlighted band — the selected stage's stretches, or by default the night's longest deep
-/// sleep stretch. Gaps in the data break the line honestly rather than interpolating across them, and weak
-/// optical stretches (PPG conf < 0.3) draw dashed so an estimate is never presented as a clean beat.
+/// captions, and highlighted bands — the selected stage's stretches, or by default every deep sleep stretch,
+/// so the bands match the Deep row of the stage chart below. Gaps in the data break the line honestly rather
+/// than interpolating across them, and weak optical stretches (PPG conf < 0.3) draw dashed so an estimate is
+/// never presented as a clean beat.
 struct SleepNightHRChart: View {
     let buckets: [HRBucket]
     let intervals: [SleepInterval]
@@ -613,18 +614,17 @@ struct SleepNightHRChart: View {
         }
     }
 
-    /// Bands to highlight as 0…1 x ranges, with the label for the first.
-    private var bands: (ranges: [ClosedRange<Double>], label: String?) {
+    /// Bands to highlight as 0…1 x ranges — every stretch of the stage, the same set the stage row draws —
+    /// with the label and the index of the longest stretch, which carries it.
+    private var bands: (ranges: [ClosedRange<Double>], label: String?, labelled: Int?) {
         let stage = selectedStage ?? .deep
         let ivs = intervals.filter { $0.stage == stage }
-        let picked = selectedStage == nil ? Array(ivs.max { $0.duration < $1.duration }.map { [$0] } ?? []) : ivs
-        let ranges = picked.map { iv in
+        let ranges = ivs.map { iv in
             max(0, (iv.start - origin) / span)...min(1, (iv.end - origin) / span)
         }
-        let label = selectedStage == nil
-            ? (ranges.isEmpty ? nil : String(localized: "Deep sleep"))
-            : stage.v2Label
-        return (ranges, label)
+        let longest = ivs.indices.max { ivs[$0].duration < ivs[$1].duration }
+        let label = selectedStage == nil ? String(localized: "Deep sleep") : stage.v2Label
+        return (ranges, longest == nil ? nil : label, longest)
     }
 
     var body: some View {
@@ -696,9 +696,10 @@ struct SleepNightHRChart: View {
                         .frame(width: w, height: geo.size.height)
                         .offset(x: x0)
                 }
-                if let label = b.label, let first = b.ranges.first {
-                    let x0 = geo.size.width * CGFloat(first.lowerBound)
-                    let w = max(1, geo.size.width * CGFloat(first.upperBound - first.lowerBound))
+                if let label = b.label, let i = b.labelled {
+                    let r = b.ranges[i]
+                    let x0 = geo.size.width * CGFloat(r.lowerBound)
+                    let w = max(1, geo.size.width * CGFloat(r.upperBound - r.lowerBound))
                     Text(verbatim: label)
                         .font(StrandFont.light(10))
                         .foregroundStyle(StrandPalette.textSecondary)
