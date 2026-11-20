@@ -274,6 +274,7 @@ Swift, you MUST build the app yourself: `xcodebuild … build` locally, or run `
   be closed.
 - **Show your verification.** BLE → what you tested on hardware. Analytics → the method + a test.
   UI → confirms design tokens only. App-target Swift → that you compiled the app (CI won't).
+  Screenshots and recordings follow [Proof](#proof) below.
 - **Keep generated artifacts out of git** (`Strand.xcodeproj/`, `build/`, `.build/`, `*.app`,
   DerivedData). Commit `project.yml`, not the generated project. `Package.resolved` is fine.
 - **Cross-platform:** if the change applies to both platforms, do both (or say why not).
@@ -301,3 +302,18 @@ Swift, you MUST build the app yourself: `xcodebuild … build` locally, or run `
 
 When in doubt, open an issue to coordinate first, and prefer the smallest change that's correct and
 covered by a test that runs without a strap.
+
+## Proof
+
+Proof is the acceptance criterion for every task, whatever skill or mode ran it (poteto-mode, full
+send, full stop and the rest). Without it the task is not done.
+
+- **Exercise the changed behaviour.** UI work: the flow itself in the iOS Simulator or Android
+  Emulator. Everything else: the command, test or CLI run that shows it
+  (`swift test`, `./gradlew test…`, `whoop-decode`, a `Tools/` script).
+- **PR description:** screenshots of the result. Host them in a secret gist: `gh gist create` a text
+  file, clone it with `-c credential.helper='!gh auth git-credential'`, push the PNGs, embed the raw
+  URLs. Never commit proof files to this repo.
+- **Thread:** a video of what was done plus the same screenshots. T3 plays GIF reliably, other video
+  formats not always. Copy the files to `/Users/tobias/.t3/userdata/attachments/<topic>/` and show
+  them with `html_render`.
